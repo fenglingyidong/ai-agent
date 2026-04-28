@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Agent Console</title>
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div class="page-glow page-glow-left"></div>
+<div class="page-glow page-glow-right"></div>
+
+<main class="app-shell">
+    <header class="hero panel">
+        <div class="eyebrow">RAG Agent Console</div>
+        <div class="hero-layout">
+            <div>
+                <h1>给这个后端项目配一套能直接使用的前端操作台</h1>
+                <p class="hero-copy">
+                    独立前端目录，默认连接本地 Spring Boot 服务，覆盖文档导入、RAG 对话、ReAct 调试和可切换回答模型。
+                </p>
+            </div>
+            <div class="hero-pills">
+                <span class="pill">HTTP Basic</span>
+                <span class="pill">RAG Chat</span>
+                <span class="pill">ReAct Stream</span>
+                <span class="pill">Model Switch</span>
+            </div>
+        </div>
+        <div id="status-banner" class="status-banner">准备就绪，先确认后端已经运行在 http://localhost:8080。</div>
+    </header>
+
+    <section class="dashboard-grid">
+        <aside class="panel settings-panel">
+            <div class="panel-head">
+                <div>
+                    <div class="section-tag">连接设置</div>
+                    <h2>后端接入</h2>
+                </div>
+                <p>默认使用项目里的演示账号。</p>
+            </div>
+
+            <form id="settings-form" class="stacked-form">
+                <label class="field">
+                    <span>API Base URL</span>
+                    <input id="api-base" name="apiBase" type="url" placeholder="http://localhost:8080" required>
+                </label>
+
+                <label class="field">
+                    <span>用户名</span>
+                    <input id="username" name="username" type="text" placeholder="demo" autocomplete="username" required>
+                </label>
+
+                <label class="field">
+                    <span>密码</span>
+                    <input id="password" name="password" type="password" placeholder="demo123" autocomplete="current-password" required>
+                </label>
+
+                <label class="field">
+                    <span>Session ID</span>
+                    <input id="session-id" name="sessionId" type="text" placeholder="frontend-session" required>
+                </label>
+
+                <div class="button-row">
+                    <button class="btn btn-primary" type="submit">保存设置</button>
+                    <button id="refresh-session" class="btn btn-secondary" type="button">换一个 Session</button>
+                </div>
+            </form>
+
+            <div class="note-card">
+                <h3>接口说明</h3>
+                <ul class="note-list">
+                    <li>聊天接口：GET /api/chat?sessionId=...&modelId=...&message=...</li>
+                    <li>ReAct 接口：GET /api/react?modelId=...&message=...</li>
+                    <li>模型列表：GET /api/models/chat</li>
+                    <li>导入接口：POST /api/rag/documents/import</li>
+                </ul>
+            </div>
+        </aside>
+
+        <section class="panel workspace-panel">
+            <div class="panel-head">
+                <div>
+                    <div class="section-tag">聊天工作台</div>
+                    <h2>对话与代理调试</h2>
+                </div>
+                <div class="mode-switch" role="tablist" aria-label="聊天模式">
+                    <button class="mode-btn is-active" type="button" data-mode="chat">RAG Chat</button>
+                    <button class="mode-btn" type="button" data-mode="react">ReAct Agent</button>
+                </div>
+            </div>
+
+            <div class="workspace-meta">
+                <div class="workspace-toolbar">
+                    <p id="mode-description">当前模式会调用 /api/chat，并携带 Session ID 以复用后端短期记忆。</p>
+                    <div class="tool-panel">
+                        <label class="field select-field">
+                            <span>回答模型</span>
+                            <select id="model-select" name="modelId"></select>
+                        </label>
+                        <button id="web-search-toggle" class="tool-toggle-btn" type="button" aria-pressed="false">联网搜索</button>
+                    </div>
+                </div>
+                <p id="model-hint" class="model-hint">模型列表会从后端动态加载。无效选择会自动回退到默认模型。</p>
+                <div class="prompt-chips">
+                    <button class="chip" type="button" data-prompt="请总结我刚刚导入文档的核心信息。">文档总结</button>
+                    <button class="chip" type="button" data-prompt="解释一下这个系统里的混合检索和 RRF 融合思路。">RRF 解释</button>
+                    <button class="chip" type="button" data-prompt="请一步一步分析这个问题，并说明你会调用哪些工具。">ReAct 推理</button>
+                </div>
+            </div>
+
+            <div id="chat-log" class="chat-log" aria-live="polite"></div>
+
+            <form id="chat-form" class="composer">
+                <label class="composer-field" for="message-input">
+                    <span class="sr-only">输入消息</span>
+                    <textarea id="message-input" rows="4" placeholder="输入问题，前端会使用 Basic Auth 调用后端接口。"></textarea>
+                </label>
+                <div class="button-row">
+                    <button id="send-button" class="btn btn-primary" type="submit">发送</button>
+                    <button id="stop-button" class="btn btn-secondary" type="button" disabled>停止</button>
+                    <button id="clear-chat" class="btn btn-ghost" type="button">清空对话</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel import-panel">
+            <div class="panel-head">
+                <div>
+                    <div class="section-tag">知识导入</div>
+                    <h2>手动写入 RAG 文档</h2>
+                </div>
+                <p>把原始文本送进父子文档索引器。</p>
+            </div>
+
+            <form id="import-form" class="stacked-form">
+                <label class="field">
+                    <span>Source ID</span>
+                    <input id="source-id" name="sourceId" type="text" placeholder="doc-001">
+                </label>
+
+                <label class="field">
+                    <span>标题</span>
+                    <input id="doc-title" name="title" type="text" placeholder="Spring AI RAG 设计说明">
+                </label>
+
+                <label class="field">
+                    <span>文档内容</span>
+                    <textarea id="doc-content" name="content" rows="10" placeholder="粘贴需要导入到 RAG 的原始文档内容。" required></textarea>
+                </label>
+
+                <div class="button-row">
+                    <button id="import-button" class="btn btn-primary" type="submit">导入文档</button>
+                    <button id="clear-import" class="btn btn-secondary" type="button">清空表单</button>
+                </div>
+            </form>
+
+            <div class="import-results">
+                <div class="result-head">
+                    <h3>最近导入结果</h3>
+                    <button id="clear-history" class="btn btn-ghost" type="button">清空记录</button>
+                </div>
+                <div id="import-history" class="history-list"></div>
+            </div>
+        </section>
+    </section>
+</main>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -28,7 +28,7 @@ spring:
           model: text-embedding-v4
     vectorstore:
       redis:
-        index: rag-index
+        index-name: rag-index
         prefix: "rag:"
         initialize-schema: true
     mcp:

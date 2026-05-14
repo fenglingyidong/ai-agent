@@ -22,9 +22,9 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
 
     private static final Logger log = LoggerFactory.getLogger(ParentChildDocumentRetriever.class);
 
-    private static final int CHILD_TOP_K = 8;
-    private static final int DENSE_FALLBACK_TOP_K = 16;
-    private static final int MAX_PARENT_RESULTS = 3;
+    private static final int CHILD_TOP_K = 24;
+    private static final int DENSE_FALLBACK_TOP_K = 32;
+    private static final int MAX_PARENT_RESULTS = 6;
 
     private final VectorStore vectorStore;
     private final ParentDocumentStore parentDocumentStore;
@@ -39,7 +39,7 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
         this.childDocumentRetriever = VectorStoreDocumentRetriever.builder()
                 .vectorStore(vectorStore)
                 .topK(CHILD_TOP_K)
-                .similarityThreshold(0.0d)
+                .similarityThreshold(0.2d)
                 .filterExpression(new FilterExpressionBuilder()
                         .eq(RagDocumentConstants.METADATA_DOC_TYPE, RagDocumentConstants.CHILD_DOCUMENT_TYPE)
                         .build())

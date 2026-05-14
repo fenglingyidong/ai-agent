@@ -1,6 +1,7 @@
 package com.example.ragagent.rag.impl;
 
 import com.example.ragagent.rag.RagDocumentConstants;
+import com.example.ragagent.rag.ChineseTextSegmenter;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.redis.RedisVectorStore;
 import org.springframework.ai.vectorstore.redis.autoconfigure.RedisVectorStoreProperties;
@@ -24,11 +25,14 @@ public class RedisBm25ChildChunkRetriever {
     private final JedisPooled jedisPooled;
     private final String indexName;
     private final String prefix;
+    private final ChineseTextSegmenter chineseTextSegmenter;
 
     /**
      * 创建基于 Redis Stack FT.SEARCH 的 BM25 子分块检索器。
      */
-    public RedisBm25ChildChunkRetriever(JedisPooled jedisPooled, RedisVectorStoreProperties properties) {
+    public RedisBm25ChildChunkRetriever(JedisPooled jedisPooled,
+                                        RedisVectorStoreProperties properties,
+                                        ChineseTextSegmenter chineseTextSegmenter) {
         this.jedisPooled = jedisPooled;
         this.indexName = StringUtils.hasText(properties.getIndexName())
                 ? properties.getIndexName()
@@ -36,6 +40,7 @@ public class RedisBm25ChildChunkRetriever {
         this.prefix = StringUtils.hasText(properties.getPrefix())
                 ? properties.getPrefix()
                 : RedisVectorStore.DEFAULT_PREFIX;
+        this.chineseTextSegmenter = chineseTextSegmenter;
     }
 
     /**
@@ -48,8 +53,8 @@ public class RedisBm25ChildChunkRetriever {
         }
 
         Query redisQuery = new Query(buildRedisQuery(normalizedQuery))
+                .setLanguage("chinese")
                 .limit(0, BM25_TOP_K)
-                .limitFields(CONTENT_FIELD, RagDocumentConstants.METADATA_TITLE)
                 .returnFields(
                         CONTENT_FIELD,
                         RagDocumentConstants.METADATA_DOC_TYPE,
@@ -76,9 +81,10 @@ public class RedisBm25ChildChunkRetriever {
      * 构造 FT.SEARCH 查询，固定过滤 child chunk，并将用户问题作为全文检索条件。
      */
     private String buildRedisQuery(String query) {
-        return "@%s:{%s} %s".formatted(
+        return "@%s:{%s} @%s:%s".formatted(
                 RagDocumentConstants.METADATA_DOC_TYPE,
                 escapeTagValue(RagDocumentConstants.CHILD_DOCUMENT_TYPE),
+                RagDocumentConstants.METADATA_BM25_TEXT,
                 buildFullTextClause(query)
         );
     }
@@ -96,6 +102,7 @@ public class RedisBm25ChildChunkRetriever {
         copyFieldIfPresent(redisDocument, metadata, RagDocumentConstants.METADATA_CHILD_INDEX);
         copyFieldIfPresent(redisDocument, metadata, RagDocumentConstants.METADATA_PARENT_INDEX);
         copyFieldIfPresent(redisDocument, metadata, RagDocumentConstants.METADATA_DOCUMENT_HASH);
+        copyFieldIfPresent(redisDocument, metadata, RagDocumentConstants.METADATA_BM25_TEXT);
 
         return Document.builder()
                 .id(id)
@@ -108,14 +115,33 @@ public class RedisBm25ChildChunkRetriever {
      * 将查询文本转成 RediSearch 可接受的全文查询片段。
      */
     private String buildFullTextClause(String query) {
-        String[] tokens = StringUtils.tokenizeToStringArray(query, " \n\t");
-        if (tokens == null || tokens.length == 0) {
-            return escapeQueryToken(query);
+        String segmentedQuery = chineseTextSegmenter.segmentForSearch(query);
+        String sanitizedQuery = sanitizeFullTextQuery(segmentedQuery);
+        if (!StringUtils.hasText(sanitizedQuery)) {
+            return "";
         }
 
-        return String.join(" ", Arrays.stream(tokens)
+        String[] tokens = StringUtils.tokenizeToStringArray(sanitizedQuery, " \n\t");
+        if (tokens == null || tokens.length == 0) {
+            return escapeQueryToken(sanitizedQuery);
+        }
+
+        return "(" + String.join("|", Arrays.stream(tokens)
                 .map(this::escapeQueryToken)
-                .toList());
+                .toList()) + ")";
+    }
+
+    /**
+     * RediSearch 查询语法对符号比较敏感；中文评测集里常见的全角标点会触发 syntax error。
+     * 这里先保留中文、英文、数字和空白，其他字符统一替换为空格。
+     */
+    private String sanitizeFullTextQuery(String query) {
+        if (!StringUtils.hasText(query)) {
+            return "";
+        }
+        return query.replaceAll("[^\\p{IsHan}a-zA-Z0-9\\s]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     /**

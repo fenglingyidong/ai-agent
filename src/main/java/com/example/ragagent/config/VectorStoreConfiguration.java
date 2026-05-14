@@ -24,6 +24,7 @@ public class VectorStoreConfiguration {
     private static final String CHILD_INDEX = "childIndex";
     private static final String PARENT_INDEX = "parentIndex";
     private static final String DOCUMENT_HASH = "documentHash";
+    private static final String BM25_TEXT = "bm25Text";
 
     @Bean
     public JedisPooled jedisPooled(JedisConnectionFactory jedisConnectionFactory) {
@@ -53,6 +54,7 @@ public class VectorStoreConfiguration {
                         RedisVectorStore.MetadataField.numeric(CHILD_INDEX),
                         RedisVectorStore.MetadataField.numeric(PARENT_INDEX),
                         RedisVectorStore.MetadataField.tag(DOCUMENT_HASH),
+                        RedisVectorStore.MetadataField.text(BM25_TEXT),
                         RedisVectorStore.MetadataField.tag("userId"),
                         RedisVectorStore.MetadataField.tag("conversationKey"),
                         RedisVectorStore.MetadataField.tag("memoryType"),

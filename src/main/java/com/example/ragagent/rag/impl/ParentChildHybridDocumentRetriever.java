@@ -21,7 +21,7 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
 
     private static final int RRF_K = 60;
     private static final int MIN_CHILD_RESULTS_TO_KEEP = 4;
-    private static final int MAX_CHILD_RESULTS_TO_CONSIDER = 10;
+    private static final int MAX_CHILD_RESULTS_TO_CONSIDER = 12;
 
     private final ParentChildDocumentRetriever denseRetriever;
     private final RedisBm25ChildChunkRetriever bm25Retriever;

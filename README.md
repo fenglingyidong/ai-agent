@@ -1,17 +1,42 @@
-# RAGAgent 项目说明
+# 多模态电商智能导购 Agent 项目说明
+
+## 0. 当前改造进度
+
+本项目正在从通用 RAG/ReAct Agent 改造为“多模态电商智能导购 Agent”。当前已完成的关键链路：
+
+- Agent 系统提示词已收敛到电商导购场景，约束选品、追问、推荐、查库存和加购流程。
+- 内置工具已收敛为商品知识库检索和短期偏好更新；实时商品、购物车和普通订单链路统一改为 `mall_*` MCP 工具。
+- 新增三段式路由：`ShoppingIntentRouter` 在 `ReActAgent.runStream(...)` 起点用小模型做一次 JSON 路由，A 类 FAQ/简单查询进入 `SimpleTaskAgent` 知识库快车道，B 类单步商城任务进入 `SimpleTaskAgent` 商城 MCP 快车道，C 类复杂推荐/对比/规划再进入主模型 ReAct 链路。
+- 新增商城 MCP 适配层 `mall/`，支持通过 `X-Mall-Authorization` 透传商城 Token，或把 Basic 登录信息注册到 `mall-mcp` 上下文接口。
+- `POST /api/react` 是唯一 ReActAgent 对话入口，支持 multipart 文本、图片、图片 URL、模型选择、联网开关和会话参数。
+- 前端已改为导购工作台，包含聊天区、商品卡片、图片上传、对比视图和购物车抽屉；前端不直接管理商城 Token。
+- 前端不再直连商城 REST；商品查询、加购、查购物车和普通订单动作都通过 `/api/react` 进入 Agent，再由 `mall_*` MCP 工具调用 `mall-mcp`。
+- `ReActAgent` 已收敛为单一构造函数和单一对外 `runStream(...)` 入口；Controller 显式传入用户、会话、模型、媒体和商城上下文。
+- Spring AI 框架 API 已进一步收敛：路由输出用 `ChatClient.entity(ShoppingIntentRoute.class)` 解析，简单任务工具用 `ChatClient.tools(...)` 注册，主 Agent 内置工具定义用 `ToolCallbacks.from(...)` 生成，工具名/描述/schema 由 `ToolCallback` 元数据交给模型，工具上下文用 `toolContext(...)` 透传，商城 MCP 协议调用改为 `McpSyncClient`。
+- `ReActAgent` 日志统一使用 SLF4J，已压缩为 `start / memory / finish / error` 结构化短日志，不再在 info 级别记录完整 prompt 或完整输出。
+- 测试已同步到导购工具集合、商城登录和统一 Agent 入口；手工测试计划见 [TESTING.md](TESTING.md)。
+
+当前约束与假设：
+
+- 商品、库存价格、购物车和普通订单运行链路只走 `mall-mcp` 暴露的商城真实业务数据；`mall-mcp` 未启动或调用失败时直接返回“商城 MCP 调用失败”。
+- 图文多模态链路已打通到前端和后端；购物聊天会先走小模型意图路由，只有复杂、低置信或槽位不足时才把请求交给主 Agent。
+- 普通订单只开放二阶段链路：先 `mall_prepare_order`，再由用户明确确认后 `mall_create_order`；不开放秒杀和支付。
+- 商城业务 MCP 默认入口是 `http://localhost:8120/mcp`，上下文接口默认是 `http://localhost:8120/internal/mcp/mall/context`；Agent 侧可通过 `app.mall.mcp.*` 调整。`app.mall.base-url` 仅保留给 Basic 登录认证。
+- DuReader 评测只能证明通用 RAG 检索能力，电商导购效果需要继续补 ESCI/SQID 评测。
 
 ## 1. 项目定位
 
-这是一个基于 Spring Boot 与 Spring AI 的 Agent 原型项目，目标不是只做一个简单的聊天接口，而是把下面几类能力串成一条完整链路：
+这是一个基于 Spring Boot 与 Spring AI 的多模态电商智能导购 Agent 原型项目，目标不是只做一个简单聊天接口，而是把用户选品、商品召回、图文咨询、偏好记忆、安全调用和可控工具编排串成一条完整链路：
 
-- ReAct 风格推理与工具调用
-- 基于 Redis 的 RAG 检索
-- 短期记忆 + 长期摘要记忆
+- ReAct 风格推理与 Spring AI 工具调用
+- 商品检索、价格库存展示、购物车操作和普通订单 MCP 工具
+- 基于 Redis Stack 的商品知识库 RAG 检索
+- 短期导购偏好状态 + 长期摘要记忆
 - Prompt Injection 与敏感信息保护
 - 可选的 MCP 联网搜索
 - 一个可直接联调的零依赖静态前端
 
-从代码现状来看，这个项目更准确地说是一个“带知识库、记忆、安全防护和工具系统的 ReAct Agent Demo”，而不是一个通用的企业级完整产品。
+从代码现状来看，这个项目更准确地说是一个“电商导购 Agent 后端核心链路原型”，重点验证 Agent loop、工具边界、商品 RAG、偏好记忆和 Prompt 安全，而不是完整电商交易系统。
 
 ## 2. 技术栈
 
@@ -34,10 +59,11 @@ RAGAgent
 ├─ src/main/java/com/example/ragagent
 │  ├─ config        配置类
 │  ├─ controller    HTTP 接口
+│  ├─ commerce      导购偏好状态
 │  ├─ memory        分层记忆
 │  ├─ rag           RAG 常量与实现
 │  ├─ security      Prompt 安全处理
-│  ├─ service       Agent 与模型注册
+│  ├─ service       Agent、意图路由与模型注册
 │  └─ tools         内置工具
 ├─ src/main/resources
 │  └─ application.yml
@@ -63,30 +89,62 @@ RAGAgent
 
 对外暴露两个接口：
 
-- `GET /api/react`
-  作用：执行 ReAct Agent 的流式推理
-  参数：`message`、可选 `modelId`、可选 `webSearchEnabled`
+- `POST /api/react`
+  唯一 ReActAgent 流式对话入口，使用 `multipart/form-data` 接收文本、图片、图片 URL、模型、联网开关和会话参数。
 - `GET /api/models/chat`
-  作用：返回当前可选模型列表和默认模型
+  返回当前可选模型列表和默认模型。
 
-`/api/react` 返回的是流式纯文本，控制器通过 `StreamingResponseBody` 持续把模型生成的内容刷给前端。
+`/api/react` 返回流式纯文本。控制器只负责收参、把图片转换为 Spring AI `Media`、解析用户会话和商城登录上下文，然后统一调用 `ReActAgent.runStream(...)`。小模型路由、`mall-mcp` 上下文预检和主模型兜底都在 Agent 层完成。
 
 #### `RagDocumentController`
 
 对外暴露：
 
 - `POST /api/rag/documents/import`
+- `POST /api/rag/documents/products/import`
 
-这个接口接收一篇原始文档的 `sourceId`、`title`、`content`，然后调用索引器做父子分块入库，并返回：
+`/import` 接收一篇原始文档的 `sourceId`、`title`、`content`，也支持附带 `productId`、`skuId`、`category`、`brand`、`price`、`stock`、`imageUrl` 等商品元数据，然后调用索引器做父子分块入库，并返回：
 
 - 生成了多少个父块
 - 生成了多少个子块
 - 对应的 `parentIds`
 - 对应的 `childIds`
+- 写入的商品元数据
 
-这说明当前知识库是“手动导入”的，不是扫描目录或自动同步型知识库。
+`/products/import` 接收结构化商品详情，会把商品标题、品牌、类目、价格、库存、商品描述、评价摘要、导购话术和规格参数拼成可检索知识文档，再写入父子索引。当前知识库仍是“手动导入”，不是扫描目录或自动同步型知识库。
 
-### 4.3 Agent 核心：`ReActAgent`
+### 4.3 小模型三段式路由：`ShoppingIntentRouter` / `ShoppingRouteExecutor`
+
+`ShoppingIntentRouter` 负责调用路由小模型，并通过 Spring AI `ChatClient.entity(ShoppingIntentRoute.class)` 直接获得结构化路由结果；`ShoppingRouteExecutor` 负责把路由结果转换为主 Agent 输入、执行高置信简单任务快车道，并在商城相关意图进入主模型前注册 `mall-mcp` 上下文。`ReActAgent.runStream(...)` 会在 Prompt 安全过滤和主模型调用之前先执行这一步；`ReActAgent` 对外只保留这一个完整参数入口，默认值由 Controller 或测试显式传入。
+
+路由模型默认使用：
+
+- `qwen3-vl-8b-instruct`
+- OpenAI 兼容协议
+- `response_format=json_object`
+- 置信度阈值 `0.7`
+
+它对所有 `POST /api/react` 对话请求生效，并把请求分为三类：
+
+- `A_FAQ_SIMPLE_QUERY`：FAQ、商品知识库事实、简单解释类问题，进入 `SimpleTaskAgent` 知识库快车道；快车道只暴露 `searchProductKnowledge` 工具，不进入主 ReAct。
+- `B_SIMPLE_SHOPPING_TOOL`：查价格、查库存、查商品详情、查购物车、明确加购和确认订单摘要等单步商城任务，进入 `SimpleTaskAgent` 商城快车道；快车道只暴露 `queryRealtimeProduct`、`addToCart`、`viewCart`、`prepareOrder`，工具内部调用 `mall-mcp`，不进入主 ReAct。
+- `C_COMPLEX_REACT`：复杂推荐、商品对比、多步规划、图片不确定和最终创建订单，进入 Qwen 3.6 Plus 主模型 ReAct 链路。
+
+它对请求内容的处理方式：
+
+- 文本-only 请求：只传用户文本给路由模型
+- 图文请求：传用户文本 + Spring AI `Media`
+- 路由模型必须输出 `task_type`、`intent`、`visual_context`、`text_slots`、`route_to_core`、`confidence`、`reason`
+
+分发规则：
+
+- A 类高置信请求先走 `SimpleTaskAgent` 知识库快车道；RAG 检索为空或异常时降级主模型。
+- B 类高置信请求先注册 `mall-mcp` 上下文；注册失败直接返回商城 MCP 调用失败。随后由 `SimpleTaskAgent` 调用简单任务小模型，并通过 Spring AI `ChatClient.tools(...)` 只暴露限定的商城快车道工具；工具内部调用 `mall-mcp`。MCP 不可用直接返回失败，槽位不足、多候选或小模型异常时降级主模型。
+- C 类、低置信、解析失败、槽位不足、多商品候选、最终创建订单或快车道降级时，进入 `ReActAgent` 主模型链路。
+
+当高置信图文请求需要主 Agent 处理时，`ShoppingRouteExecutor` 会把 `visual_context` 转成纯文本上下文注入主 Agent，默认不再透传原图；当路由低置信时才把原图完整透传给主 Agent 兜底。
+
+### 4.4 Agent 核心：`ReActAgent`
 
 这是整个项目最核心的类，职责包括：
 
@@ -102,32 +160,32 @@ RAGAgent
 
 它的处理流程可以概括成：
 
-1. 用户请求进入 `runStream(...)`
-2. `PromptSecurityFilter.secure(...)` 对输入做注入过滤和敏感信息脱敏
-3. `HierarchicalMemoryAdvisor.loadMemoryContext(...)` 加载记忆
-4. 拼接消息历史：长期记忆系统消息 + 短期消息 + 当前用户消息
-5. 根据 `webSearchEnabled` 决定是否把 MCP 外部工具暴露给模型
-6. 根据 `modelId` 从 `ChatModelRegistry` 选择模型参数
-7. 通过 Spring AI `ChatClient` 发起流式调用
-8. 输出时把类似 `[[PHONE_1]]` 这样的占位符恢复成原值
-9. 调用 `rememberFinalTurn(...)` 写回本轮问答
+1. 用户请求进入唯一对外 `runStream(...)`
+2. `ShoppingRouteExecutor` 先执行小模型路由，商城相关意图先预检 `mall-mcp` 上下文
+3. 高置信简单意图由 `SimpleTaskAgent` 调用简单任务小模型，并通过限定工具访问 RAG 或 `mall-mcp` 后直接返回
+4. 未短路的请求进入 `PromptSecurityFilter.secure(...)`，对输入做注入过滤和敏感信息脱敏
+5. 通过 `LongTermMemoryAdvisor` 召回并注入长期摘要记忆
+6. 通过 Spring AI `MessageChatMemoryAdvisor` 自动装载短期对话窗口
+7. 默认注册 `mall_*` MCP 工具，根据 `webSearchEnabled` 决定是否额外暴露 WebSearch MCP 工具
+8. 根据 `modelId` 从 `ChatModelRegistry` 选择模型参数
+9. 通过 Spring AI `ChatClient` 发起流式调用
+10. 输出时把类似 `[[PHONE_1]]` 这样的占位符恢复成原值
+11. 正常响应由 Spring AI 记忆 advisor 自动写回；短路和 fallback 响应由 `ConversationMemoryService` 显式写回
 
 这个类虽然名为 ReAct，但实现方式并不是自己手写 Thought/Action/Observation 循环，而是借助 Spring AI 的工具调用能力，让模型在系统提示词约束下自动调用工具。
 
-### 4.4 内置工具：`BuiltInTools`
+### 4.5 内置工具：`BuiltInTools`
 
-当前内置了 3 个工具：
+当前内置工具只保留不直连商城业务的本地能力：
 
-- `getWeather`
-  返回模拟天气数据
-- `calculator`
-  使用 SpEL 计算简单表达式
-- `searchKnowledgeBase`
-  调用 `DocumentRetriever` 做知识库检索
+- `searchProductKnowledge`
+  检索商品详情、规格参数、评价摘要和导购话术知识库
+- `updateShoppingPreference`
+  维护品类、预算、品牌、尺码、颜色、风格和使用场景等短期偏好状态
 
-其中最重要的是 `searchKnowledgeBase`。因为项目里把 `ParentChildHybridDocumentRetriever` 标成了 `@Primary`，所以这个工具默认走的是“父子块 + dense + BM25 混合召回”的知识库检索链路。
+实时商品搜索、商品详情、加购物车、查购物车、确认订单和创建订单已经从 `BuiltInTools` 删除，统一由 `mall-mcp` 提供的 `mall_*` MCP 工具承担。其中 `searchProductKnowledge` 仍走“父子块 + dense + BM25 混合召回”的商品知识库检索链路。
 
-### 4.5 RAG 模块
+### 4.6 RAG 模块
 
 RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
@@ -198,7 +256,7 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 这意味着项目的知识库检索不是简单 `topK`，而是做了一个轻量但很实用的结果裁剪策略，目的是减少噪声上下文。
 
-### 4.6 分层记忆：`HierarchicalMemoryAdvisor`
+### 4.7 分层记忆：Spring AI ChatMemory + 长期摘要
 
 这个模块把记忆分成两层：
 
@@ -207,14 +265,14 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 #### 短期记忆
 
-短期记忆由 `RedisSlidingWindowMemoryStore` 管理，存放在 Redis 列表中。
+短期记忆由 Spring AI `MessageWindowChatMemory` 管理窗口，由自研 `RedisChatMemoryRepository` 持久化到 Redis 列表中。
 
 特点：
 
 - 每条消息都有递增序号
 - 有时间窗口限制
-- 有最大消息数限制
-- 超出窗口的旧消息会被淘汰
+- 有最大消息数限制，数量裁剪交给 Spring AI `MessageWindowChatMemory`
+- 超出窗口的旧消息会被淘汰，并交给长期摘要服务处理
 
 当前配置：
 
@@ -225,7 +283,7 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 #### 长期记忆
 
-当短期窗口淘汰旧消息时，系统不会直接丢弃，而是：
+长期记忆由 `LongTermMemoryAdvisor` 和 `LongTermMemoryService` 保留自研实现。当短期窗口淘汰旧消息时，系统不会直接丢弃，而是：
 
 1. 异步把淘汰消息拼成 transcript
 2. 调用模型做摘要
@@ -234,7 +292,7 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 因此，这套记忆不是简单聊天历史，而是“短期保细节，长期保摘要”的结构。
 
-### 4.7 安全模块：`PromptSecurityFilter`
+### 4.8 安全模块：`PromptSecurityFilter`
 
 这个类解决两类问题：
 
@@ -256,7 +314,7 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 - 模型看到的是经过隔离和脱敏后的内容
 - 用户最终看到的仍然是恢复后的自然结果
 
-### 4.8 模型注册：`ChatModelRegistry`
+### 4.9 模型注册：`ChatModelRegistry`
 
 这个类把“前端传来的模型 ID”映射成“底层真正调用的模型名”。
 
@@ -268,7 +326,7 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 默认模型是 `qwen`。
 
-### 4.9 安全配置：`SecurityConfig`
+### 4.10 安全配置：`SecurityConfig`
 
 当前后端所有接口都需要认证，只有 `/error` 放行。
 
@@ -289,7 +347,7 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 这显然是为本地调试准备的，不是生产级安全收口策略。
 
-### 4.10 前端
+### 4.11 前端
 
 `frontend/` 目录是一个独立静态前端，不依赖额外打包工具。
 
@@ -302,7 +360,7 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 - 导入 RAG 文档
 - 在浏览器本地保存聊天记录和导入记录
 
-前端默认请求地址是 `http://localhost:8080`。
+前端默认请求地址是 `http://localhost:18082`。
 
 ## 5. 关键请求链路
 
@@ -313,15 +371,31 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 -> ChatController(/api/react)
 -> ReActAgent
 -> PromptSecurityFilter
--> HierarchicalMemoryAdvisor
--> 内置工具 + 可选 MCP 工具
+-> LongTermMemoryAdvisor + MessageChatMemoryAdvisor
+-> 内置工具 + mall-mcp 工具 + 可选 WebSearch MCP 工具
 -> LLM 流式输出
 -> 恢复敏感占位符
--> 记忆写回
+-> 成功响应由 MessageChatMemoryAdvisor 写回；短路/fallback 由 ConversationMemoryService 写回
 -> 返回前端
 ```
 
-### 5.2 文档导入链路
+### 5.2 购物聊天路由链路
+
+```text
+用户请求
+-> ChatController(/api/react)
+-> ReActAgent.runStream
+-> ShoppingRouteExecutor
+-> ShoppingIntentRouter(qwen3-vl-8b-instruct)
+-> 商城相关意图：注册 mall-mcp 上下文；失败则直接返回商城 MCP 调用失败
+-> 高置信简单请求：SimpleTaskAgent 用简单任务小模型 + 限定工具完成；商城工具内部调用 mall-mcp
+-> 复杂、低置信、槽位不足或最终下单：进入 ReActAgent 主模型链路，由模型调用 mall_* MCP 工具
+-> 高置信图文复杂请求：注入 visual_context 文本，不传原图
+-> 低置信图文请求：原图透传给主 Agent 兜底
+-> 返回前端
+```
+
+### 5.3 文档导入链路
 
 ```text
 原始文档
@@ -329,13 +403,13 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 -> ParentChildDocumentIndexer
 -> 父块写 Redis
 -> 子块写 Vector Store
--> 后续 searchKnowledgeBase 可检索
+-> 后续 searchProductKnowledge 可检索
 ```
 
-### 5.3 知识库查询链路
+### 5.4 知识库查询链路
 
 ```text
-模型调用 searchKnowledgeBase
+模型调用 searchProductKnowledge
 -> ParentChildHybridDocumentRetriever
 -> dense 子块召回
 -> BM25 子块召回
@@ -370,6 +444,13 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 - `childIndex`
 - `parentIndex`
 - `documentHash`
+- `productId`
+- `skuId`
+- `category`
+- `brand`
+- `price`
+- `stock`
+- `imageUrl`
 - `userId`
 - `conversationKey`
 - `memoryType`
@@ -388,10 +469,23 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 ### 7.1 基础配置
 
-- 服务端口：`8080`
-- Redis：`localhost:6379`
-- Vector Store 索引：`rag-index`
-- Redis key 前缀：`rag:`
+- 服务端口：`18082`，可通过 `SERVER_PORT` 覆盖
+- Redis Stack：默认 `localhost:6379`
+- RedisInsight：默认 `http://localhost:8001`
+- Vector Store 索引：默认 `rag-index`
+- Redis key 前缀：默认 `rag:`
+
+这些配置可以用环境变量覆盖：
+
+```powershell
+$env:REDIS_HOST="localhost"
+$env:REDIS_PORT="6379"
+$env:REDIS_PASSWORD=""
+$env:REDIS_VECTOR_INDEX="rag-index"
+$env:REDIS_VECTOR_PREFIX="rag:"
+```
+
+注意：项目的 BM25 检索使用 RediSearch `FT.SEARCH`，不能只启动普通 Redis，必须使用 Redis Stack 或已安装 RediSearch 模块的 Redis。
 
 ### 7.2 模型配置
 
@@ -402,6 +496,14 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 需要环境变量：
 
 - `DASHSCOPE_API_KEY`
+
+购物意图路由模型默认配置为：
+
+- `app.ai.intent-router.enabled=true`
+- `app.ai.intent-router.model=${QWEN_VL_ROUTER_MODEL:qwen3-vl-8b-instruct}`
+- `app.ai.intent-router.confidence-threshold=0.7`
+
+路由配置保持在 `application.yml`，Java 侧直接用 `@Value` 读取，不再单独维护 `IntentRouterProperties`。路由模型不出现在 `/api/models/chat`，前端模型列表只用于选择主 Agent 回答模型。
 
 Embedding 模型当前是：
 
@@ -417,6 +519,52 @@ Embedding 模型当前是：
 - `app.mcp.websearch.api-key` 有值
 - 外部 MCP tool callback 能正常加载
 
+### 7.4 商城 MCP 工具
+
+商城商品、购物车和普通订单不再通过 RAGAgent 内置 function calling 直连商城 REST，而是通过独立 `mall-mcp` 服务接入。RAGAgent 固定注册以下工具：
+
+- `mall_search_products`
+- `mall_get_product_detail`
+- `mall_add_to_cart`
+- `mall_view_cart`
+- `mall_prepare_order`
+- `mall_create_order`
+
+每次调用 `mall_*` 工具前，RAGAgent 会先调用：
+
+```http
+POST /internal/mcp/mall/context
+X-Mcp-Context-Secret: <secret>
+```
+
+把当前 `sessionId`、`X-Mall-Authorization` 或 Basic 登录信息注册给 `mall-mcp`。工具实际调用由 Spring AI MCP SDK 的 `McpSyncClient` 走 Streamable HTTP MCP endpoint `/mcp`，并强制向工具参数注入当前 `sessionId`。如果 `mall-mcp` 未启动、上下文注册失败或 MCP tool call 失败，会直接返回“商城 MCP 调用失败”。
+
+### 7.5 接口耗时监控
+
+项目已接入 Spring Boot Actuator、Micrometer Prometheus、Prometheus 和 Grafana。
+
+后端暴露：
+
+- `GET /actuator/health`
+- `GET /actuator/prometheus`
+- `GET /actuator/metrics`，需要登录
+
+Prometheus 默认抓取 Docker 容器视角下的 `host.docker.internal:18082/actuator/prometheus`，也就是宿主机运行的 RAGAgent 后端服务。Grafana 会自动加载 Prometheus 数据源和 `RAGAgent HTTP 接口耗时` 仪表盘。
+
+常用 PromQL：
+
+```promql
+histogram_quantile(0.95, sum by (le, uri, method) (rate(http_server_requests_seconds_bucket{application="rag-agent"}[5m])))
+```
+
+```promql
+sum by (uri, method) (rate(http_server_requests_seconds_sum{application="rag-agent"}[5m]))
+/
+sum by (uri, method) (rate(http_server_requests_seconds_count{application="rag-agent"}[5m]))
+```
+
+注意：`/api/react` 是流式接口，Actuator 的 HTTP 耗时统计的是整个请求完成时间。如果要看首 token 时间，需要在 Agent 内部再加自定义 `Timer`。
+
 ## 8. 当前可用接口
 
 ### 8.1 获取模型列表
@@ -426,12 +574,37 @@ GET /api/models/chat
 Authorization: Basic ...
 ```
 
-### 8.2 ReAct 对话
+### 8.2 ReAct 图文对话
+
+该接口是唯一 Agent loop 入口，会把文本和图片交给 `ReActAgent.runStream(...)`。Agent 起点再经过 `ShoppingRouteExecutor` 与 `ShoppingIntentRouter`：即使不上传图片，也会先用小模型判断意图；只有复杂、低置信、槽位不足或路由失败时才进入主模型链路。
 
 ```http
-GET /api/react?message=你好&modelId=qwen&webSearchEnabled=false
+POST /api/react
 Authorization: Basic ...
+Content-Type: multipart/form-data
+
+message=帮我找这双鞋的相似款，预算500以内
+image=@shoe.png
+sessionId=shopping-demo
+modelId=qwen
+webSearchEnabled=false
 ```
+
+也可以只传文本或传图片 URL：
+
+```http
+POST /api/react
+Authorization: Basic ...
+Content-Type: multipart/form-data
+
+message=按这张图推荐通勤可穿的款式
+imageUrl=https://example.com/images/shoe.png
+sessionId=shopping-demo
+```
+
+商城业务不再暴露直连 REST。查商品、查购物车、加购、确认订单和普通下单都通过自然语言进入 `/api/react`，由 Agent 调用 `mall-mcp` 暴露的 `mall_*` MCP 工具。`MallApiClient` 仅保留登录认证用途，不再承载商品、购物车或订单 function calling。
+
+完整手工测试步骤见 [TESTING.md](TESTING.md)。
 
 ### 8.3 导入知识库文档
 
@@ -441,21 +614,89 @@ Authorization: Basic ...
 Content-Type: application/json
 
 {
-  "sourceId": "employee-handbook-2026",
-  "title": "员工手册",
-  "content": "这里是文档正文"
+  "sourceId": "product-P1001",
+  "title": "云跑 AirLite 缓震跑步鞋",
+  "content": "商品描述、规格参数、评价摘要和导购话术正文",
+  "productId": "P1001",
+  "skuId": "SKU-P1001-BLK-42",
+  "category": "运动鞋",
+  "brand": "Stride",
+  "price": 499,
+  "stock": 38,
+  "imageUrl": "https://example.com/images/p1001.jpg"
+}
+```
+
+### 8.4 导入结构化商品知识
+
+```http
+POST /api/rag/documents/products/import
+Authorization: Basic ...
+Content-Type: application/json
+
+{
+  "productId": "P1001",
+  "skuId": "SKU-P1001-BLK-42",
+  "title": "云跑 AirLite 缓震跑步鞋",
+  "brand": "Stride",
+  "category": "运动鞋",
+  "price": 499,
+  "stock": 38,
+  "imageUrl": "https://example.com/images/p1001.jpg",
+  "description": "轻量中底和透气鞋面，适合日常慢跑与城市通勤。",
+  "reviewSummary": "用户普遍反馈脚感轻、缓震明显，但雨天防滑一般。",
+  "guideText": "适合预算 500 元左右、需要兼顾通勤和慢跑的人群。",
+  "attributes": {
+    "颜色": "黑色",
+    "尺码": "40-44"
+  }
 }
 ```
 
 ## 9. 启动方式
 
-### 9.1 启动后端
+### 9.1 启动 Redis Stack
+
+如果本机没有 Redis Stack，先启动 Docker Desktop，然后在项目根目录执行：
+
+```powershell
+docker compose up -d redis-stack
+```
+
+确认端口连通：
+
+```powershell
+Test-NetConnection -ComputerName localhost -Port 6379
+```
+
+看到 `TcpTestSucceeded : True` 后再启动后端。
+
+如果不用 Docker，也可以自行启动 Redis Stack，只要保证：
+
+- Redis 服务监听在 `REDIS_HOST:REDIS_PORT`
+- RediSearch 模块可用
+- 端口 `6379` 没被其他普通 Redis 占用
+
+### 9.2 启动后端
 
 ```powershell
 mvn spring-boot:run
 ```
 
-### 9.2 启动前端
+如果启动时报：
+
+```text
+Failed to connect to localhost:6379
+```
+
+说明后端无法连接 Redis Stack。优先检查：
+
+- Docker Desktop 是否已启动
+- `docker compose ps` 里 `redis-stack` 是否为 running
+- `Test-NetConnection localhost -Port 6379` 是否成功
+- `REDIS_HOST` / `REDIS_PORT` 是否指向了实际 Redis Stack
+
+### 9.3 启动前端
 
 ```powershell
 cd frontend
@@ -468,20 +709,104 @@ node server.js 4173
 http://localhost:4173
 ```
 
+### 9.4 启动监控
+
+先启动后端，再启动 Prometheus 和 Grafana：
+
+```powershell
+docker compose up -d prometheus grafana
+```
+
+访问地址：
+
+- Prometheus：`http://localhost:9090`
+- Grafana：`http://localhost:3000`
+- Grafana 默认账号：`admin`
+- Grafana 默认密码：`admin`
+
+Grafana 打开后进入 `Dashboards -> Rag Agent -> RAGAgent HTTP 接口耗时`。如果 Prometheus `Status -> Targets` 里 `rag-agent` 是 down，先确认后端已经在宿主机 `18082` 端口启动，并且 `http://localhost:18082/actuator/prometheus` 能访问。
+
 ## 10. 测试覆盖情况
 
 当前重点覆盖了这些模块：
 
 - `ReActAgentTest`
-  验证工具注册、模型切换、记忆预加载、外部工具合并、脱敏恢复
+  验证导购工具注册、`mall_*` MCP 工具默认可用、模型切换、记忆预加载、外部工具合并、脱敏恢复、模型连接中断降级，以及 Agent 起点的小模型路由预检/回退
+- `BuiltInToolsTest`
+  验证商品知识库检索渲染和短期偏好更新
+- `ChatControllerTest`
+  验证统一 `/api/react` 入口的 multipart 图文输入、流式输出、模型参数和商城 Token/Basic Auth 透传
+- `ShoppingIntentRouterTest`
+  验证路由 JSON 解析、非法 JSON 回退和图文 media 透传到路由模型
+- `ShoppingRouteExecutorTest` / `SimpleTaskAgentTest`
+  验证高置信简单请求短路、限定工具注册、MCP 调用、低置信回退、多候选不自动加购和 MCP 不可用失败返回
 - `PromptSecurityFilterTest`
   验证注入过滤与敏感值恢复
 - `ParentChildDocumentIndexerTest`
-  验证父子块切分与入库元数据
+  验证父子块切分、商品元数据透传与入库元数据
 - `ParentChildDocumentRetrieverTest`
   验证子块命中后回查父块
 - `ParentChildHybridDocumentRetrieverTest`
   验证 dense + BM25 融合与截断
-- `HierarchicalMemoryAdvisorTest`
-  验证记忆写入与消息结构
+- `LongTermMemoryAdvisorTest` / `RedisChatMemoryRepositoryTest`
+  验证长期记忆注入、Redis 短期消息读写、TTL 刷新和淘汰摘要触发
 
+自动化与手工测试命令集中维护在 [TESTING.md](TESTING.md)。
+
+## 11. 下一步计划
+
+- 补充 `mall-mcp` 不可用场景的前端端到端验证，确保商品卡片、购物车和订单链路都稳定显示“商城 MCP 调用失败”。
+- 新增 ESCI/SQID 子集评测入口，使用 `Recall@K`、`NDCG@10`、`MRR` 衡量商品检索和排序效果。
+- 视需要再补一个商城登录辅助页；默认保持前端账号密码登录导购后端、后端代理登录商城并缓存 Token 的方案。
+## 当前状态更新：商城登录与 MCP 调用
+
+`rag-agent` 已改为通过 `mall-mcp` 接入商城业务，当前商品、购物车和普通订单处理按以下方式工作：
+
+- 商城业务调用：`mall_search_products`、`mall_get_product_detail`、`mall_add_to_cart`、`mall_view_cart`、`mall_prepare_order`、`mall_create_order` 固定作为 MCP 工具暴露给 Agent。
+- 直连代码删除：`BuiltInTools` 不再提供商品搜索、相似款推荐、加购、查购物车、改数量或移除商品的 function calling；项目也不再依赖 `mall-common`、OpenFeign、Nacos Discovery 和 LoadBalancer。
+- 登录态传递：前端或调用方把商城 token 放到 `X-Mall-Authorization` 请求头后，`ChatController` 显式传给 `ReActAgent`，再通过 Spring AI `toolContext(...)` 交给商城工具注册到 `mall-mcp` 上下文接口，不把 token 暴露给模型。
+- 兼容入口：如果当前请求只带了 `rag-agent` 的 Basic 登录账号，RAGAgent 会把用户名密码注册到 `mall-mcp`，由 `mall-mcp` 在需要受保护商城接口时登录并缓存 token。
+- 简单请求短路：高置信的查价/查库存/查属性/查购物车/明确加购/确认订单摘要请求，会被 Java 侧归一化为短路候选；`SimpleTaskAgent` 会调用简单任务小模型，并只暴露限定商城工具，工具内部再调用 `mall-mcp`；复杂、槽位不足、多候选或小模型异常的任务继续交给 Qwen 3.6 Plus。
+- A/B/C 三段式分发：A 类 FAQ/知识库事实查询进入 `SimpleTaskAgent` 知识库快车道；B 类单步商城任务进入 `SimpleTaskAgent` 商城 MCP 快车道；C 类复杂推荐、对比、多步规划和最终创建订单进入主模型 ReAct。快车道槽位不足、多候选或检索为空时降级主模型，不让小模型多轮自我纠错。
+- MCP 代码结构：`MallTool` 集中维护 `mall_*` 工具名称、描述和 schema；`MallMcpClient` 使用 `McpSyncClient` 执行 Streamable HTTP MCP 调用；`MallMcpOperations` 统一封装返回解析和错误包装；`MallMcpToolCallback` 基于 Spring AI `FunctionToolCallback` 在主模型工具调用时注册上下文并注入 `sessionId`；`ReActAgent` 用 `ToolCallbacks.from(...)` 生成内置工具回调，不再维护自研工具定义镜像；`SimpleTaskAgent` 的快车道工具负责把简单任务转换为对应 MCP 调用。
+- 日志脱敏：`LoginRequest` 和 `MallMcpContextRequest` 的 `toString()` 必须隐藏密码和 token，避免 Spring DEBUG 请求体日志打印敏感值。
+- 失败策略：`mall-mcp` 未启动、上下文注册失败或 MCP tool call 失败时，直接返回“商城 MCP 调用失败”。
+
+关键配置：
+
+```yaml
+app:
+  mall:
+    base-url: ${MALL_BASE_URL:http://localhost:8100}
+    authorization-header: ${MALL_AUTHORIZATION_HEADER:X-Mall-Authorization}
+    mcp:
+      base-url: ${MALL_MCP_BASE_URL:http://localhost:8120}
+      endpoint: /mcp
+      context-path: /internal/mcp/mall/context
+      context-secret: ${MCP_CONTEXT_SECRET:mall-mcp-dev-secret}
+      request-timeout: 5s
+```
+
+本地验证状态以 `mvn test` 为准，完整测试计划见 [TESTING.md](TESTING.md)。
+## 当前状态补充
+
+现在 `rag-agent` 的登录不再使用本地内存里的 `demo/demo123`，而是直接走商城 `mall-auth` 的登录接口；`mall-auth` 会查询商城数据库里的 `user` 表校验用户名和密码。当前实现仍是明文密码匹配，生产上如果要上真用户体系，需要再接密码加密和用户中心。
+## 当前状态更新：记忆模块 Spring AI 精简
+
+本节为记忆模块当前实现状态的最新记录。
+
+- 短期记忆已接入 Spring AI `ChatMemory` 抽象：`MemoryConfiguration` 创建 `MessageWindowChatMemory` 和 `MessageChatMemoryAdvisor`，主 `ReActAgent` 链路通过 ChatClient advisor 自动装载最近消息，并在正常流式响应结束后由 Spring AI 自动写回。
+- Redis 持久化由自研 `RedisChatMemoryRepository` 承担：继续复用 `memory:short:<conversationId>:messages` 和 `memory:short:<conversationId>:sequence`，保留 `ConversationMemoryEntry` 的 `sequence`、`timestamp`、`media` 和 `metadata`，并继续按 `app.memory.max-recent-age` 刷新 TTL 与淘汰过期消息。
+- 长期记忆保留自研：`LongTermMemoryAdvisor` 只负责把相关长期摘要注入 system prompt；`LongTermMemoryService` 负责向量库召回、短期淘汰消息摘要和 `memoryType=summary` 文档写入。
+- 主 ReAct 成功路径不再手动调用记忆写回；短路响应和模型流异常 fallback 仍通过 `ConversationMemoryService.rememberTurn(...)` 显式写入，避免绕过 ChatClient advisor 时丢失对话轮次。
+- 当前 Spring AI 版本为 `1.1.4`，暂不引入官方 Redis ChatMemoryRepository；该官方 Redis 记忆仓库主要出现在 Spring AI 2.x milestone 依赖线上，直接混用会带来 Spring Boot / Spring AI 版本不一致风险。
+- 本轮已删除旧的 `HierarchicalMemoryAdvisor` 和 `RedisSlidingWindowMemoryStore` 主实现，避免短期记忆同时由两套链路写入。
+
+测试覆盖同步调整：
+
+- `RedisChatMemoryRepositoryTest` 覆盖 Redis 会话列表读取、消息读取、TTL 刷新、按数量窗口淘汰、按时间过期淘汰和淘汰摘要触发。
+- `LongTermMemoryAdvisorTest` 覆盖长期记忆命中时注入 system message，以及未命中时不修改 prompt。
+- `ReActAgentTest` 覆盖主链路使用 ChatClient memory advisors、成功路径不重复手动写回、模型选择、外部工具合并、图片消息传递和流异常 fallback 记忆写入。
+- `ReActAgentShortCircuitMemoryTest` 覆盖快车道短路响应仍会显式写入记忆。
+
+本地验证状态：`mvn -q test` 已通过。

@@ -25,6 +25,13 @@ public class VectorStoreConfiguration {
     private static final String PARENT_INDEX = "parentIndex";
     private static final String DOCUMENT_HASH = "documentHash";
     private static final String BM25_TEXT = "bm25Text";
+    private static final String PRODUCT_ID = "productId";
+    private static final String SKU_ID = "skuId";
+    private static final String CATEGORY = "category";
+    private static final String BRAND = "brand";
+    private static final String PRICE = "price";
+    private static final String STOCK = "stock";
+    private static final String IMAGE_URL = "imageUrl";
 
     @Bean
     public JedisPooled jedisPooled(JedisConnectionFactory jedisConnectionFactory) {
@@ -55,6 +62,13 @@ public class VectorStoreConfiguration {
                         RedisVectorStore.MetadataField.numeric(PARENT_INDEX),
                         RedisVectorStore.MetadataField.tag(DOCUMENT_HASH),
                         RedisVectorStore.MetadataField.text(BM25_TEXT),
+                        RedisVectorStore.MetadataField.tag(PRODUCT_ID),
+                        RedisVectorStore.MetadataField.tag(SKU_ID),
+                        RedisVectorStore.MetadataField.tag(CATEGORY),
+                        RedisVectorStore.MetadataField.tag(BRAND),
+                        RedisVectorStore.MetadataField.numeric(PRICE),
+                        RedisVectorStore.MetadataField.numeric(STOCK),
+                        RedisVectorStore.MetadataField.text(IMAGE_URL),
                         RedisVectorStore.MetadataField.tag("userId"),
                         RedisVectorStore.MetadataField.tag("conversationKey"),
                         RedisVectorStore.MetadataField.tag("memoryType"),

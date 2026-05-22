@@ -2,6 +2,7 @@ package com.example.ragagent.service;
 
 import com.example.ragagent.config.ChatModelsProperties;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -12,7 +13,11 @@ import java.util.Map;
 @Component
 public class ChatModelRegistry {
 
-    private final ChatModelsProperties properties;
+    @Autowired
+    private ChatModelsProperties properties;
+
+    public ChatModelRegistry() {
+    }
 
     public ChatModelRegistry(ChatModelsProperties properties) {
         this.properties = properties;

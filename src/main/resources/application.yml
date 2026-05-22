@@ -1,13 +1,32 @@
-server:
-  port: 8080
+﻿server:
+  port: ${SERVER_PORT:18082}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5,0.95,0.99
 
 spring:
   application:
     name: rag-agent
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       timeout: 8000ms
       connect-timeout: 8000ms
     jedis:
@@ -21,16 +40,16 @@ spring:
       chat:
         completions-path: /chat/completions
         options:
-          model: qwen-plus-2025-07-28
+          model: qwen3.6-plus
       embedding:
         embeddings-path: /embeddings
         options:
-          model: text-embedding-v4
+          model: text-embedding-v3
     vectorstore:
       redis:
-        index-name: rag-index
-        prefix: "rag:"
-        initialize-schema: true
+        index-name: ${REDIS_VECTOR_INDEX:rag-index}
+        prefix: ${REDIS_VECTOR_PREFIX:rag:}
+        initialize-schema: ${REDIS_VECTOR_INITIALIZE_SCHEMA:true}
     mcp:
       client:
         enabled: true
@@ -56,12 +75,20 @@ app:
     summarization-concurrency: 2
     thread-queue-capacity: 100
   ai:
+    intent-router:
+      enabled: ${INTENT_ROUTER_ENABLED:true}
+      model: ${QWEN_VL_ROUTER_MODEL:qwen3-vl-8b-instruct}
+      confidence-threshold: ${INTENT_ROUTER_CONFIDENCE_THRESHOLD:0.7}
+    simple-task:
+      enabled: ${SIMPLE_TASK_ENABLED:true}
+      model: ${QWEN_SIMPLE_TASK_MODEL:${QWEN_VL_ROUTER_MODEL:qwen3-vl-8b-instruct}}
+      max-tokens: ${SIMPLE_TASK_MAX_TOKENS:800}
     chat-models:
       default-model: qwen
       items:
         qwen:
-          label: Qwen Plus
-          model: qwen-plus-2025-07-28
+          label: Qwen 3.6 Plus
+          model: ${QWEN_CHAT_MODEL:qwen3.6-plus}
         deepseek:
           label: DeepSeek V3.2
           model: deepseek-v3.2
@@ -71,8 +98,12 @@ app:
   mcp:
     websearch:
       api-key: ${DASHSCOPE_API_KEY:}
-  security:
-    demo-user:
-      username: demo
-      password: demo123
-      role: USER
+  mall:
+    base-url: ${MALL_BASE_URL:http://localhost:8100}
+    authorization-header: ${MALL_AUTHORIZATION_HEADER:X-Mall-Authorization}
+    mcp:
+      base-url: ${MALL_MCP_BASE_URL:http://localhost:8120}
+      endpoint: /mcp
+      context-path: /internal/mcp/mall/context
+      context-secret: ${MCP_CONTEXT_SECRET:mall-mcp-dev-secret}
+      request-timeout: 5s

@@ -5,6 +5,7 @@ import com.example.ragagent.rag.ChineseTextSegmenter;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.redis.RedisVectorStore;
 import org.springframework.ai.vectorstore.redis.autoconfigure.RedisVectorStoreProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import redis.clients.jedis.JedisPooled;
@@ -22,25 +23,38 @@ public class RedisBm25ChildChunkRetriever {
     private static final int BM25_TOP_K = 8;
     private static final String CONTENT_FIELD = RedisVectorStore.DEFAULT_CONTENT_FIELD_NAME;
 
-    private final JedisPooled jedisPooled;
-    private final String indexName;
-    private final String prefix;
-    private final ChineseTextSegmenter chineseTextSegmenter;
+    @Autowired
+    private JedisPooled jedisPooled;
 
-    /**
-     * 创建基于 Redis Stack FT.SEARCH 的 BM25 子分块检索器。
-     */
-    public RedisBm25ChildChunkRetriever(JedisPooled jedisPooled,
-                                        RedisVectorStoreProperties properties,
-                                        ChineseTextSegmenter chineseTextSegmenter) {
-        this.jedisPooled = jedisPooled;
+    @Autowired
+    private RedisVectorStoreProperties properties;
+
+    @Autowired
+    private ChineseTextSegmenter chineseTextSegmenter;
+
+    private String indexName;
+    private String prefix;
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
         this.indexName = StringUtils.hasText(properties.getIndexName())
                 ? properties.getIndexName()
                 : RedisVectorStore.DEFAULT_INDEX_NAME;
         this.prefix = StringUtils.hasText(properties.getPrefix())
                 ? properties.getPrefix()
                 : RedisVectorStore.DEFAULT_PREFIX;
+    }
+
+    public RedisBm25ChildChunkRetriever() {
+    }
+
+    public RedisBm25ChildChunkRetriever(JedisPooled jedisPooled,
+                                        RedisVectorStoreProperties properties,
+                                        ChineseTextSegmenter chineseTextSegmenter) {
+        this.jedisPooled = jedisPooled;
+        this.properties = properties;
         this.chineseTextSegmenter = chineseTextSegmenter;
+        init();
     }
 
     /**

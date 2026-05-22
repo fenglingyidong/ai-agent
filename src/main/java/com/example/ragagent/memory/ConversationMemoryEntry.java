@@ -3,6 +3,7 @@ package com.example.ragagent.memory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.MessageType;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.content.Media;
 import org.springframework.ai.content.MediaContent;
@@ -42,6 +43,9 @@ public record ConversationMemoryEntry(
         else if (message.getMessageType() == MessageType.ASSISTANT) {
             text = ((AssistantMessage) message).getText();
         }
+        else if (message.getMessageType() == MessageType.SYSTEM) {
+            text = ((SystemMessage) message).getText();
+        }
         List<Media> media = message instanceof MediaContent mediaContent
                 ? mediaContent.getMedia()
                 : List.of();
@@ -73,6 +77,12 @@ public record ConversationMemoryEntry(
                     .content(text)
                     .properties(metadata)
                     .media(media)
+                    .build();
+        }
+        if (type == MessageType.SYSTEM) {
+            return SystemMessage.builder()
+                    .text(text)
+                    .metadata(metadata)
                     .build();
         }
         throw new IllegalStateException("Unsupported memory message type: " + messageType);

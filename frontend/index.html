@@ -3,168 +3,197 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RAG Agent Console</title>
+    <title>电商智能导购工作台</title>
     <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
-<div class="page-glow page-glow-left"></div>
-<div class="page-glow page-glow-right"></div>
-
 <main class="app-shell">
-    <header class="hero panel">
-        <div class="eyebrow">RAG Agent Console</div>
-        <div class="hero-layout">
-            <div>
-                <h1>给这个后端项目配一套能直接使用的前端操作台</h1>
-                <p class="hero-copy">
-                    独立前端目录，默认连接本地 Spring Boot 服务，覆盖文档导入、RAG 对话、ReAct 调试和可切换回答模型。
-                </p>
-            </div>
-            <div class="hero-pills">
-                <span class="pill">HTTP Basic</span>
-                <span class="pill">RAG Chat</span>
-                <span class="pill">ReAct Stream</span>
-                <span class="pill">Model Switch</span>
-            </div>
+    <header class="topbar">
+        <div>
+            <div class="eyebrow">Shopping Agent</div>
+            <h1>电商智能导购工作台</h1>
         </div>
-        <div id="status-banner" class="status-banner">准备就绪，先确认后端已经运行在 http://localhost:8080。</div>
+        <div class="topbar-actions">
+            <button id="cart-open" class="icon-btn cart-btn" type="button" aria-label="打开购物车">
+                <span>购物车</span>
+                <strong id="cart-count">0</strong>
+            </button>
+        </div>
     </header>
 
-    <section class="dashboard-grid">
-        <aside class="panel settings-panel">
-            <div class="panel-head">
-                <div>
-                    <div class="section-tag">连接设置</div>
-                    <h2>后端接入</h2>
-                </div>
-                <p>默认使用项目里的演示账号。</p>
-            </div>
+    <div id="status-banner" class="status-banner">准备就绪，默认连接 http://localhost:18082。</div>
 
-            <form id="settings-form" class="stacked-form">
-                <label class="field">
-                    <span>API Base URL</span>
-                    <input id="api-base" name="apiBase" type="url" placeholder="http://localhost:8080" required>
-                </label>
-
-                <label class="field">
-                    <span>用户名</span>
-                    <input id="username" name="username" type="text" placeholder="demo" autocomplete="username" required>
-                </label>
-
-                <label class="field">
-                    <span>密码</span>
-                    <input id="password" name="password" type="password" placeholder="demo123" autocomplete="current-password" required>
-                </label>
-
-                <label class="field">
-                    <span>Session ID</span>
-                    <input id="session-id" name="sessionId" type="text" placeholder="frontend-session" required>
-                </label>
-
-                <div class="button-row">
-                    <button class="btn btn-primary" type="submit">保存设置</button>
-                    <button id="refresh-session" class="btn btn-secondary" type="button">换一个 Session</button>
-                </div>
-            </form>
-
-            <div class="note-card">
-                <h3>接口说明</h3>
-                <ul class="note-list">
-                    <li>聊天接口：GET /api/chat?sessionId=...&modelId=...&message=...</li>
-                    <li>ReAct 接口：GET /api/react?modelId=...&message=...</li>
-                    <li>模型列表：GET /api/models/chat</li>
-                    <li>导入接口：POST /api/rag/documents/import</li>
-                </ul>
-            </div>
-        </aside>
-
-        <section class="panel workspace-panel">
-            <div class="panel-head">
-                <div>
-                    <div class="section-tag">聊天工作台</div>
-                    <h2>对话与代理调试</h2>
-                </div>
-                <div class="mode-switch" role="tablist" aria-label="聊天模式">
-                    <button class="mode-btn is-active" type="button" data-mode="chat">RAG Chat</button>
-                    <button class="mode-btn" type="button" data-mode="react">ReAct Agent</button>
-                </div>
-            </div>
-
-            <div class="workspace-meta">
-                <div class="workspace-toolbar">
-                    <p id="mode-description">当前模式会调用 /api/chat，并携带 Session ID 以复用后端短期记忆。</p>
-                    <div class="tool-panel">
-                        <label class="field select-field">
-                            <span>回答模型</span>
-                            <select id="model-select" name="modelId"></select>
-                        </label>
-                        <button id="web-search-toggle" class="tool-toggle-btn" type="button" aria-pressed="false">联网搜索</button>
+    <section class="workspace-grid">
+        <aside class="side-panel">
+            <section class="panel">
+                <div class="panel-head">
+                    <div>
+                        <div class="section-tag">连接</div>
+                        <h2>后端设置</h2>
                     </div>
                 </div>
-                <p id="model-hint" class="model-hint">模型列表会从后端动态加载。无效选择会自动回退到默认模型。</p>
-                <div class="prompt-chips">
-                    <button class="chip" type="button" data-prompt="请总结我刚刚导入文档的核心信息。">文档总结</button>
-                    <button class="chip" type="button" data-prompt="解释一下这个系统里的混合检索和 RRF 融合思路。">RRF 解释</button>
-                    <button class="chip" type="button" data-prompt="请一步一步分析这个问题，并说明你会调用哪些工具。">ReAct 推理</button>
+
+                <form id="settings-form" class="stacked-form">
+                    <label class="field">
+                        <span>API Base URL</span>
+                        <input id="api-base" name="apiBase" type="url" placeholder="http://localhost:18082" required>
+                    </label>
+                    <label class="field">
+                        <span>用户名</span>
+                        <input id="username" name="username" type="text" placeholder="alice" autocomplete="username" required>
+                    </label>
+                    <label class="field">
+                        <span>密码</span>
+                        <input id="password" name="password" type="password" placeholder="demo123" autocomplete="current-password" required>
+                    </label>
+                    <label class="field">
+                        <span>Session ID</span>
+                        <input id="session-id" name="sessionId" type="text" placeholder="shopping-session" required>
+                    </label>
+                    <label class="field">
+                        <span>回答模型</span>
+                        <select id="model-select" name="modelId"></select>
+                    </label>
+                    <div class="inline-actions">
+                        <button class="btn btn-primary" type="submit">保存</button>
+                        <button id="refresh-session" class="btn btn-secondary" type="button">新会话</button>
+                    </div>
+                    <button id="web-search-toggle" class="toggle-btn" type="button" aria-pressed="false">联网搜索</button>
+                </form>
+            </section>
+
+            <section class="panel">
+                <div class="panel-head">
+                    <div>
+                        <div class="section-tag">快捷需求</div>
+                        <h2>导购场景</h2>
+                    </div>
                 </div>
+                <div class="prompt-list">
+                    <button class="prompt-chip" type="button" data-prompt="帮我推荐一双500元以内，适合通勤和慢跑的男款运动鞋。">通勤慢跑鞋</button>
+                    <button class="prompt-chip" type="button" data-prompt="我想买一件夏天露营穿的防晒外套，轻薄、透气、预算300元内。">露营防晒衣</button>
+                    <button class="prompt-chip" type="button" data-prompt="对比 P1001 和 P1002，告诉我哪款更适合长时间走路。">商品对比</button>
+                    <button class="prompt-chip" type="button" data-prompt="查看我的购物车，并提醒我哪些商品还需要确认尺码。">购物车检查</button>
+                </div>
+            </section>
+
+            <section class="panel compact-panel">
+                <div class="panel-head">
+                    <div>
+                        <div class="section-tag">商品知识</div>
+                        <h2>快速导入</h2>
+                    </div>
+                </div>
+                <form id="product-import-form" class="stacked-form">
+                    <label class="field">
+                        <span>商品ID</span>
+                        <input id="product-id" name="productId" type="text" placeholder="P1001">
+                    </label>
+                    <label class="field">
+                        <span>标题</span>
+                        <input id="product-title" name="title" type="text" placeholder="云跑 AirLite 缓震跑步鞋" required>
+                    </label>
+                    <label class="field field-pair">
+                        <span>品牌 / 类目</span>
+                        <div class="two-inputs">
+                            <input id="product-brand" name="brand" type="text" placeholder="Stride">
+                            <input id="product-category" name="category" type="text" placeholder="运动鞋">
+                        </div>
+                    </label>
+                    <label class="field field-pair">
+                        <span>价格 / 库存</span>
+                        <div class="two-inputs">
+                            <input id="product-price" name="price" type="number" min="0" placeholder="499">
+                            <input id="product-stock" name="stock" type="number" min="0" placeholder="38">
+                        </div>
+                    </label>
+                    <label class="field">
+                        <span>导购话术</span>
+                        <textarea id="product-guide" name="guideText" rows="4" placeholder="适合预算500元左右、需要兼顾通勤和慢跑的人群。"></textarea>
+                    </label>
+                    <button id="product-import-button" class="btn btn-secondary" type="submit">导入商品知识</button>
+                </form>
+            </section>
+        </aside>
+
+        <section class="chat-panel panel">
+            <div class="panel-head chat-head">
+                <div>
+                    <div class="section-tag">图文导购</div>
+                    <h2>聊天区</h2>
+                </div>
+                <button id="clear-chat" class="btn btn-ghost" type="button">清空</button>
             </div>
 
             <div id="chat-log" class="chat-log" aria-live="polite"></div>
 
             <form id="chat-form" class="composer">
-                <label class="composer-field" for="message-input">
-                    <span class="sr-only">输入消息</span>
-                    <textarea id="message-input" rows="4" placeholder="输入问题，前端会使用 Basic Auth 调用后端接口。"></textarea>
+                <div id="image-preview-list" class="image-preview-list"></div>
+                <label class="upload-strip" for="image-input">
+                    <input id="image-input" type="file" accept="image/*" multiple>
+                    <span class="upload-icon">+</span>
+                    <span>上传商品图</span>
                 </label>
-                <div class="button-row">
+                <label class="field image-url-field">
+                    <span>图片 URL</span>
+                    <input id="image-url-input" type="url" placeholder="https://example.com/product.jpg">
+                </label>
+                <label class="composer-field" for="message-input">
+                    <span class="sr-only">输入导购需求</span>
+                    <textarea id="message-input" rows="4" placeholder="描述预算、品类、尺码、颜色、风格，或直接上传图片找相似款。"></textarea>
+                </label>
+                <div class="composer-actions">
                     <button id="send-button" class="btn btn-primary" type="submit">发送</button>
                     <button id="stop-button" class="btn btn-secondary" type="button" disabled>停止</button>
-                    <button id="clear-chat" class="btn btn-ghost" type="button">清空对话</button>
                 </div>
             </form>
         </section>
 
-        <section class="panel import-panel">
-            <div class="panel-head">
-                <div>
-                    <div class="section-tag">知识导入</div>
-                    <h2>手动写入 RAG 文档</h2>
+        <aside class="right-panel">
+            <section class="panel">
+                <div class="panel-head">
+                    <div>
+                        <div class="section-tag">候选商品</div>
+                        <h2>商品卡片</h2>
+                    </div>
                 </div>
-                <p>把原始文本送进父子文档索引器。</p>
-            </div>
+                <div id="product-grid" class="product-grid"></div>
+            </section>
 
-            <form id="import-form" class="stacked-form">
-                <label class="field">
-                    <span>Source ID</span>
-                    <input id="source-id" name="sourceId" type="text" placeholder="doc-001">
-                </label>
-
-                <label class="field">
-                    <span>标题</span>
-                    <input id="doc-title" name="title" type="text" placeholder="Spring AI RAG 设计说明">
-                </label>
-
-                <label class="field">
-                    <span>文档内容</span>
-                    <textarea id="doc-content" name="content" rows="10" placeholder="粘贴需要导入到 RAG 的原始文档内容。" required></textarea>
-                </label>
-
-                <div class="button-row">
-                    <button id="import-button" class="btn btn-primary" type="submit">导入文档</button>
-                    <button id="clear-import" class="btn btn-secondary" type="button">清空表单</button>
+            <section class="panel compare-panel">
+                <div class="panel-head">
+                    <div>
+                        <div class="section-tag">Compare</div>
+                        <h2>对比视图</h2>
+                    </div>
+                    <button id="clear-compare" class="btn btn-ghost" type="button">清空</button>
                 </div>
-            </form>
-
-            <div class="import-results">
-                <div class="result-head">
-                    <h3>最近导入结果</h3>
-                    <button id="clear-history" class="btn btn-ghost" type="button">清空记录</button>
-                </div>
-                <div id="import-history" class="history-list"></div>
-            </div>
-        </section>
+                <div id="compare-view" class="compare-view"></div>
+            </section>
+        </aside>
     </section>
 </main>
+
+<aside id="cart-drawer" class="cart-drawer" aria-hidden="true">
+    <div class="drawer-scrim" data-close-cart></div>
+    <section class="drawer-panel">
+        <div class="drawer-head">
+            <div>
+                <div class="section-tag">Cart</div>
+                <h2>购物车</h2>
+            </div>
+            <button id="cart-close" class="icon-btn" type="button" aria-label="关闭购物车">×</button>
+        </div>
+        <div id="cart-items" class="cart-items"></div>
+        <div class="drawer-foot">
+            <div>
+                <span>预估合计</span>
+                <strong id="cart-total">¥0</strong>
+            </div>
+            <button id="cart-check" class="btn btn-primary" type="button">让 Agent 检查购物车</button>
+        </div>
+    </section>
+</aside>
 
 <script type="module" src="./app.js"></script>
 </body>

@@ -6,6 +6,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.context.annotation.Primary;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -23,12 +24,15 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
     private static final int MIN_CHILD_RESULTS_TO_KEEP = 4;
     private static final int MAX_CHILD_RESULTS_TO_CONSIDER = 12;
 
-    private final ParentChildDocumentRetriever denseRetriever;
-    private final RedisBm25ChildChunkRetriever bm25Retriever;
+    @Autowired
+    private ParentChildDocumentRetriever denseRetriever;
 
-    /**
-     * 创建父子分块混合检索器，组合 dense 与 BM25 两路 child chunk 召回。
-     */
+    @Autowired
+    private RedisBm25ChildChunkRetriever bm25Retriever;
+
+    public ParentChildHybridDocumentRetriever() {
+    }
+
     public ParentChildHybridDocumentRetriever(ParentChildDocumentRetriever denseRetriever,
                                               RedisBm25ChildChunkRetriever bm25Retriever) {
         this.denseRetriever = denseRetriever;

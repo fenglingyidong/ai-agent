@@ -13,6 +13,13 @@ public final class RagDocumentConstants {
     public static final String METADATA_PARENT_INDEX = "parentIndex";
     public static final String METADATA_DOCUMENT_HASH = "documentHash";
     public static final String METADATA_BM25_TEXT = "bm25Text";
+    public static final String METADATA_PRODUCT_ID = "productId";
+    public static final String METADATA_SKU_ID = "skuId";
+    public static final String METADATA_CATEGORY = "category";
+    public static final String METADATA_BRAND = "brand";
+    public static final String METADATA_PRICE = "price";
+    public static final String METADATA_STOCK = "stock";
+    public static final String METADATA_IMAGE_URL = "imageUrl";
     public static final String DEFAULT_SOURCE_ID = "default-source";
 
     private RagDocumentConstants() {

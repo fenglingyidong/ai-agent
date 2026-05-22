@@ -10,6 +10,8 @@ import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -26,16 +28,28 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
     private static final int DENSE_FALLBACK_TOP_K = 32;
     private static final int MAX_PARENT_RESULTS = 6;
 
-    private final VectorStore vectorStore;
-    private final ParentDocumentStore parentDocumentStore;
-    private final VectorStoreDocumentRetriever childDocumentRetriever;
+    @Autowired
+    private VectorStore vectorStore;
+
+    @Autowired
+    private ParentDocumentStore parentDocumentStore;
+
+    private VectorStoreDocumentRetriever childDocumentRetriever;
 
     /**
      * 创建父子分块检索器，先查子分块，再回查对应父分块。
      */
+    public ParentChildDocumentRetriever() {
+    }
+
     public ParentChildDocumentRetriever(VectorStore vectorStore, ParentDocumentStore parentDocumentStore) {
         this.vectorStore = vectorStore;
         this.parentDocumentStore = parentDocumentStore;
+        init();
+    }
+
+    @PostConstruct
+    public void init() {
         this.childDocumentRetriever = VectorStoreDocumentRetriever.builder()
                 .vectorStore(vectorStore)
                 .topK(CHILD_TOP_K)

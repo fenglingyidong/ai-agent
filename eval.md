@@ -74,3 +74,28 @@ strategy=hybrid-rrf-dynamic-truncation
 
 - 设计语义缓存策略，结合Query Embedding、相似度阈值与缓存过期机制复用历史回答，降低重复请求下的LLM调用次数和端到端响应延迟。
 - 设计父子索引RAG检索方案，融合Dense/BM25双路异步召回与RRF排序，并通过动态截断在Recall@3=0.72、Recall@5=0.80持平的情况下，将平均返回父块数减少约19.3%。
+
+
+
+电商导购评测规划：
+
+当前 DuReader 结果只能说明通用中文 RAG 召回能力，不能直接证明电商导购效果。后续电商导购主评测建议改为：
+
+- Amazon Shopping Queries Dataset / ESCI：用于商品搜索相关性评测，适合评测 `Recall@K`、`NDCG@10`、`MRR`。
+- SQID：在 Shopping Queries 基础上补充商品图片和视觉特征，适合评测文本 query + 商品图的多模态商品检索。
+- Amazon Reviews 2023：适合补充评价摘要、偏好建模、推荐解释和用户-商品交互实验，不建议作为唯一搜索相关性评测集。
+
+建议指标：
+
+```text
+商品召回：Recall@3 / Recall@5 / Recall@10
+排序质量：NDCG@10 / MRR
+Agent链路：工具调用准确率、加购参数校验通过率、敏感信息泄露样本数
+上下文成本：平均返回父块数、平均输入Token、端到端延迟
+```
+
+当前状态：
+
+- 已完成导购工具和商品元数据入库的代码改造。
+- 尚未新增 ESCI/SQID 评测 Runner。
+- DuReader 消融数据暂时保留，用于证明父子索引、混合召回、RRF 和动态截断策略本身有效。

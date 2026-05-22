@@ -3,6 +3,7 @@ package com.example.ragagent.rag.impl;
 import com.example.ragagent.rag.RagDocumentConstants;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.ai.document.Document;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -18,16 +19,11 @@ import java.util.Set;
 @Component
 public class ParentDocumentStore {
 
-    private final StringRedisTemplate redisTemplate;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
-    /**
-     * 创建父文档存储组件，用于把完整父分块持久化到 Redis。
-     */
-    public ParentDocumentStore(StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
-        this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private ObjectMapper objectMapper;
 
     /**
      * 保存单个父分块，并维护 sourceId 到 parentId 的映射关系。
@@ -38,6 +34,19 @@ public class ParentDocumentStore {
                      String text,
                      int parentIndex,
                      String documentHash) {
+        save(parentId, sourceId, title, text, parentIndex, documentHash, Map.of());
+    }
+
+    /**
+     * 保存单个父分块，并附加商品域元数据。
+     */
+    public void save(String parentId,
+                     String sourceId,
+                     String title,
+                     String text,
+                     int parentIndex,
+                     String documentHash,
+                     Map<String, Object> extraMetadata) {
         String normalizedSourceId = normalizeSourceId(sourceId);
         StoredParentDocument parentDocument = new StoredParentDocument(
                 parentId,
@@ -45,7 +54,8 @@ public class ParentDocumentStore {
                 title == null ? "" : title.trim(),
                 text == null ? "" : text.trim(),
                 parentIndex,
-                documentHash == null ? "" : documentHash
+                documentHash == null ? "" : documentHash,
+                sanitizeMetadata(extraMetadata)
         );
         redisTemplate.opsForValue().set(parentKey(parentId), serialize(parentDocument));
         redisTemplate.opsForSet().add(sourceParentSetKey(normalizedSourceId), parentId);
@@ -67,6 +77,7 @@ public class ParentDocumentStore {
         metadata.put(RagDocumentConstants.METADATA_TITLE, parentDocument.title());
         metadata.put(RagDocumentConstants.METADATA_PARENT_INDEX, parentDocument.parentIndex());
         metadata.put(RagDocumentConstants.METADATA_DOCUMENT_HASH, parentDocument.documentHash());
+        metadata.putAll(parentDocument.extraMetadata());
 
         return Optional.of(Document.builder()
                 .id(parentDocument.parentId())
@@ -140,13 +151,27 @@ public class ParentDocumentStore {
         }
     }
 
+    private Map<String, Object> sanitizeMetadata(Map<String, Object> metadata) {
+        if (metadata == null || metadata.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        metadata.forEach((key, value) -> {
+            if (StringUtils.hasText(key) && value != null) {
+                sanitized.put(key.trim(), value);
+            }
+        });
+        return Map.copyOf(sanitized);
+    }
+
     private record StoredParentDocument(
             String parentId,
             String sourceId,
             String title,
             String text,
             int parentIndex,
-            String documentHash
+            String documentHash,
+            Map<String, Object> extraMetadata
     ) {
 
         /**
@@ -158,6 +183,7 @@ public class ParentDocumentStore {
             title = title == null ? "" : title;
             text = text == null ? "" : text;
             documentHash = documentHash == null ? "" : documentHash;
+            extraMetadata = extraMetadata == null ? Map.of() : Map.copyOf(extraMetadata);
         }
     }
 }

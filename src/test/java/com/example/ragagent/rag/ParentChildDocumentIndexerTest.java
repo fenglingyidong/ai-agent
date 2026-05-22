@@ -9,6 +9,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.Filter;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -52,7 +53,8 @@ class ParentChildDocumentIndexerTest {
                 org.mockito.ArgumentMatchers.eq("Guide"),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt(),
-                org.mockito.ArgumentMatchers.anyString()
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq(Map.of())
         );
     }
 
@@ -73,7 +75,8 @@ class ParentChildDocumentIndexerTest {
                 "Guide",
                 "Parent text.",
                 0,
-                "5be0ad65a776b8a3e0619539967a00dc6f8b123082125a0f2c17f7ca7349b62b"
+                "5be0ad65a776b8a3e0619539967a00dc6f8b123082125a0f2c17f7ca7349b62b",
+                Map.of()
         );
     }
 
@@ -108,5 +111,44 @@ class ParentChildDocumentIndexerTest {
         assertEquals(firstParentId, secondParentId);
         verify(vectorStore, times(2)).delete(org.mockito.ArgumentMatchers.any(Filter.Expression.class));
         verify(parentDocumentStore, times(2)).deleteBySourceId("source-stable");
+    }
+
+    @Test
+    void indexDocumentShouldAttachProductMetadataToChildChunksAndParentStore() {
+        VectorStore vectorStore = mock(VectorStore.class);
+        ParentDocumentStore parentDocumentStore = mock(ParentDocumentStore.class);
+        ParentChildDocumentIndexer indexer = new ParentChildDocumentIndexer(vectorStore, parentDocumentStore);
+
+        indexer.indexDocumentDetails(
+                "product-P1001",
+                "云跑 AirLite 缓震跑步鞋",
+                "商品描述：轻量缓震，适合通勤慢跑。",
+                Map.of(
+                        "productId", "P1001",
+                        "skuId", "SKU-P1001-BLK-42",
+                        "category", "运动鞋",
+                        "brand", "Stride",
+                        "price", 499,
+                        "stock", 38
+                )
+        );
+
+        ArgumentCaptor<List> childDocumentsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(vectorStore).add(childDocumentsCaptor.capture());
+        @SuppressWarnings("unchecked")
+        List<Document> childDocuments = childDocumentsCaptor.getValue();
+
+        assertEquals("P1001", childDocuments.get(0).getMetadata().get("productId"));
+        assertEquals("SKU-P1001-BLK-42", childDocuments.get(0).getMetadata().get("skuId"));
+        assertEquals("运动鞋", childDocuments.get(0).getMetadata().get("category"));
+        verify(parentDocumentStore).save(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("product-P1001"),
+                org.mockito.ArgumentMatchers.eq("云跑 AirLite 缓震跑步鞋"),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.argThat(metadata -> "P1001".equals(metadata.get("productId")))
+        );
     }
 }

@@ -1,5 +1,9 @@
 package com.example.ragagent.config;
 
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,6 +13,19 @@ import java.util.concurrent.Executor;
 
 @Configuration
 public class MemoryConfiguration {
+
+    @Bean
+    public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository, HierarchicalMemoryProperties properties) {
+        return MessageWindowChatMemory.builder()
+                .chatMemoryRepository(chatMemoryRepository)
+                .maxMessages(properties.getMaxRecentMessages())
+                .build();
+    }
+
+    @Bean
+    public MessageChatMemoryAdvisor messageChatMemoryAdvisor(ChatMemory chatMemory) {
+        return MessageChatMemoryAdvisor.builder(chatMemory).build();
+    }
 
     @Bean
     @Qualifier("hierarchicalMemoryExecutor")

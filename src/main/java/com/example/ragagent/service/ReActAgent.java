@@ -1,261 +1,309 @@
 package com.example.ragagent.service;
 
-import com.example.ragagent.memory.HierarchicalMemoryAdvisor;
+import com.example.ragagent.mall.MallMcpClient;
+import com.example.ragagent.mall.MallMcpContextClient;
+import com.example.ragagent.memory.ConversationMemoryService;
+import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.tools.BuiltInTools;
-import jakarta.servlet.http.HttpServletRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.chat.model.ToolContext;
+import org.springframework.ai.content.Media;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
-import org.springframework.ai.tool.metadata.ToolMetadata;
-import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
-import org.springframework.web.context.request.RequestAttributes;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 public class ReActAgent {
 
     private static final Logger log = LoggerFactory.getLogger(ReActAgent.class);
-
-    static final String DEFAULT_USER_ID = "anonymous";
-    static final String DEFAULT_SESSION_ID = "default";
+    private static final String TOOL_CONTEXT_USER_ID = "userId";
+    private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
+    private static final String TOOL_CONTEXT_MALL_TOKEN = "mallToken";
+    private static final String TOOL_CONTEXT_MALL_USERNAME = "mallUsername";
+    private static final String TOOL_CONTEXT_MALL_PASSWORD = "mallPassword";
 
     private static final String REACT_SYSTEM_PROMPT_TEMPLATE = """
-            你是一个采用 ReAct 风格工作的 AI 助手。
-            你需要先在内部完成分步推理，并在需要时主动调用工具。
+            你是多模态电商智能导购 Agent，负责帮助用户完成选品、对比、追问、推荐和加购。
+            你需要先在内部完成分步判断，并在需要时主动调用商品、库存、购物车、订单、偏好记忆或外部 MCP 工具。
             不要向用户暴露内部推理过程、工具调用参数、JSON 结构或中间 Observation，只输出最终答案。
 
-            可用工具：
-            %s
+            工具能力：
+            已注册工具的名称、描述和参数 schema 由 Spring AI tool calling 提供，以实际注册结果为准。
 
             规则：
-            1. 能直接回答时直接回答。
-            2. 当答案依赖知识库事实、内部文档、政策或说明时，优先使用 searchKnowledgeBase。
-            3. %s
-            4. 如果工具返回的信息不足，请明确说明不确定性，不要编造。
+            1. 当用户需求不完整时，优先追问预算、品类、品牌、尺码、颜色、使用场景和禁忌条件。
+            2. %s
+            3. 对不需要实时商城数据的泛化推荐、品类对比、预算建议，或用户明确要求“只用几句话回答”的场景，优先直接给结论；需要补充知识库事实时再调用 searchProductKnowledge，不要为了推荐而强制调用 mall_search_products。
+            4. 加购前需要明确 SKU 和数量；创建订单必须先 mall_prepare_order，再在用户明确二次确认后调用 mall_create_order。
+            5. 可以调用 updateShoppingPreference 维护本轮短期偏好，但不要把敏感信息写入偏好状态。
+            6. 如果 mall_* 工具返回 ok=false、MALL_ERROR 或“商城 MCP 调用失败”，直接告诉用户商城 MCP 调用失败，不要编造商品、价格、库存或订单结果。
+            7. %s
+            8. 如果工具返回的信息不足，请明确说明不确定性，不要编造。
             """;
 
-    private final ChatClient reactChatClient;
     private final BuiltInTools builtInTools;
-    private final HierarchicalMemoryAdvisor hierarchicalMemoryAdvisor;
+    private final LongTermMemoryAdvisor longTermMemoryAdvisor;
+    private final MessageChatMemoryAdvisor messageChatMemoryAdvisor;
+    private final ConversationMemoryService conversationMemoryService;
     private final PromptSecurityFilter promptSecurityFilter;
     private final ChatModelRegistry chatModelRegistry;
-    private final Map<String, ToolDefinitionEntry> builtInToolDefinitions;
+    private final ShoppingRouteExecutor shoppingRouteExecutor;
     private final List<ToolCallbackProvider> externalToolCallbackProviders;
+    private final ObjectMapper objectMapper;
+    private final MallMcpOperations mallMcpOperations;
+    private final MallMcpContextClient mallMcpContextClient;
+    private final ChatClient reactChatClient;
+    private final List<ToolCallback> builtInToolCallbacks;
 
     @Autowired
     public ReActAgent(ChatClient.Builder builder,
                       BuiltInTools builtInTools,
-                      HierarchicalMemoryAdvisor hierarchicalMemoryAdvisor,
+                      LongTermMemoryAdvisor longTermMemoryAdvisor,
+                      MessageChatMemoryAdvisor messageChatMemoryAdvisor,
+                      ConversationMemoryService conversationMemoryService,
                       PromptSecurityFilter promptSecurityFilter,
                       ChatModelRegistry chatModelRegistry,
-                      List<ToolCallbackProvider> externalToolCallbackProviders) {
-        this(
-                builder.clone().build(),
-                builtInTools,
-                hierarchicalMemoryAdvisor,
-                promptSecurityFilter,
-                chatModelRegistry,
-                externalToolCallbackProviders
-        );
-    }
-
-    public ReActAgent(ChatClient reactChatClient,
-                      ChatClient finalAnswerChatClient,
-                      BuiltInTools builtInTools,
-                      HierarchicalMemoryAdvisor hierarchicalMemoryAdvisor) {
-        this(
-                reactChatClient,
-                builtInTools,
-                hierarchicalMemoryAdvisor,
-                new PromptSecurityFilter(),
-                null,
-                List.of()
-        );
-    }
-
-    public ReActAgent(ChatClient reactChatClient,
-                      ChatClient finalAnswerChatClient,
-                      BuiltInTools builtInTools,
-                      HierarchicalMemoryAdvisor hierarchicalMemoryAdvisor,
-                      PromptSecurityFilter promptSecurityFilter,
-                      ChatModelRegistry chatModelRegistry) {
-        this(
-                reactChatClient,
-                builtInTools,
-                hierarchicalMemoryAdvisor,
-                promptSecurityFilter,
-                chatModelRegistry,
-                List.of()
-        );
-    }
-
-    private ReActAgent(ChatClient reactChatClient,
-                       BuiltInTools builtInTools,
-                       HierarchicalMemoryAdvisor hierarchicalMemoryAdvisor,
-                       PromptSecurityFilter promptSecurityFilter,
-                       ChatModelRegistry chatModelRegistry,
-                       List<ToolCallbackProvider> externalToolCallbackProviders) {
-        this.reactChatClient = reactChatClient;
+                      ShoppingRouteExecutor shoppingRouteExecutor,
+                      List<ToolCallbackProvider> externalToolCallbackProviders,
+                      ObjectMapper objectMapper,
+                      MallMcpClient mallMcpClient,
+                      MallMcpContextClient mallMcpContextClient) {
         this.builtInTools = builtInTools;
-        this.hierarchicalMemoryAdvisor = hierarchicalMemoryAdvisor;
+        this.longTermMemoryAdvisor = longTermMemoryAdvisor;
+        this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
+        this.conversationMemoryService = conversationMemoryService;
         this.promptSecurityFilter = promptSecurityFilter;
         this.chatModelRegistry = chatModelRegistry;
+        this.shoppingRouteExecutor = shoppingRouteExecutor;
         this.externalToolCallbackProviders = externalToolCallbackProviders == null
                 ? List.of()
                 : List.copyOf(externalToolCallbackProviders);
-        this.builtInToolDefinitions = loadBuiltInToolDefinitions();
+        this.objectMapper = objectMapper;
+        this.mallMcpOperations = objectMapper == null || mallMcpClient == null
+                ? null
+                : new MallMcpOperations(objectMapper, mallMcpClient);
+        this.mallMcpContextClient = mallMcpContextClient;
+        this.reactChatClient = builder.clone().build();
+        this.builtInToolCallbacks = loadBuiltInToolCallbacks();
     }
 
-    public String run(String userMessage) {
-        return join(runStream(resolveCurrentUserId(), resolveCurrentSessionId(), userMessage));
-    }
-
-    public Flux<String> runStream(String userMessage) {
-        return runStream(resolveCurrentUserId(), resolveCurrentSessionId(), null, userMessage, false);
-    }
-
-    public Flux<String> runStream(String userMessage, String modelId) {
-        return runStream(resolveCurrentUserId(), resolveCurrentSessionId(), modelId, userMessage, false);
-    }
-
-    public Flux<String> runStream(String userMessage, String modelId, boolean webSearchEnabled) {
-        return runStream(resolveCurrentUserId(), resolveCurrentSessionId(), modelId, userMessage, webSearchEnabled);
-    }
-
-    public String run(String userId, String sessionId, String userMessage) {
-        return join(runStream(userId, sessionId, null, userMessage, false));
-    }
-
-    public Flux<String> runStream(String userId, String sessionId, String userMessage) {
-        return runStream(userId, sessionId, null, userMessage, false);
-    }
-
-    public Flux<String> runStream(String userId, String sessionId, String modelId, String userMessage) {
-        return runStream(userId, sessionId, modelId, userMessage, false);
+    public ReActAgent(ChatClient.Builder builder,
+                      BuiltInTools builtInTools,
+                      LongTermMemoryAdvisor longTermMemoryAdvisor,
+                      MessageChatMemoryAdvisor messageChatMemoryAdvisor,
+                      ConversationMemoryService conversationMemoryService,
+                      PromptSecurityFilter promptSecurityFilter,
+                      ChatModelRegistry chatModelRegistry,
+                      ShoppingRouteExecutor shoppingRouteExecutor,
+                      List<ToolCallbackProvider> externalToolCallbackProviders) {
+        this(
+                builder,
+                builtInTools,
+                longTermMemoryAdvisor,
+                messageChatMemoryAdvisor,
+                conversationMemoryService,
+                promptSecurityFilter,
+                chatModelRegistry,
+                shoppingRouteExecutor,
+                externalToolCallbackProviders,
+                new ObjectMapper(),
+                null,
+                null
+        );
     }
 
     public Flux<String> runStream(String userId,
                                   String sessionId,
                                   String modelId,
                                   String userMessage,
-                                  boolean webSearchEnabled) {
-        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(userMessage);
-        logRequestTransformation(userId, sessionId, modelId, webSearchEnabled, securedPrompt);
-
-        Map<String, ToolDefinitionEntry> activeToolDefinitions =
-                resolveActiveToolDefinitions(userId, sessionId, webSearchEnabled);
-        List<Message> history = buildConversationHistory(
+                                  boolean webSearchEnabled,
+                                  List<Media> media,
+                                  String mallToken,
+                                  String mallUsername,
+                                  String mallPassword) {
+        RoutedAgentRequest routedRequest = routeBeforeCore(
                 userId,
                 sessionId,
-                securedPrompt.safeInput(),
-                securedPrompt.modelInput(),
-                activeToolDefinitions,
-                webSearchEnabled
+                userMessage,
+                media,
+                mallToken,
+                mallUsername,
+                mallPassword
+        );
+        if (routedRequest.shortCircuitStream() != null) {
+            return rememberShortCircuitTurn(userId, sessionId, routedRequest.userMessage(), routedRequest.shortCircuitStream());
+        }
+
+        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(routedRequest.userMessage());
+        return runCoreStream(
+                userId,
+                sessionId,
+                modelId,
+                webSearchEnabled,
+                routedRequest.media(),
+                routedRequest.mallToolsAllowed(),
+                mallToken,
+                mallUsername,
+                mallPassword,
+                securedPrompt
+        );
+    }
+
+    private Flux<String> rememberShortCircuitTurn(String userId,
+                                                  String sessionId,
+                                                  String userMessage,
+                                                  Flux<String> shortCircuitStream) {
+        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(userMessage);
+        return Flux.defer(() -> {
+            StringBuilder answerBuilder = new StringBuilder();
+            return shortCircuitStream
+                    .doOnNext(answerBuilder::append)
+                    .doOnComplete(() -> conversationMemoryService.rememberTurn(
+                            userId,
+                            sessionId,
+                            securedPrompt.modelInput(),
+                            answerBuilder.toString().trim()
+                    ));
+        });
+    }
+
+    private Flux<String> runCoreStream(String userId,
+                                       String sessionId,
+                                        String modelId,
+                                        boolean webSearchEnabled,
+                                        List<Media> media,
+                                        boolean mallToolsAllowed,
+                                        String mallToken,
+                                        String mallUsername,
+                                        String mallPassword,
+                                        PromptSecurityFilter.SecuredPrompt securedPrompt) {
+        ActiveToolCallbacks activeTools =
+                resolveActiveToolCallbacks(userId, sessionId, webSearchEnabled, mallToolsAllowed, mallToken, mallUsername, mallPassword);
+        logAgentStart(userId, sessionId, modelId, webSearchEnabled, mediaCount(media), activeTools.callbacks().size(), securedPrompt);
+
+        Message currentUserMessage = buildCurrentUserMessage(securedPrompt.modelInput(), media);
+        log.debug(
+                "ReAct memory: userId={}, sessionId={}, webSearchEnabled={}, mediaCount={}, toolCount={}, conversationId={}",
+                userId,
+                sessionId,
+                webSearchEnabled,
+                mediaCount(media),
+                activeTools.callbacks().size(),
+                conversationMemoryService.buildConversationId(userId, sessionId)
         );
 
         return streamLlmResponse(
                 userId,
                 sessionId,
                 modelId,
-                history,
-                activeToolDefinitions,
+                currentUserMessage,
+                activeTools,
                 webSearchEnabled,
+                mallToken,
+                mallUsername,
+                mallPassword,
                 securedPrompt
         );
     }
 
-    private List<Message> buildConversationHistory(String userId,
-                                                   String sessionId,
-                                                   String memoryLookupText,
-                                                   String modelUserMessage,
-                                                   Map<String, ToolDefinitionEntry> activeToolDefinitions,
-                                                   boolean webSearchEnabled) {
-        List<Message> history = new ArrayList<>();
-        HierarchicalMemoryAdvisor.MemoryContext memoryContext =
-                hierarchicalMemoryAdvisor.loadMemoryContext(userId, sessionId, memoryLookupText);
-
-        if (memoryContext.longTermMemoryMessage() != null) {
-            history.add(memoryContext.longTermMemoryMessage());
+    private RoutedAgentRequest routeBeforeCore(String userId,
+                                               String sessionId,
+                                               String userMessage,
+                                               List<Media> media,
+                                               String mallToken,
+                                               String mallUsername,
+                                               String mallPassword) {
+        if (shoppingRouteExecutor != null) {
+            return shoppingRouteExecutor.routeBeforeCore(userId, sessionId, userMessage, media, mallToken, mallUsername, mallPassword);
         }
-        history.addAll(memoryContext.shortTermMessages());
-        history.add(new UserMessage(modelUserMessage));
+        List<Media> safeMedia = media == null ? List.of() : media;
+        return new RoutedAgentRequest(appendMultimodalInstruction(userMessage, safeMedia.size()), safeMedia, null);
+    }
 
-        log.info("""
-                ReAct 记忆装载：
-                userId={}
-                sessionId={}
-                webSearchEnabled={}
-                longTermMemoryLoaded={}
-                shortTermMessageCount={}
-                memoryLookupText={}
-                modelUserMessage={}
-                tools={}
-                """,
-                userId,
-                sessionId,
-                webSearchEnabled,
-                memoryContext.longTermMemoryMessage() != null,
-                memoryContext.shortTermMessages().size(),
-                formatForLog(memoryLookupText),
-                formatForLog(modelUserMessage),
-                String.join(", ", activeToolDefinitions.keySet()));
+    private String appendMultimodalInstruction(String message, int mediaCount) {
+        String normalizedMessage = StringUtils.hasText(message) ? message.trim() : "请基于图片帮我推荐相似商品";
+        if (mediaCount <= 0) {
+            return normalizedMessage;
+        }
+        return normalizedMessage + System.lineSeparator()
+                + "用户同时上传了 " + mediaCount + " 张商品图片。请先理解图片中的品类、颜色、风格、材质和显著规格，再结合文本需求调用商品检索、相似款、价格库存或购物车工具。";
+    }
 
-        return history;
+    private UserMessage buildCurrentUserMessage(String modelUserMessage, List<Media> media) {
+        if (media == null || media.isEmpty()) {
+            return new UserMessage(modelUserMessage);
+        }
+        return UserMessage.builder()
+                .text(modelUserMessage)
+                .media(media)
+                .build();
     }
 
     private Flux<String> streamLlmResponse(String userId,
                                            String sessionId,
                                            String modelId,
-                                           List<Message> history,
-                                           Map<String, ToolDefinitionEntry> activeToolDefinitions,
+                                           Message currentUserMessage,
+                                           ActiveToolCallbacks activeTools,
                                            boolean webSearchEnabled,
+                                           String mallToken,
+                                           String mallUsername,
+                                           String mallPassword,
                                            PromptSecurityFilter.SecuredPrompt securedPrompt) {
         ChatClient.ChatClientRequestSpec requestSpec = applyModelOptions(reactChatClient.prompt(), modelId);
         ChatClient.ChatClientRequestSpec requestWithSystem =
-                requestSpec.system(buildReactSystemPrompt(activeToolDefinitions, webSearchEnabled));
+                requestSpec.system(buildReactSystemPrompt(activeTools.hasExternalTools(), activeTools.hasMallTools(), webSearchEnabled));
         if (requestWithSystem == null) {
             requestWithSystem = requestSpec;
         }
 
-        List<ToolCallback> activeToolCallbacks = activeToolDefinitions.values().stream()
-                .map(ToolDefinitionEntry::callback)
-                .toList();
-
-        ChatClient.ChatClientRequestSpec requestWithTools = requestWithSystem.toolCallbacks(activeToolCallbacks);
+        ChatClient.ChatClientRequestSpec requestWithTools = requestWithSystem.toolCallbacks(activeTools.callbacks());
         if (requestWithTools == null) {
             requestWithTools = requestWithSystem;
         }
-        ChatClient.ChatClientRequestSpec finalRequestWithTools = requestWithTools;
+        ChatClient.ChatClientRequestSpec requestWithToolContext = requestWithTools.toolContext(
+                buildToolContext(userId, sessionId, mallToken, mallUsername, mallPassword)
+        );
+        if (requestWithToolContext == null) {
+            requestWithToolContext = requestWithTools;
+        }
+        String conversationId = conversationMemoryService.buildConversationId(userId, sessionId);
+        ChatClient.ChatClientRequestSpec requestWithMemory = requestWithToolContext.advisors(advisorSpec -> advisorSpec
+                .param(ChatMemory.CONVERSATION_ID, conversationId)
+                .param(LongTermMemoryAdvisor.USER_ID_KEY, userId)
+                .param(LongTermMemoryAdvisor.SESSION_ID_KEY, sessionId)
+                .advisors(longTermMemoryAdvisor, messageChatMemoryAdvisor));
+        if (requestWithMemory == null) {
+            requestWithMemory = requestWithToolContext;
+        }
+        ChatClient.ChatClientRequestSpec finalRequestWithMemory = requestWithMemory;
 
         return Flux.defer(() -> {
             StreamingSensitiveValueRestorer restorer =
                     new StreamingSensitiveValueRestorer(securedPrompt.sensitiveValues());
             StringBuilder rawAnswerBuilder = new StringBuilder();
             StringBuilder restoredAnswerBuilder = new StringBuilder();
+            AtomicBoolean fallbackUsed = new AtomicBoolean(false);
 
-            Flux<String> restoredStream = finalRequestWithTools
-                    .messages(history)
+            Flux<String> restoredStream = finalRequestWithMemory
+                    .messages(List.of(currentUserMessage))
                     .stream()
                     .content()
                     .handle((chunk, sink) -> {
@@ -276,41 +324,49 @@ public class ReActAgent {
                             }))
                     .cast(String.class);
 
-            return restoredStream.doOnComplete(() -> finishStreamingResponse(
-                    userId,
-                    sessionId,
-                    modelId,
-                    securedPrompt,
-                    rawAnswerBuilder.toString().trim(),
-                    restoredAnswerBuilder.toString()
-            ));
+            return restoredStream
+                    .onErrorResume(ex -> resumeWithModelStreamFallback(
+                            ex,
+                            userId,
+                            sessionId,
+                            modelId,
+                            fallbackUsed,
+                            rawAnswerBuilder,
+                            restoredAnswerBuilder
+                    ))
+                    .doOnComplete(() -> finishStreamingResponse(
+                            userId,
+                            sessionId,
+                            modelId,
+                            securedPrompt,
+                            fallbackUsed.get(),
+                            rawAnswerBuilder.toString().trim()
+                    ));
         });
     }
 
-    private String join(Flux<String> stream) {
-        List<String> chunks = stream.collectList().block();
-        return chunks == null ? "" : String.join("", chunks);
-    }
-
-    private String resolveCurrentUserId() {
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.isAuthenticated()
-                && StringUtils.hasText(authentication.getName())
-                && !"anonymousUser".equals(authentication.getName())) {
-            return authentication.getName();
-        }
-        return DEFAULT_USER_ID;
-    }
-
-    private String resolveCurrentSessionId() {
-        RequestAttributes requestAttributes = RequestContextHolder.getRequestAttributes();
-        if (requestAttributes instanceof ServletRequestAttributes servletRequestAttributes) {
-            HttpServletRequest request = servletRequestAttributes.getRequest();
-            if (request != null && request.getSession(false) != null) {
-                return request.getSession(false).getId();
-            }
-        }
-        return DEFAULT_SESSION_ID;
+    private Flux<String> resumeWithModelStreamFallback(Throwable ex,
+                                                       String userId,
+                                                       String sessionId,
+                                                       String modelId,
+                                                       AtomicBoolean fallbackUsed,
+                                                       StringBuilder rawAnswerBuilder,
+                                                       StringBuilder restoredAnswerBuilder) {
+        fallbackUsed.set(true);
+        log.warn(
+                "ReAct stream interrupted: userId={}, sessionId={}, modelId={}, error={}",
+                userId,
+                sessionId,
+                modelId,
+                ex == null ? "<unknown>" : ex.getMessage()
+        );
+        log.debug("ReAct 大模型流式调用异常堆栈", ex);
+        String fallback = restoredAnswerBuilder.isEmpty()
+                ? "抱歉，大模型服务连接被中断，暂时无法完成本次回答。请稍后重试。"
+                : System.lineSeparator() + System.lineSeparator() + "提示：大模型服务连接被中断，以上内容可能不完整，请稍后重试。";
+        rawAnswerBuilder.append(fallback);
+        restoredAnswerBuilder.append(fallback);
+        return Flux.just(fallback);
     }
 
     private ChatClient.ChatClientRequestSpec applyModelOptions(ChatClient.ChatClientRequestSpec requestSpec, String modelId) {
@@ -321,127 +377,113 @@ public class ReActAgent {
         return options == null ? requestSpec : requestSpec.options(options);
     }
 
-    private void logRequestTransformation(String userId,
-                                          String sessionId,
-                                          String modelId,
-                                          boolean webSearchEnabled,
-                                          PromptSecurityFilter.SecuredPrompt securedPrompt) {
-        log.info("""
-                ReAct 输入转换：
-                userId={}
-                sessionId={}
-                modelId={}
-                webSearchEnabled={}
-                originalInput={}
-                safeInput={}
-                modelInput={}
-                """,
+    private Map<String, Object> buildToolContext(String userId,
+                                                 String sessionId,
+                                                 String mallToken,
+                                                 String mallUsername,
+                                                 String mallPassword) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put(TOOL_CONTEXT_USER_ID, StringUtils.hasText(userId) ? userId.trim() : "");
+        context.put(TOOL_CONTEXT_SESSION_ID, StringUtils.hasText(sessionId) ? sessionId.trim() : "");
+        context.put(TOOL_CONTEXT_MALL_TOKEN, StringUtils.hasText(mallToken) ? mallToken.trim() : "");
+        context.put(TOOL_CONTEXT_MALL_USERNAME, StringUtils.hasText(mallUsername) ? mallUsername.trim() : "");
+        context.put(TOOL_CONTEXT_MALL_PASSWORD, mallPassword == null ? "" : mallPassword);
+        return context;
+    }
+
+    private void logAgentStart(String userId,
+                               String sessionId,
+                               String modelId,
+                               boolean webSearchEnabled,
+                               int mediaCount,
+                               int toolCount,
+                               PromptSecurityFilter.SecuredPrompt securedPrompt) {
+        log.info(
+                "ReAct start: userId={}, sessionId={}, modelId={}, webSearchEnabled={}, mediaCount={}, toolCount={}, maskedValues={}",
                 userId,
                 sessionId,
                 modelId,
                 webSearchEnabled,
-                formatForLog(securedPrompt.originalInput()),
-                formatForLog(securedPrompt.safeInput()),
-                formatForLog(securedPrompt.modelInput()));
-    }
-
-    private String restoreAndLogFinalAnswer(String userId,
-                                            String sessionId,
-                                            String modelId,
-                                            String sourceStage,
-                                            String finalAnswer,
-                                            PromptSecurityFilter.SecuredPrompt securedPrompt) {
-        String restoredFinalAnswer = promptSecurityFilter.restoreSensitiveValues(finalAnswer, securedPrompt);
-        log.info("""
-                ReAct 输出转换：
-                userId={}
-                sessionId={}
-                modelId={}
-                sourceStage={}
-                outputBeforeRestore={}
-                outputAfterRestore={}
-                """,
+                mediaCount,
+                toolCount,
+                securedPrompt.sensitiveValues().size()
+        );
+        log.debug(
+                "ReAct prompt lengths: userId={}, sessionId={}, original={}, safe={}, model={}",
                 userId,
                 sessionId,
-                modelId,
-                sourceStage,
-                formatForLog(finalAnswer),
-                formatForLog(restoredFinalAnswer));
-        return restoredFinalAnswer;
+                textLength(securedPrompt.originalInput()),
+                textLength(securedPrompt.safeInput()),
+                textLength(securedPrompt.modelInput())
+        );
     }
 
     private void finishStreamingResponse(String userId,
                                          String sessionId,
                                          String modelId,
                                          PromptSecurityFilter.SecuredPrompt securedPrompt,
-                                         String rawFinalAnswer,
-                                         String restoredFinalAnswer) {
-        log.info("""
-                ReAct 原生工具调用完成：
-                userId={}
-                sessionId={}
-                modelId={}
-                finalAnswerBeforeRestore={}
-                """,
+                                         boolean fallbackUsed,
+                                         String rawFinalAnswer) {
+        if (fallbackUsed) {
+            conversationMemoryService.rememberTurn(
+                    userId,
+                    sessionId,
+                    securedPrompt.modelInput(),
+                    rawFinalAnswer
+            );
+        }
+
+        log.info(
+                "ReAct finish: userId={}, sessionId={}, modelId={}, rawAnswerLength={}",
                 userId,
                 sessionId,
                 modelId,
-                formatForLog(rawFinalAnswer));
-
-        hierarchicalMemoryAdvisor.rememberFinalTurn(
-                userId,
-                sessionId,
-                securedPrompt.modelInput(),
-                rawFinalAnswer
+                textLength(rawFinalAnswer)
         );
-
-        log.info("""
-                ReAct 输出转换：
-                userId={}
-                sessionId={}
-                modelId={}
-                sourceStage={}
-                outputBeforeRestore={}
-                outputAfterRestore={}
-                """,
-                userId,
-                sessionId,
-                modelId,
-                "native-tool-calling",
-                formatForLog(rawFinalAnswer),
-                formatForLog(restoredFinalAnswer));
     }
 
-    private String formatForLog(String value) {
-        return StringUtils.hasText(value) ? value : "<empty>";
+    private int mediaCount(List<Media> media) {
+        return media == null ? 0 : media.size();
     }
 
-    private Map<String, ToolDefinitionEntry> loadBuiltInToolDefinitions() {
-        ToolCallbackProvider provider = MethodToolCallbackProvider.builder()
-                .toolObjects(builtInTools)
-                .build();
+    private int textLength(String value) {
+        return value == null ? 0 : value.length();
+    }
 
-        Map<String, ToolDefinitionEntry> toolDefinitions = new LinkedHashMap<>();
-        for (ToolCallback callback : provider.getToolCallbacks()) {
-            ToolDefinitionEntry entry = buildToolDefinitionEntry(callback, false);
-            if (entry != null) {
-                toolDefinitions.put(entry.name(), entry);
+    private List<ToolCallback> loadBuiltInToolCallbacks() {
+        if (builtInTools == null) {
+            return List.of();
+        }
+        return List.of(ToolCallbacks.from(builtInTools));
+    }
+
+    private ActiveToolCallbacks resolveActiveToolCallbacks(String userId,
+                                                           String sessionId,
+                                                           boolean webSearchEnabled,
+                                                           boolean mallToolsAllowed,
+                                                           String mallToken,
+                                                           String mallUsername,
+                                                           String mallPassword) {
+        Map<String, ToolCallback> activeToolCallbacks = new LinkedHashMap<>();
+        builtInToolCallbacks.forEach(callback -> putToolCallback(activeToolCallbacks, callback, userId, sessionId));
+
+        boolean hasMallTools = false;
+        if (mallToolsAllowed && objectMapper != null && mallMcpOperations != null && mallMcpContextClient != null) {
+            for (ToolCallback callback : MallMcpToolCallback.createToolCallbacks(
+                    objectMapper,
+                    mallMcpOperations,
+                    mallMcpContextClient
+            )) {
+                putToolCallback(activeToolCallbacks, callback, userId, sessionId);
+                hasMallTools = true;
             }
         }
-        return Collections.unmodifiableMap(toolDefinitions);
-    }
-
-    private Map<String, ToolDefinitionEntry> resolveActiveToolDefinitions(String userId,
-                                                                          String sessionId,
-                                                                          boolean webSearchEnabled) {
-        Map<String, ToolDefinitionEntry> activeToolDefinitions = new LinkedHashMap<>();
-        builtInToolDefinitions.values().forEach(entry ->
-                activeToolDefinitions.put(entry.name(), wrapToolDefinitionEntry(entry, userId, sessionId)));
 
         if (!webSearchEnabled) {
-            return Collections.unmodifiableMap(activeToolDefinitions);
+            return new ActiveToolCallbacks(List.copyOf(activeToolCallbacks.values()), false, hasMallTools);
         }
 
+        boolean hasExternalTools = false;
         for (ToolCallbackProvider provider : externalToolCallbackProviders) {
             try {
                 ToolCallback[] callbacks = provider.getToolCallbacks();
@@ -450,249 +492,53 @@ public class ReActAgent {
                 }
 
                 for (ToolCallback callback : callbacks) {
-                    ToolDefinitionEntry entry = buildToolDefinitionEntry(callback, true);
-                    if (entry == null || activeToolDefinitions.containsKey(entry.name())) {
+                    String toolName = toolName(callback);
+                    if (!StringUtils.hasText(toolName) || activeToolCallbacks.containsKey(toolName)) {
                         continue;
                     }
-                    activeToolDefinitions.put(entry.name(), wrapToolDefinitionEntry(entry, userId, sessionId));
+                    if (MallMcpToolCallback.isMallTool(toolName)) {
+                        continue;
+                    }
+                    putToolCallback(activeToolCallbacks, callback, userId, sessionId);
+                    hasExternalTools = true;
                 }
             }
             catch (RuntimeException ex) {
-                log.warn("Failed to resolve MCP tool callbacks, web search will be skipped for this request", ex);
+                log.warn("Failed to resolve MCP tool callbacks, MCP tools will be skipped for this request", ex);
             }
         }
 
-        return Collections.unmodifiableMap(activeToolDefinitions);
+        return new ActiveToolCallbacks(List.copyOf(activeToolCallbacks.values()), hasExternalTools, hasMallTools);
     }
 
-    private ToolDefinitionEntry buildToolDefinitionEntry(ToolCallback callback, boolean external) {
+    private void putToolCallback(Map<String, ToolCallback> activeToolCallbacks,
+                                 ToolCallback callback,
+                                 String userId,
+                                 String sessionId) {
+        String toolName = toolName(callback);
+        if (StringUtils.hasText(toolName)) {
+            activeToolCallbacks.put(toolName, new LoggingToolCallback(callback, userId, sessionId));
+        }
+    }
+
+    private String toolName(ToolCallback callback) {
         if (callback == null || callback.getToolDefinition() == null) {
-            return null;
-        }
-
-        String toolName = callback.getToolDefinition().name();
-        if (!StringUtils.hasText(toolName)) {
-            return null;
-        }
-
-        return new ToolDefinitionEntry(
-                toolName,
-                callback.getToolDefinition().description(),
-                buildInputHint(callback),
-                external,
-                callback
-        );
-    }
-
-    private ToolDefinitionEntry wrapToolDefinitionEntry(ToolDefinitionEntry entry, String userId, String sessionId) {
-        return new ToolDefinitionEntry(
-                entry.name(),
-                entry.description(),
-                entry.inputHint(),
-                entry.external(),
-                new LoggingToolCallback(entry.callback(), userId, sessionId)
-        );
-    }
-
-    private String buildInputHint(ToolCallback callback) {
-        String inputSchema = callback.getToolDefinition().inputSchema();
-        if (!StringUtils.hasText(inputSchema)) {
             return "";
         }
-
-        String compactSchema = inputSchema.replaceAll("\\s+", " ").trim();
-        if (compactSchema.length() <= 220) {
-            return compactSchema;
-        }
-        return compactSchema.substring(0, 220) + "...";
+        return callback.getToolDefinition().name();
     }
 
-    private String buildReactSystemPrompt(Map<String, ToolDefinitionEntry> toolDefinitions, boolean webSearchEnabled) {
-        String networkRule = webSearchEnabled && hasExternalTools(toolDefinitions)
+    private String buildReactSystemPrompt(boolean hasExternalTools, boolean hasMallTools, boolean webSearchEnabled) {
+        String mallRule = hasMallTools
+                ? "当用户要求实时商品搜索、具体商品详情、价格、库存、相似款、加购物车、查购物车、订单确认或下单时，必须使用 mall_* MCP 工具；不要使用直连商城 REST 的假设。"
+                : "当前未注册 mall_* 实时商城工具；如问题不需要实时价格、库存、购物车或订单操作，可基于已知知识和用户条件直接回答，不要声称已经查询实时商城。";
+        String networkRule = webSearchEnabled && hasExternalTools
                 ? "对于需要最新公开互联网信息的问题，优先使用联网搜索相关工具。"
                 : "当前未启用联网搜索工具，不要假设自己能够访问互联网。";
-        return REACT_SYSTEM_PROMPT_TEMPLATE.formatted(renderToolList(toolDefinitions), networkRule);
+        return REACT_SYSTEM_PROMPT_TEMPLATE.formatted(mallRule, networkRule);
     }
 
-    private boolean hasExternalTools(Map<String, ToolDefinitionEntry> toolDefinitions) {
-        return toolDefinitions.values().stream().anyMatch(ToolDefinitionEntry::external);
+    private record ActiveToolCallbacks(List<ToolCallback> callbacks, boolean hasExternalTools, boolean hasMallTools) {
     }
 
-    private String renderToolList(Map<String, ToolDefinitionEntry> toolDefinitions) {
-        return toolDefinitions.values().stream()
-                .map(tool -> {
-                    StringBuilder line = new StringBuilder("- ")
-                            .append(tool.name())
-                            .append(": ")
-                            .append(tool.description());
-                    if (StringUtils.hasText(tool.inputHint())) {
-                        line.append(" Input schema: ").append(tool.inputHint());
-                    }
-                    return line.toString();
-                })
-                .reduce((left, right) -> left + System.lineSeparator() + right)
-                .orElse("- 无");
-    }
-
-    private record ToolDefinitionEntry(
-            String name,
-            String description,
-            String inputHint,
-            boolean external,
-            ToolCallback callback
-    ) {
-    }
-
-    private static final class LoggingToolCallback implements ToolCallback {
-
-        private final ToolCallback delegate;
-        private final String userId;
-        private final String sessionId;
-
-        private LoggingToolCallback(ToolCallback delegate, String userId, String sessionId) {
-            this.delegate = delegate;
-            this.userId = userId;
-            this.sessionId = sessionId;
-        }
-
-        @Override
-        public org.springframework.ai.tool.definition.ToolDefinition getToolDefinition() {
-            return delegate.getToolDefinition();
-        }
-
-        @Override
-        public ToolMetadata getToolMetadata() {
-            return delegate.getToolMetadata();
-        }
-
-        @Override
-        public String call(String input) {
-            logToolInput(input);
-            try {
-                String result = delegate.call(input);
-                logToolOutput(result);
-                return result;
-            }
-            catch (RuntimeException ex) {
-                logToolError(ex);
-                throw ex;
-            }
-        }
-
-        @Override
-        public String call(String input, ToolContext toolContext) {
-            logToolInput(input);
-            try {
-                String result = delegate.call(input, toolContext);
-                logToolOutput(result);
-                return result;
-            }
-            catch (RuntimeException ex) {
-                logToolError(ex);
-                throw ex;
-            }
-        }
-
-        private void logToolInput(String input) {
-            log.info("""
-                    ReAct 工具调用开始：
-                    userId={}
-                    sessionId={}
-                    toolName={}
-                    toolInput={}
-                    """,
-                    userId,
-                    sessionId,
-                    getToolDefinition().name(),
-                    StringUtils.hasText(input) ? input : "<empty>");
-        }
-
-        private void logToolOutput(String result) {
-            log.info("""
-                    ReAct 工具调用完成：
-                    userId={}
-                    sessionId={}
-                    toolName={}
-                    toolOutput={}
-                    """,
-                    userId,
-                    sessionId,
-                    getToolDefinition().name(),
-                    StringUtils.hasText(result) ? result : "<empty>");
-        }
-
-        private void logToolError(RuntimeException ex) {
-            log.warn("""
-                    ReAct 工具调用失败：
-                    userId={}
-                    sessionId={}
-                    toolName={}
-                    error={}
-                    """,
-                    userId,
-                    sessionId,
-                    getToolDefinition().name(),
-                    ex.getMessage(),
-                    ex);
-        }
-    }
-
-    private static final class StreamingSensitiveValueRestorer {
-
-        private final Map<String, String> sensitiveValues;
-        private final StringBuilder pending = new StringBuilder();
-
-        private StreamingSensitiveValueRestorer(Map<String, String> sensitiveValues) {
-            this.sensitiveValues = sensitiveValues == null ? Map.of() : sensitiveValues;
-        }
-
-        private String accept(String chunk) {
-            if (chunk == null || chunk.isEmpty()) {
-                return "";
-            }
-
-            pending.append(chunk);
-            int keepFrom = findIncompletePlaceholderStart(pending);
-            String readyText = pending.substring(0, keepFrom);
-            String remaining = pending.substring(keepFrom);
-            pending.setLength(0);
-            pending.append(remaining);
-            return restore(readyText);
-        }
-
-        private String flush() {
-            String all = pending.toString();
-            pending.setLength(0);
-            return restore(all);
-        }
-
-        private String restore(String text) {
-            String restored = text;
-            for (Map.Entry<String, String> entry : sensitiveValues.entrySet()) {
-                restored = restored.replace(entry.getKey(), entry.getValue());
-            }
-            return restored;
-        }
-
-        private int findIncompletePlaceholderStart(CharSequence text) {
-            for (int i = text.length() - 2; i >= 0; i--) {
-                if (text.charAt(i) == '[' && text.charAt(i + 1) == '[') {
-                    if (!containsPlaceholderEnd(text, i + 2)) {
-                        return i;
-                    }
-                    break;
-                }
-            }
-            return text.length();
-        }
-
-        private boolean containsPlaceholderEnd(CharSequence text, int start) {
-            for (int i = start; i < text.length() - 1; i++) {
-                if (text.charAt(i) == ']' && text.charAt(i + 1) == ']') {
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
 }

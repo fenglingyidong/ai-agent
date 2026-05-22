@@ -1,71 +1,46 @@
 package com.example.ragagent.tools;
 
+import com.example.ragagent.commerce.ShoppingPreferenceState;
+import com.example.ragagent.commerce.ShoppingStateService;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.expression.ExpressionParser;
-import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.expression.spel.support.StandardEvaluationContext;
+import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
-import java.util.Map;
 
 @Component
 public class BuiltInTools {
 
-    private static final Map<String, String> MOCK_WEATHER = Map.of(
-            "beijing", "Sunny, 15C, wind level 2, humidity 30%",
-            "shanghai", "Cloudy, 20C, wind level 3, humidity 65%",
-            "guangzhou", "Light rain, 25C, wind level 1, humidity 80%",
-            "shenzhen", "Overcast, 23C, wind level 2, humidity 72%"
-    );
+    private static final String TOOL_CONTEXT_USER_ID = "userId";
+    private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
+    private static final String DEFAULT_USER_ID = "anonymous";
+    private static final String DEFAULT_SESSION_ID = "default";
 
-    private final DocumentRetriever documentRetriever;
+    @Autowired
+    private DocumentRetriever documentRetriever;
 
-    public BuiltInTools(DocumentRetriever documentRetriever) {
+    @Autowired
+    private ShoppingStateService shoppingStateService;
+
+    public BuiltInTools() {
+    }
+
+    public BuiltInTools(DocumentRetriever documentRetriever, ShoppingStateService shoppingStateService) {
         this.documentRetriever = documentRetriever;
+        this.shoppingStateService = shoppingStateService;
     }
 
-    @Tool(description = "获取某个城市的当前天气。示例输入：Beijing")
-    public String getWeather(String city) {
-        String key = city.trim().toLowerCase();
-        String result = MOCK_WEATHER.get(key);
-        if (result == null) {
-            result = "Sunny, 22C, wind level 2, humidity 45% (mock weather for " + city.trim() + ")";
-        }
-        return result;
-    }
-
-    @Tool(description = "计算包含 +、-、*、/ 和括号的数学表达式。示例输入：(3 + 5) * 2")
-    public String calculator(String expression) {
-        try {
-            ExpressionParser parser = new SpelExpressionParser();
-            Object raw = parser.parseExpression(expression.trim())
-                    .getValue(new StandardEvaluationContext());
-
-            double result = raw instanceof Number n
-                    ? n.doubleValue()
-                    : Double.parseDouble(raw.toString());
-
-            String formatted = result == Math.floor(result) && !Double.isInfinite(result)
-                    ? String.valueOf((long) result)
-                    : String.valueOf(result);
-
-            return expression.trim() + " = " + formatted;
-        }
-        catch (Exception e) {
-            return "Calculation error: " + e.getMessage();
-        }
-    }
-
-    @Tool(description = "检索知识库中的领域信息、政策、指南或文档事实。示例输入：refund policy after cancellation")
-    public String searchKnowledgeBase(String query) {
+    @Tool(description = "检索商品知识库、商品详情、规格参数、评价摘要和导购话术。适合回答已入库的商品事实、选品建议和对比依据；实时价格、库存、购物车和订单必须使用 mall_* MCP 工具。")
+    public String searchProductKnowledge(@ToolParam(description = "用户商品需求或需要核验的商品事实") String query) {
         List<Document> documents = documentRetriever.retrieve(new Query(query));
         if (documents == null || documents.isEmpty()) {
-            return "No relevant knowledge found in the knowledge base.";
+            return "商品知识库中没有检索到相关内容。";
         }
 
         StringBuilder builder = new StringBuilder();
@@ -75,21 +50,72 @@ public class BuiltInTools {
                 builder.append(System.lineSeparator()).append(System.lineSeparator());
             }
 
-            builder.append("[Knowledge ").append(index + 1).append("]");
-
-            String title = readMetadataValue(document, "title");
-            if (StringUtils.hasText(title)) {
-                builder.append(System.lineSeparator()).append("Title: ").append(title);
-            }
-
-            String sourceId = readMetadataValue(document, "sourceId");
-            if (StringUtils.hasText(sourceId)) {
-                builder.append(System.lineSeparator()).append("Source: ").append(sourceId);
-            }
-
+            builder.append("[商品知识 ").append(index + 1).append("]");
+            appendMetadata(builder, document, "title", "标题");
+            appendMetadata(builder, document, "productId", "商品ID");
+            appendMetadata(builder, document, "skuId", "SKU");
+            appendMetadata(builder, document, "brand", "品牌");
+            appendMetadata(builder, document, "category", "类目");
+            appendMetadata(builder, document, "sourceId", "来源");
             builder.append(System.lineSeparator()).append(document.getText());
         }
         return builder.toString();
+    }
+
+    @Tool(description = "更新用户短期导购偏好状态，包括品类、预算、品牌、尺码、颜色、风格和使用场景。不要把 token、密码、手机号等敏感信息写入偏好状态。")
+    public String updateShoppingPreference(String category,
+                                           Integer budgetMin,
+                                           Integer budgetMax,
+                                           String brand,
+                                           String size,
+                                           String color,
+                                           String style,
+                                           String usageScenario,
+                                           ToolContext toolContext) {
+        ShoppingPreferenceState state = shoppingStateService.mergePreference(
+                resolveCurrentUserId(toolContext),
+                resolveCurrentSessionId(toolContext),
+                new ShoppingStateService.ShoppingPreferencePatch(
+                        category,
+                        budgetMin,
+                        budgetMax,
+                        brand,
+                        size,
+                        color,
+                        style,
+                        usageScenario
+                )
+        );
+        return renderPreference(state);
+    }
+
+    private String renderPreference(ShoppingPreferenceState state) {
+        return """
+                已更新导购偏好：
+                品类：%s
+                预算：%s-%s
+                品牌：%s
+                尺码：%s
+                颜色：%s
+                风格：%s
+                使用场景：%s
+                """.formatted(
+                emptyToUnset(state.getCategory()),
+                state.getBudgetMin() == null ? "未设置" : state.getBudgetMin(),
+                state.getBudgetMax() == null ? "未设置" : state.getBudgetMax(),
+                emptyToUnset(state.getBrand()),
+                emptyToUnset(state.getSize()),
+                emptyToUnset(state.getColor()),
+                emptyToUnset(state.getStyle()),
+                emptyToUnset(state.getUsageScenario())
+        ).trim();
+    }
+
+    private void appendMetadata(StringBuilder builder, Document document, String key, String label) {
+        String value = readMetadataValue(document, key);
+        if (StringUtils.hasText(value)) {
+            builder.append(System.lineSeparator()).append(label).append(": ").append(value);
+        }
     }
 
     private String readMetadataValue(Document document, String key) {
@@ -98,5 +124,33 @@ public class BuiltInTools {
         }
         Object value = document.getMetadata().get(key);
         return value == null ? "" : value.toString();
+    }
+
+    private String resolveCurrentUserId(ToolContext toolContext) {
+        String contextUserId = readToolContextValue(toolContext, TOOL_CONTEXT_USER_ID);
+        if (StringUtils.hasText(contextUserId)) {
+            return contextUserId;
+        }
+        return DEFAULT_USER_ID;
+    }
+
+    private String resolveCurrentSessionId(ToolContext toolContext) {
+        String contextSessionId = readToolContextValue(toolContext, TOOL_CONTEXT_SESSION_ID);
+        if (StringUtils.hasText(contextSessionId)) {
+            return contextSessionId;
+        }
+        return DEFAULT_SESSION_ID;
+    }
+
+    private String readToolContextValue(ToolContext toolContext, String key) {
+        if (toolContext == null || toolContext.getContext() == null || !StringUtils.hasText(key)) {
+            return "";
+        }
+        Object value = toolContext.getContext().get(key);
+        return value == null ? "" : value.toString().trim();
+    }
+
+    private String emptyToUnset(String value) {
+        return StringUtils.hasText(value) ? value : "未设置";
     }
 }

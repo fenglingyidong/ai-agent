@@ -12,6 +12,7 @@ import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.annotation.PostConstruct;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -35,27 +36,27 @@ public class ParentChildDocumentIndexer {
             '.', '!', '?', ';', ',', '。', '，', '；', '！', '？'
     );
 
-    private final VectorStore vectorStore;
-    private final ParentDocumentStore parentDocumentStore;
-    private final ChineseTextSegmenter chineseTextSegmenter;
-    private final TextSplitter parentSplitter;
-    private final Encoding childChunkEncoding;
-    private final FilterExpressionBuilder filterExpressionBuilder;
+    @Autowired
+    private VectorStore vectorStore;
+
+    @Autowired
+    private ParentDocumentStore parentDocumentStore;
+
+    @Autowired
+    private ChineseTextSegmenter chineseTextSegmenter;
+
+    private TextSplitter parentSplitter;
+    private Encoding childChunkEncoding;
+    private FilterExpressionBuilder filterExpressionBuilder;
 
     /**
      * 创建索引器，用于切分父子文档并写入 Redis 与向量库。
      */
-    public ParentChildDocumentIndexer(VectorStore vectorStore, ParentDocumentStore parentDocumentStore) {
-        this(vectorStore, parentDocumentStore, new ChineseTextSegmenter());
+    public ParentChildDocumentIndexer() {
     }
 
-    @Autowired
-    public ParentChildDocumentIndexer(VectorStore vectorStore,
-                                      ParentDocumentStore parentDocumentStore,
-                                      ChineseTextSegmenter chineseTextSegmenter) {
-        this.vectorStore = vectorStore;
-        this.parentDocumentStore = parentDocumentStore;
-        this.chineseTextSegmenter = chineseTextSegmenter;
+    @PostConstruct
+    public void init() {
         this.filterExpressionBuilder = new FilterExpressionBuilder();
         this.parentSplitter = TokenTextSplitter.builder()
                 .withChunkSize(350)
@@ -66,6 +67,24 @@ public class ParentChildDocumentIndexer {
                 .withPunctuationMarks(SPLIT_PUNCTUATION)
                 .build();
         this.childChunkEncoding = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.CL100K_BASE);
+    }
+
+    public ParentChildDocumentIndexer(VectorStore vectorStore, ParentDocumentStore parentDocumentStore) {
+        this();
+        this.vectorStore = vectorStore;
+        this.parentDocumentStore = parentDocumentStore;
+        this.chineseTextSegmenter = new ChineseTextSegmenter();
+        init();
+    }
+
+    public ParentChildDocumentIndexer(VectorStore vectorStore,
+                                      ParentDocumentStore parentDocumentStore,
+                                      ChineseTextSegmenter chineseTextSegmenter) {
+        this();
+        this.vectorStore = vectorStore;
+        this.parentDocumentStore = parentDocumentStore;
+        this.chineseTextSegmenter = chineseTextSegmenter;
+        init();
     }
 
     /**
@@ -79,6 +98,16 @@ public class ParentChildDocumentIndexer {
      * 索引完整原始文档，并返回父子两层生成的全部 ID。
      */
     public DocumentIndexingResult indexDocumentDetails(String sourceId, String title, String documentText) {
+        return indexDocumentDetails(sourceId, title, documentText, Map.of());
+    }
+
+    /**
+     * 索引完整原始文档，并为父子分块附加商品域元数据。
+     */
+    public DocumentIndexingResult indexDocumentDetails(String sourceId,
+                                                       String title,
+                                                       String documentText,
+                                                       Map<String, Object> extraMetadata) {
         String normalizedSourceId = normalizeSourceId(sourceId);
         String normalizedDocumentText = normalizeText(documentText);
         if (!StringUtils.hasText(normalizedDocumentText)) {
@@ -99,7 +128,8 @@ public class ParentChildDocumentIndexer {
                     title,
                     normalizeText(parentDocument.getText()),
                     parentIndex,
-                    documentHash
+                    documentHash,
+                    sanitizeExtraMetadata(extraMetadata)
             );
             parentIds.add(indexedParentChunk.parentId());
             childIds.addAll(indexedParentChunk.childIds());
@@ -143,8 +173,26 @@ public class ParentChildDocumentIndexer {
                                                        String normalizedParentText,
                                                        int parentIndex,
                                                        String documentHash) {
+        return indexParentChunkDetails(sourceId, title, normalizedParentText, parentIndex, documentHash, Map.of());
+    }
+
+    private IndexedParentChunk indexParentChunkDetails(String sourceId,
+                                                       String title,
+                                                       String normalizedParentText,
+                                                       int parentIndex,
+                                                       String documentHash,
+                                                       Map<String, Object> extraMetadata) {
         String parentId = buildParentId(sourceId, parentIndex, normalizedParentText);
-        parentDocumentStore.save(parentId, sourceId, title, normalizedParentText, parentIndex, documentHash);
+        Map<String, Object> sanitizedExtraMetadata = sanitizeExtraMetadata(extraMetadata);
+        parentDocumentStore.save(
+                parentId,
+                sourceId,
+                title,
+                normalizedParentText,
+                parentIndex,
+                documentHash,
+                sanitizedExtraMetadata
+        );
 
         List<Document> childDocuments = buildChildDocuments(
                 parentId,
@@ -152,7 +200,8 @@ public class ParentChildDocumentIndexer {
                 title,
                 normalizedParentText,
                 parentIndex,
-                documentHash
+                documentHash,
+                sanitizedExtraMetadata
         );
         vectorStore.add(childDocuments);
 
@@ -182,7 +231,8 @@ public class ParentChildDocumentIndexer {
                                                String title,
                                                String parentText,
                                                int parentIndex,
-                                               String documentHash) {
+                                               String documentHash,
+                                               Map<String, Object> extraMetadata) {
         List<String> splitChildren = splitChildTextsWithOverlap(parentText);
         List<Document> childDocuments = new ArrayList<>();
 
@@ -193,6 +243,7 @@ public class ParentChildDocumentIndexer {
             }
 
             Map<String, Object> metadata = new LinkedHashMap<>(baseMetadata(sourceId, title, parentIndex, documentHash));
+            metadata.putAll(extraMetadata);
             metadata.put(RagDocumentConstants.METADATA_DOC_TYPE, RagDocumentConstants.CHILD_DOCUMENT_TYPE);
             metadata.put(RagDocumentConstants.METADATA_PARENT_ID, parentId);
             metadata.put(RagDocumentConstants.METADATA_CHILD_INDEX, index);
@@ -210,6 +261,7 @@ public class ParentChildDocumentIndexer {
         }
 
         Map<String, Object> fallbackMetadata = new LinkedHashMap<>(baseMetadata(sourceId, title, parentIndex, documentHash));
+        fallbackMetadata.putAll(extraMetadata);
         fallbackMetadata.put(RagDocumentConstants.METADATA_DOC_TYPE, RagDocumentConstants.CHILD_DOCUMENT_TYPE);
         fallbackMetadata.put(RagDocumentConstants.METADATA_PARENT_ID, parentId);
         fallbackMetadata.put(RagDocumentConstants.METADATA_CHILD_INDEX, 0);
@@ -287,6 +339,19 @@ public class ParentChildDocumentIndexer {
         metadata.put(RagDocumentConstants.METADATA_PARENT_INDEX, parentIndex);
         metadata.put(RagDocumentConstants.METADATA_DOCUMENT_HASH, documentHash == null ? "" : documentHash);
         return metadata;
+    }
+
+    private Map<String, Object> sanitizeExtraMetadata(Map<String, Object> extraMetadata) {
+        if (extraMetadata == null || extraMetadata.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        extraMetadata.forEach((key, value) -> {
+            if (StringUtils.hasText(key) && value != null) {
+                sanitized.put(key.trim(), value);
+            }
+        });
+        return Map.copyOf(sanitized);
     }
 
     /**

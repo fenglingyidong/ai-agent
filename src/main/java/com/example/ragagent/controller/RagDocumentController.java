@@ -2,6 +2,10 @@ package com.example.ragagent.controller;
 
 import com.example.ragagent.rag.impl.ParentChildDocumentIndexer;
 import com.example.ragagent.rag.RagDocumentConstants;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,7 +43,7 @@ public class RagDocumentController {
      * 将原始文档导入父子分块 RAG 索引，并返回生成的父分块 ID。
      */
     @PostMapping("/import")
-    public ResponseEntity<RagDocumentImportResponse> importDocument(@RequestBody RagDocumentImportRequest request) {
+    public ResponseEntity<RagDocumentImportResponse> importDocument(@Valid @RequestBody RagDocumentImportRequest request) {
         if (request == null || !StringUtils.hasText(request.content())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "content must not be blank");
         }
@@ -79,7 +83,7 @@ public class RagDocumentController {
      * 将商品结构化信息转换为导购知识文档后导入父子分块 RAG 索引。
      */
     @PostMapping("/products/import")
-    public ResponseEntity<RagDocumentImportResponse> importProductDocument(@RequestBody ProductDocumentImportRequest request) {
+    public ResponseEntity<RagDocumentImportResponse> importProductDocument(@Valid @RequestBody ProductDocumentImportRequest request) {
         if (request == null || !StringUtils.hasText(request.title())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "title must not be blank");
         }
@@ -87,16 +91,27 @@ public class RagDocumentController {
     }
 
     public record RagDocumentImportRequest(
+            @Size(max = 128)
             String sourceId,
+            @Size(max = 256)
             String title,
+            @NotBlank
             String content,
+            @Size(max = 128)
             String productId,
+            @Size(max = 128)
             String skuId,
+            @Size(max = 128)
             String category,
+            @Size(max = 128)
             String brand,
+            @PositiveOrZero
             BigDecimal price,
+            @PositiveOrZero
             Integer stock,
-            String imageUrl
+            @Size(max = 1024)
+            String imageUrl,
+            Map<String, String> attributes
     ) {
         private Map<String, Object> toMetadata() {
             Map<String, Object> metadata = new LinkedHashMap<>();
@@ -111,6 +126,10 @@ public class RagDocumentController {
             if (stock != null) {
                 metadata.put(RagDocumentConstants.METADATA_STOCK, stock);
             }
+            Map<String, String> sanitizedAttributes = sanitizeAttributes(attributes);
+            if (!sanitizedAttributes.isEmpty()) {
+                metadata.put(RagDocumentConstants.METADATA_ATTRIBUTES, sanitizedAttributes);
+            }
             return metadata;
         }
 
@@ -118,6 +137,19 @@ public class RagDocumentController {
             if (StringUtils.hasText(value)) {
                 metadata.put(key, value.trim());
             }
+        }
+
+        private Map<String, String> sanitizeAttributes(Map<String, String> sourceAttributes) {
+            if (sourceAttributes == null || sourceAttributes.isEmpty()) {
+                return Map.of();
+            }
+            Map<String, String> sanitized = new LinkedHashMap<>();
+            sourceAttributes.forEach((key, value) -> {
+                if (StringUtils.hasText(key) && StringUtils.hasText(value)) {
+                    sanitized.put(key.trim(), value.trim());
+                }
+            });
+            return sanitized.isEmpty() ? Map.of() : Map.copyOf(sanitized);
         }
     }
 
@@ -133,13 +165,22 @@ public class RagDocumentController {
     }
 
     public record ProductDocumentImportRequest(
+            @Size(max = 128)
             String productId,
+            @Size(max = 128)
             String skuId,
+            @NotBlank
+            @Size(max = 256)
             String title,
+            @Size(max = 128)
             String brand,
+            @Size(max = 128)
             String category,
+            @PositiveOrZero
             BigDecimal price,
+            @PositiveOrZero
             Integer stock,
+            @Size(max = 1024)
             String imageUrl,
             String description,
             String reviewSummary,
@@ -159,7 +200,8 @@ public class RagDocumentController {
                     brand,
                     price,
                     stock,
-                    imageUrl
+                    imageUrl,
+                    attributes
             );
         }
 

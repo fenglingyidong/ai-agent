@@ -3,7 +3,11 @@ package com.example.ragagent.mall;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -15,10 +19,14 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.Optional;
 
 @Component
 public class MallApiClient {
+
+    private static final Logger log = LoggerFactory.getLogger(MallApiClient.class);
+    private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(5);
 
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -34,6 +42,12 @@ public class MallApiClient {
     public MallApiClient(ObjectMapper objectMapper, MallProperties mallProperties) {
         this.objectMapper = objectMapper;
         this.mallProperties = mallProperties;
+        configureTimeout();
+    }
+
+    @PostConstruct
+    public void init() {
+        configureTimeout();
     }
 
     public Optional<LoginResponse> login(String username, String password) {
@@ -51,6 +65,7 @@ public class MallApiClient {
             HttpEntity<LoginRequest> entity = new HttpEntity<>(new LoginRequest(username.trim(), password), headers);
             ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.POST, entity, String.class);
             if (!StringUtils.hasText(response.getBody())) {
+                log.warn("商城登录接口返回空响应：uri={}", uri);
                 return Optional.empty();
             }
             JavaType wrapperType = objectMapper.getTypeFactory().constructParametricType(MallApiResponse.class, LoginResponse.class);
@@ -61,8 +76,20 @@ public class MallApiClient {
             return Optional.of(parsed.data());
         }
         catch (Exception ex) {
+            log.warn("商城登录接口调用失败：uri={}, username={}, error={}", uri, username.trim(), ex.getMessage());
             return Optional.empty();
         }
+    }
+
+    private void configureTimeout() {
+        Duration timeout = mallProperties == null ? DEFAULT_REQUEST_TIMEOUT : mallProperties.getRequestTimeout();
+        if (timeout == null || timeout.isNegative() || timeout.isZero()) {
+            timeout = DEFAULT_REQUEST_TIMEOUT;
+        }
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(timeout);
+        factory.setReadTimeout(timeout);
+        restTemplate.setRequestFactory(factory);
     }
 
     private String baseUrl() {

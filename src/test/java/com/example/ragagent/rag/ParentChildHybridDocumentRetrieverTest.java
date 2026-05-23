@@ -1,8 +1,9 @@
 package com.example.ragagent.rag;
 
+import com.example.ragagent.config.RagRetrievalProperties;
+import com.example.ragagent.rag.impl.MilvusBm25ChildChunkRetriever;
 import com.example.ragagent.rag.impl.ParentChildDocumentRetriever;
 import com.example.ragagent.rag.impl.ParentChildHybridDocumentRetriever;
-import com.example.ragagent.rag.impl.RedisBm25ChildChunkRetriever;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.document.Document;
@@ -21,7 +22,7 @@ class ParentChildHybridDocumentRetrieverTest {
     @Test
     void retrieveShouldFuseDenseAndBm25ChildResultsBeforeLoadingParents() {
         ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
-        RedisBm25ChildChunkRetriever bm25Retriever = mock(RedisBm25ChildChunkRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
 
         Document child1 = childDocument("child-1", "parent-1");
         Document child2 = childDocument("child-2", "parent-2");
@@ -36,7 +37,7 @@ class ParentChildHybridDocumentRetrieverTest {
         when(denseRetriever.loadParentDocuments(org.mockito.ArgumentMatchers.anyList())).thenReturn(parentDocuments);
 
         ParentChildHybridDocumentRetriever retriever =
-                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever);
+                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever, new RagRetrievalProperties());
 
         List<Document> documents = retriever.retrieve(new Query("guide"));
 
@@ -53,7 +54,7 @@ class ParentChildHybridDocumentRetrieverTest {
     @Test
     void retrieveShouldFallBackToDenseOnlyWhenBm25Fails() {
         ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
-        RedisBm25ChildChunkRetriever bm25Retriever = mock(RedisBm25ChildChunkRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
 
         Document child1 = childDocument("child-1", "parent-1");
         when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(child1));
@@ -63,7 +64,7 @@ class ParentChildHybridDocumentRetrieverTest {
         when(denseRetriever.loadParentDocuments(List.of(child1))).thenReturn(parentDocuments);
 
         ParentChildHybridDocumentRetriever retriever =
-                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever);
+                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever, new RagRetrievalProperties());
 
         List<Document> documents = retriever.retrieve(new Query("guide"));
 
@@ -74,7 +75,7 @@ class ParentChildHybridDocumentRetrieverTest {
     @Test
     void retrieveShouldTruncateAtLargestNormalizedGapWithinTopTen() {
         ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
-        RedisBm25ChildChunkRetriever bm25Retriever = mock(RedisBm25ChildChunkRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
 
         List<Document> denseChildren = List.of(
                 childDocument("child-1", "parent-1"),
@@ -102,7 +103,7 @@ class ParentChildHybridDocumentRetrieverTest {
         when(denseRetriever.loadParentDocuments(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of());
 
         ParentChildHybridDocumentRetriever retriever =
-                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever);
+                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever, new RagRetrievalProperties());
 
         retriever.retrieve(new Query("guide"));
 

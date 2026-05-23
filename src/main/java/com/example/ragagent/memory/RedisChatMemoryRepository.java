@@ -18,13 +18,19 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 
 @Component
 public class RedisChatMemoryRepository implements ChatMemoryRepository {
 
     private static final String SHORT_TERM_KEY_PREFIX = "memory:short:";
+    private static final String CONVERSATION_SET_KEY = SHORT_TERM_KEY_PREFIX + "conversations";
     private static final String MESSAGE_LIST_SUFFIX = ":messages";
     private static final String MESSAGE_SEQ_SUFFIX = ":sequence";
+    private static final String STATE_SUFFIX = ":state";
+    private static final String LAST_TOUCHED_AT_FIELD = "lastTouchedAt";
+    private static final String LAST_SUMMARIZED_SEQUENCE_FIELD = "lastSummarizedSequence";
+    private static final String LAST_SUMMARY_ATTEMPT_AT_FIELD = "lastSummaryAttemptAt";
     private static final String DEFAULT_USER_ID = "anonymous";
 
     private final StringRedisTemplate redisTemplate;
@@ -44,12 +50,11 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
 
     @Override
     public List<String> findConversationIds() {
-        Set<String> keys = redisTemplate.keys(SHORT_TERM_KEY_PREFIX + "*" + MESSAGE_LIST_SUFFIX);
-        if (keys == null || keys.isEmpty()) {
+        Set<String> conversationIds = redisTemplate.opsForSet().members(CONVERSATION_SET_KEY);
+        if (conversationIds == null || conversationIds.isEmpty()) {
             return List.of();
         }
-        return keys.stream()
-                .map(this::conversationIdFromListKey)
+        return conversationIds.stream()
                 .filter(StringUtils::hasText)
                 .sorted()
                 .toList();
@@ -58,6 +63,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     @Override
     public List<Message> findByConversationId(String conversationId) {
         Assert.hasText(conversationId, "conversationId cannot be null or empty");
+        touch(conversationId);
         MemoryWindowSnapshot snapshot = compactByAge(conversationId, readAllEntries(conversationId));
         summarizeEvicted(conversationId, snapshot.evictedEntries());
         return snapshot.retainedEntries().stream()
@@ -71,6 +77,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         Assert.notNull(messages, "messages cannot be null");
         Assert.noNullElements(messages, "messages cannot contain null elements");
 
+        touch(conversationId);
         MemoryWindowSnapshot ageSnapshot = compactByAge(conversationId, readAllEntries(conversationId));
         summarizeEvicted(conversationId, ageSnapshot.evictedEntries());
         List<ConversationMemoryEntry> currentEntries = ageSnapshot.retainedEntries();
@@ -84,6 +91,36 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         Assert.hasText(conversationId, "conversationId cannot be null or empty");
         redisTemplate.delete(listKey(conversationId));
         redisTemplate.delete(sequenceKey(conversationId));
+        redisTemplate.delete(stateKey(conversationId));
+        redisTemplate.opsForSet().remove(CONVERSATION_SET_KEY, conversationId);
+    }
+
+    public int summarizeIdleConversations() {
+        Instant now = Instant.now();
+        int scheduledCount = 0;
+        for (String conversationId : findConversationIds()) {
+            MemoryState state = readState(conversationId);
+            if (state.lastTouchedAt() <= 0 || now.toEpochMilli() - state.lastTouchedAt() < properties.getIdleSummaryAge().toMillis()) {
+                removeInactiveConversationIfEmpty(conversationId, state);
+                continue;
+            }
+
+            List<ConversationMemoryEntry> entriesToSummarize = readAllEntries(conversationId).stream()
+                    .filter(entry -> entry.sequence() > state.lastSummarizedSequence())
+                    .toList();
+            if (entriesToSummarize.isEmpty()) {
+                continue;
+            }
+            if (state.lastSummaryAttemptAt() >= state.lastTouchedAt()) {
+                continue;
+            }
+
+            redisTemplate.opsForHash().put(stateKey(conversationId), LAST_SUMMARY_ATTEMPT_AT_FIELD, Long.toString(now.toEpochMilli()));
+            refreshTtl(conversationId);
+            scheduleSummary(conversationId, entriesToSummarize);
+            scheduledCount++;
+        }
+        return scheduledCount;
     }
 
     private MemoryWindowSnapshot compactByAge(String conversationId, List<ConversationMemoryEntry> entries) {
@@ -175,13 +212,95 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     }
 
     private void refreshTtl(String conversationId) {
-        Duration ttl = properties.getMaxRecentAge().multipliedBy(2);
+        Duration ttl = properties.getShortTermTtl();
         redisTemplate.expire(listKey(conversationId), ttl);
         redisTemplate.expire(sequenceKey(conversationId), ttl);
+        redisTemplate.expire(stateKey(conversationId), ttl);
     }
 
     private void summarizeEvicted(String conversationId, List<ConversationMemoryEntry> evictedEntries) {
-        longTermMemoryService.scheduleSummaryIfNeeded(resolveUserId(conversationId), conversationId, evictedEntries);
+        if (evictedEntries == null || evictedEntries.isEmpty()) {
+            return;
+        }
+        long lastSummarizedSequence = readState(conversationId).lastSummarizedSequence();
+        List<ConversationMemoryEntry> unsummarizedEntries = evictedEntries.stream()
+                .filter(entry -> entry.sequence() > lastSummarizedSequence)
+                .toList();
+        scheduleSummary(conversationId, unsummarizedEntries);
+    }
+
+    private void scheduleSummary(String conversationId, List<ConversationMemoryEntry> entries) {
+        if (entries == null || entries.isEmpty()) {
+            return;
+        }
+        long toSequence = entries.stream()
+                .mapToLong(ConversationMemoryEntry::sequence)
+                .max()
+                .orElse(0L);
+        CompletableFuture<Boolean> future =
+                longTermMemoryService.scheduleSummaryIfNeeded(resolveUserId(conversationId), conversationId, entries);
+        if (future != null) {
+            future.thenAccept(success -> {
+                if (Boolean.TRUE.equals(success)) {
+                    updateLastSummarizedSequence(conversationId, toSequence);
+                    return;
+                }
+                clearLastSummaryAttempt(conversationId);
+            });
+        }
+    }
+
+    private void touch(String conversationId) {
+        redisTemplate.opsForSet().add(CONVERSATION_SET_KEY, conversationId);
+        redisTemplate.opsForHash().put(stateKey(conversationId), LAST_TOUCHED_AT_FIELD, Long.toString(System.currentTimeMillis()));
+        refreshTtl(conversationId);
+    }
+
+    private MemoryState readState(String conversationId) {
+        Object lastTouchedAt = redisTemplate.opsForHash().get(stateKey(conversationId), LAST_TOUCHED_AT_FIELD);
+        Object lastSummarizedSequence = redisTemplate.opsForHash().get(stateKey(conversationId), LAST_SUMMARIZED_SEQUENCE_FIELD);
+        Object lastSummaryAttemptAt = redisTemplate.opsForHash().get(stateKey(conversationId), LAST_SUMMARY_ATTEMPT_AT_FIELD);
+        return new MemoryState(
+                parseLong(lastTouchedAt, 0L),
+                parseLong(lastSummarizedSequence, 0L),
+                parseLong(lastSummaryAttemptAt, 0L)
+        );
+    }
+
+    private void updateLastSummarizedSequence(String conversationId, long sequence) {
+        if (sequence <= 0) {
+            return;
+        }
+        MemoryState state = readState(conversationId);
+        long nextSequence = Math.max(state.lastSummarizedSequence(), sequence);
+        redisTemplate.opsForHash().put(stateKey(conversationId), LAST_SUMMARIZED_SEQUENCE_FIELD, Long.toString(nextSequence));
+        refreshTtl(conversationId);
+    }
+
+    private void clearLastSummaryAttempt(String conversationId) {
+        redisTemplate.opsForHash().put(stateKey(conversationId), LAST_SUMMARY_ATTEMPT_AT_FIELD, "0");
+        refreshTtl(conversationId);
+    }
+
+    private void removeInactiveConversationIfEmpty(String conversationId, MemoryState state) {
+        if (state.lastTouchedAt() > 0) {
+            return;
+        }
+        if (readAllEntries(conversationId).isEmpty()) {
+            redisTemplate.opsForSet().remove(CONVERSATION_SET_KEY, conversationId);
+        }
+    }
+
+    private long parseLong(Object value, long defaultValue) {
+        if (value == null) {
+            return defaultValue;
+        }
+        try {
+            return Long.parseLong(value.toString());
+        }
+        catch (NumberFormatException ex) {
+            return defaultValue;
+        }
     }
 
     private String resolveUserId(String conversationId) {
@@ -201,11 +320,8 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         return SHORT_TERM_KEY_PREFIX + conversationId + MESSAGE_SEQ_SUFFIX;
     }
 
-    private String conversationIdFromListKey(String key) {
-        if (!StringUtils.hasText(key) || !key.startsWith(SHORT_TERM_KEY_PREFIX) || !key.endsWith(MESSAGE_LIST_SUFFIX)) {
-            return "";
-        }
-        return key.substring(SHORT_TERM_KEY_PREFIX.length(), key.length() - MESSAGE_LIST_SUFFIX.length());
+    private String stateKey(String conversationId) {
+        return SHORT_TERM_KEY_PREFIX + conversationId + STATE_SUFFIX;
     }
 
     private String serialize(ConversationMemoryEntry entry) {
@@ -243,6 +359,13 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     private record MergeResult(
             List<ConversationMemoryEntry> retainedEntries,
             List<ConversationMemoryEntry> evictedEntries
+    ) {
+    }
+
+    private record MemoryState(
+            long lastTouchedAt,
+            long lastSummarizedSequence,
+            long lastSummaryAttemptAt
     ) {
     }
 }

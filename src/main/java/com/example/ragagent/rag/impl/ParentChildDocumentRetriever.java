@@ -1,5 +1,7 @@
 package com.example.ragagent.rag.impl;
 
+import com.example.ragagent.config.MilvusVectorStoreConfiguration;
+import com.example.ragagent.config.RagRetrievalProperties;
 import com.example.ragagent.rag.RagDocumentConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,8 +12,7 @@ import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
-import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -24,36 +25,24 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
 
     private static final Logger log = LoggerFactory.getLogger(ParentChildDocumentRetriever.class);
 
-    private static final int CHILD_TOP_K = 24;
-    private static final int DENSE_FALLBACK_TOP_K = 32;
-    private static final int MAX_PARENT_RESULTS = 6;
-
-    @Autowired
-    private VectorStore vectorStore;
-
-    @Autowired
-    private ParentDocumentStore parentDocumentStore;
-
-    private VectorStoreDocumentRetriever childDocumentRetriever;
+    private final VectorStore vectorStore;
+    private final ParentDocumentStore parentDocumentStore;
+    private final RagRetrievalProperties properties;
+    private final VectorStoreDocumentRetriever childDocumentRetriever;
 
     /**
      * 创建父子分块检索器，先查子分块，再回查对应父分块。
      */
-    public ParentChildDocumentRetriever() {
-    }
-
-    public ParentChildDocumentRetriever(VectorStore vectorStore, ParentDocumentStore parentDocumentStore) {
+    public ParentChildDocumentRetriever(@Qualifier(MilvusVectorStoreConfiguration.PRODUCT_VECTOR_STORE) VectorStore vectorStore,
+                                        ParentDocumentStore parentDocumentStore,
+                                        RagRetrievalProperties properties) {
         this.vectorStore = vectorStore;
         this.parentDocumentStore = parentDocumentStore;
-        init();
-    }
-
-    @PostConstruct
-    public void init() {
+        this.properties = properties;
         this.childDocumentRetriever = VectorStoreDocumentRetriever.builder()
                 .vectorStore(vectorStore)
-                .topK(CHILD_TOP_K)
-                .similarityThreshold(0.2d)
+                .topK(properties.getDenseChildTopK())
+                .similarityThreshold(properties.getDenseSimilarityThreshold())
                 .filterExpression(new FilterExpressionBuilder()
                         .eq(RagDocumentConstants.METADATA_DOC_TYPE, RagDocumentConstants.CHILD_DOCUMENT_TYPE)
                         .build())
@@ -86,7 +75,8 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
     }
 
     /**
-     * 浼樺厛璧?Spring AI 瀹樻柟妫€绱㈠櫒锛屽け璐ユ椂閫€鍥炴櫘閫氬悜閲忕浉浼煎害妫€绱€?     */
+     * 优先走 Spring AI 官方检索器，失败时退回普通向量相似度检索。
+     */
     public List<Document> retrieveChildDocuments(String query) {
         String normalizedQuery = normalizeText(query);
         if (!StringUtils.hasText(normalizedQuery)) {
@@ -111,7 +101,7 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
             List<Document> documents = vectorStore.similaritySearch(
                     SearchRequest.builder()
                             .query(query)
-                            .topK(DENSE_FALLBACK_TOP_K)
+                            .topK(properties.getDenseFallbackTopK())
                             .build()
             );
             if (documents == null || documents.isEmpty()) {
@@ -120,7 +110,7 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
 
             return documents.stream()
                     .filter(this::isChildDocument)
-                    .limit(CHILD_TOP_K)
+                    .limit(properties.getDenseChildTopK())
                     .toList();
         }
         catch (RuntimeException ex) {
@@ -143,7 +133,7 @@ public class ParentChildDocumentRetriever implements DocumentRetriever {
             parentDocumentStore.load(parentId)
                     .ifPresent(parent -> parentDocuments.put(parentId, parent));
 
-            if (parentDocuments.size() >= MAX_PARENT_RESULTS) {
+            if (parentDocuments.size() >= properties.getMaxParentResults()) {
                 break;
             }
         }

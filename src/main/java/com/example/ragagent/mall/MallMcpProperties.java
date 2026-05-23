@@ -1,55 +1,32 @@
 package com.example.ragagent.mall;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
+@Getter
+@Setter
+@Validated
 @ConfigurationProperties(prefix = "app.mall.mcp")
 public class MallMcpProperties {
 
+    @NotBlank
     private String baseUrl = "http://localhost:8120";
+
+    @NotBlank
     private String endpoint = "/mcp";
+
+    @NotBlank
     private String contextPath = "/internal/mcp/mall/context";
+
+    @NotBlank
     private String contextSecret = "mall-mcp-dev-secret";
+
+    @NotNull
     private Duration requestTimeout = Duration.ofSeconds(5);
-
-    public String getBaseUrl() {
-        return baseUrl;
-    }
-
-    public void setBaseUrl(String baseUrl) {
-        this.baseUrl = baseUrl;
-    }
-
-    public String getEndpoint() {
-        return endpoint;
-    }
-
-    public void setEndpoint(String endpoint) {
-        this.endpoint = endpoint;
-    }
-
-    public String getContextPath() {
-        return contextPath;
-    }
-
-    public void setContextPath(String contextPath) {
-        this.contextPath = contextPath;
-    }
-
-    public String getContextSecret() {
-        return contextSecret;
-    }
-
-    public void setContextSecret(String contextSecret) {
-        this.contextSecret = contextSecret;
-    }
-
-    public Duration getRequestTimeout() {
-        return requestTimeout;
-    }
-
-    public void setRequestTimeout(Duration requestTimeout) {
-        this.requestTimeout = requestTimeout;
-    }
 }

@@ -53,6 +53,14 @@ public class MallMcpClient {
         }
     }
 
+    public McpSyncClient syncClient() {
+        return mcpClient;
+    }
+
+    public void ensureInitialized() {
+        initializeIfNeeded();
+    }
+
     @PreDestroy
     public void close() {
         try {
@@ -63,7 +71,7 @@ public class MallMcpClient {
         }
     }
 
-    private void initializeIfNeeded() {
+    private synchronized void initializeIfNeeded() {
         if (!mcpClient.isInitialized()) {
             mcpClient.initialize();
         }

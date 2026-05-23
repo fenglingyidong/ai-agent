@@ -1,12 +1,12 @@
 package com.example.ragagent.rag.impl;
 
+import com.example.ragagent.config.RagRetrievalProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.context.annotation.Primary;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -20,23 +20,16 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
 
     private static final Logger log = LoggerFactory.getLogger(ParentChildHybridDocumentRetriever.class);
 
-    private static final int RRF_K = 60;
-    private static final int MIN_CHILD_RESULTS_TO_KEEP = 4;
-    private static final int MAX_CHILD_RESULTS_TO_CONSIDER = 12;
-
-    @Autowired
-    private ParentChildDocumentRetriever denseRetriever;
-
-    @Autowired
-    private RedisBm25ChildChunkRetriever bm25Retriever;
-
-    public ParentChildHybridDocumentRetriever() {
-    }
+    private final ParentChildDocumentRetriever denseRetriever;
+    private final MilvusBm25ChildChunkRetriever bm25Retriever;
+    private final RagRetrievalProperties properties;
 
     public ParentChildHybridDocumentRetriever(ParentChildDocumentRetriever denseRetriever,
-                                              RedisBm25ChildChunkRetriever bm25Retriever) {
+                                              MilvusBm25ChildChunkRetriever bm25Retriever,
+                                              RagRetrievalProperties properties) {
         this.denseRetriever = denseRetriever;
         this.bm25Retriever = bm25Retriever;
+        this.properties = properties;
     }
 
     /**
@@ -102,7 +95,7 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
                 continue;
             }
 
-            double incrementalScore = 1.0d / (RRF_K + index + 1);
+            double incrementalScore = 1.0d / (properties.getRrfK() + index + 1);
             RankedChildDocument existing = rankedDocuments.get(documentId);
             if (existing == null) {
                 rankedDocuments.put(documentId, new RankedChildDocument(document, incrementalScore));
@@ -123,16 +116,16 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
         if (rankedDocuments.isEmpty()) {
             return List.of();
         }
-        if (rankedDocuments.size() <= MIN_CHILD_RESULTS_TO_KEEP) {
+        if (rankedDocuments.size() <= properties.getMinChildResultsToKeep()) {
             return List.copyOf(rankedDocuments);
         }
 
-        int upperBoundExclusive = Math.min(MAX_CHILD_RESULTS_TO_CONSIDER, rankedDocuments.size());
+        int upperBoundExclusive = Math.min(properties.getMaxChildResultsToConsider(), rankedDocuments.size());
         double topScore = Math.max(rankedDocuments.get(0).score(), 1.0e-9d);
         double largestGap = Double.NEGATIVE_INFINITY;
         int cutIndexExclusive = upperBoundExclusive;
 
-        for (int index = MIN_CHILD_RESULTS_TO_KEEP - 1; index < upperBoundExclusive - 1; index++) {
+        for (int index = properties.getMinChildResultsToKeep() - 1; index < upperBoundExclusive - 1; index++) {
             double currentScore = rankedDocuments.get(index).score();
             double nextScore = rankedDocuments.get(index + 1).score();
             double normalizedGap = (currentScore - nextScore) / topScore;
@@ -142,6 +135,9 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
             }
         }
 
+        if (largestGap < properties.getMinNormalizedGapToTruncate()) {
+            cutIndexExclusive = upperBoundExclusive;
+        }
         return List.copyOf(rankedDocuments.subList(0, cutIndexExclusive));
     }
 

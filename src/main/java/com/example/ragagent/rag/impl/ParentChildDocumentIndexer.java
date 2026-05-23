@@ -1,18 +1,17 @@
 package com.example.ragagent.rag.impl;
 
+import com.example.ragagent.config.MilvusVectorStoreConfiguration;
 import com.knuddels.jtokkit.Encodings;
 import com.knuddels.jtokkit.api.Encoding;
 import com.knuddels.jtokkit.api.EncodingType;
 import com.knuddels.jtokkit.api.IntArrayList;
-import com.example.ragagent.rag.ChineseTextSegmenter;
 import com.example.ragagent.rag.RagDocumentConstants;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TextSplitter;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
-import jakarta.annotation.PostConstruct;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -36,28 +35,19 @@ public class ParentChildDocumentIndexer {
             '.', '!', '?', ';', ',', '。', '，', '；', '！', '？'
     );
 
-    @Autowired
-    private VectorStore vectorStore;
-
-    @Autowired
-    private ParentDocumentStore parentDocumentStore;
-
-    @Autowired
-    private ChineseTextSegmenter chineseTextSegmenter;
-
-    private TextSplitter parentSplitter;
-    private Encoding childChunkEncoding;
-    private FilterExpressionBuilder filterExpressionBuilder;
+    private final VectorStore vectorStore;
+    private final ParentDocumentStore parentDocumentStore;
+    private final TextSplitter parentSplitter;
+    private final Encoding childChunkEncoding;
+    private final FilterExpressionBuilder filterExpressionBuilder = new FilterExpressionBuilder();
 
     /**
      * 创建索引器，用于切分父子文档并写入 Redis 与向量库。
      */
-    public ParentChildDocumentIndexer() {
-    }
-
-    @PostConstruct
-    public void init() {
-        this.filterExpressionBuilder = new FilterExpressionBuilder();
+    public ParentChildDocumentIndexer(@Qualifier(MilvusVectorStoreConfiguration.PRODUCT_VECTOR_STORE) VectorStore vectorStore,
+                                      ParentDocumentStore parentDocumentStore) {
+        this.vectorStore = vectorStore;
+        this.parentDocumentStore = parentDocumentStore;
         this.parentSplitter = TokenTextSplitter.builder()
                 .withChunkSize(350)
                 .withMinChunkSizeChars(200)
@@ -67,24 +57,6 @@ public class ParentChildDocumentIndexer {
                 .withPunctuationMarks(SPLIT_PUNCTUATION)
                 .build();
         this.childChunkEncoding = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.CL100K_BASE);
-    }
-
-    public ParentChildDocumentIndexer(VectorStore vectorStore, ParentDocumentStore parentDocumentStore) {
-        this();
-        this.vectorStore = vectorStore;
-        this.parentDocumentStore = parentDocumentStore;
-        this.chineseTextSegmenter = new ChineseTextSegmenter();
-        init();
-    }
-
-    public ParentChildDocumentIndexer(VectorStore vectorStore,
-                                      ParentDocumentStore parentDocumentStore,
-                                      ChineseTextSegmenter chineseTextSegmenter) {
-        this();
-        this.vectorStore = vectorStore;
-        this.parentDocumentStore = parentDocumentStore;
-        this.chineseTextSegmenter = chineseTextSegmenter;
-        init();
     }
 
     /**
@@ -247,7 +219,6 @@ public class ParentChildDocumentIndexer {
             metadata.put(RagDocumentConstants.METADATA_DOC_TYPE, RagDocumentConstants.CHILD_DOCUMENT_TYPE);
             metadata.put(RagDocumentConstants.METADATA_PARENT_ID, parentId);
             metadata.put(RagDocumentConstants.METADATA_CHILD_INDEX, index);
-            metadata.put(RagDocumentConstants.METADATA_BM25_TEXT, buildBm25Text(title, childText));
 
             childDocuments.add(Document.builder()
                     .id(parentId + "-child-" + index)
@@ -265,7 +236,6 @@ public class ParentChildDocumentIndexer {
         fallbackMetadata.put(RagDocumentConstants.METADATA_DOC_TYPE, RagDocumentConstants.CHILD_DOCUMENT_TYPE);
         fallbackMetadata.put(RagDocumentConstants.METADATA_PARENT_ID, parentId);
         fallbackMetadata.put(RagDocumentConstants.METADATA_CHILD_INDEX, 0);
-        fallbackMetadata.put(RagDocumentConstants.METADATA_BM25_TEXT, buildBm25Text(title, parentText));
 
         return List.of(Document.builder()
                 .id(parentId + "-child-0")
@@ -377,20 +347,6 @@ public class ParentChildDocumentIndexer {
      */
     private String normalizeSourceId(String sourceId) {
         return StringUtils.hasText(sourceId) ? sourceId.trim() : RagDocumentConstants.DEFAULT_SOURCE_ID;
-    }
-
-    private String buildBm25Text(String title, String childText) {
-        StringBuilder builder = new StringBuilder();
-        if (StringUtils.hasText(title)) {
-            builder.append(title.trim());
-        }
-        if (StringUtils.hasText(childText)) {
-            if (!builder.isEmpty()) {
-                builder.append('\n');
-            }
-            builder.append(childText.trim());
-        }
-        return chineseTextSegmenter.segmentForSearch(builder.toString());
     }
 
     /**

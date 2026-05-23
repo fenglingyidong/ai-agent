@@ -1,9 +1,9 @@
 package com.example.ragagent.eval;
 
 import com.example.ragagent.rag.RagDocumentConstants;
+import com.example.ragagent.rag.impl.MilvusBm25ChildChunkRetriever;
 import com.example.ragagent.rag.impl.ParentChildDocumentIndexer;
 import com.example.ragagent.rag.impl.ParentChildDocumentRetriever;
-import com.example.ragagent.rag.impl.RedisBm25ChildChunkRetriever;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -42,7 +42,7 @@ public class DuReaderRecallEvaluationRunner implements ApplicationRunner {
 
     private final ParentChildDocumentIndexer documentIndexer;
     private final ParentChildDocumentRetriever denseRetriever;
-    private final RedisBm25ChildChunkRetriever bm25Retriever;
+    private final MilvusBm25ChildChunkRetriever bm25Retriever;
     private final ObjectMapper objectMapper;
     private final ConfigurableApplicationContext applicationContext;
     private final String inputFile;
@@ -55,7 +55,7 @@ public class DuReaderRecallEvaluationRunner implements ApplicationRunner {
 
     public DuReaderRecallEvaluationRunner(ParentChildDocumentIndexer documentIndexer,
                                           ParentChildDocumentRetriever denseRetriever,
-                                          RedisBm25ChildChunkRetriever bm25Retriever,
+                                          MilvusBm25ChildChunkRetriever bm25Retriever,
                                           ObjectMapper objectMapper,
                                           ConfigurableApplicationContext applicationContext,
                                           @Value("${app.rag-eval.input-file}") String inputFile,
@@ -91,7 +91,7 @@ public class DuReaderRecallEvaluationRunner implements ApplicationRunner {
                 actualIndexedDocumentCount = indexSamples(samples);
             }
             else {
-                log.warn("app.rag-eval.index-documents=false，本次不会导入 DuReader 文档；评测将复用 Redis 中已有的索引数据。");
+                log.warn("app.rag-eval.index-documents=false，本次不会导入 DuReader 文档；评测将复用 Milvus 中已有的索引数据。");
             }
 
             List<RetrievalStrategy> strategies = List.of(

@@ -2,22 +2,28 @@ package com.example.ragagent.commerce;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
+import jakarta.validation.constraints.Size;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.Optional;
 
 @Service
+@Validated
 public class ShoppingStateService {
 
-    private static final Duration STATE_TTL = Duration.ofDays(7);
+    private static final Logger log = LoggerFactory.getLogger(ShoppingStateService.class);
+
     private static final String PREFERENCE_PREFIX = "shopping:preference:";
-    private static final String CART_PREFIX = "shopping:cart:";
 
     @Autowired
     private StringRedisTemplate redisTemplate;
@@ -25,16 +31,12 @@ public class ShoppingStateService {
     @Autowired
     private ObjectMapper objectMapper;
 
-    public ShoppingStateService() {
-    }
-
-    public ShoppingStateService(StringRedisTemplate redisTemplate, ObjectMapper objectMapper) {
-        this.redisTemplate = redisTemplate;
-        this.objectMapper = objectMapper;
-    }
+    @Value("${app.shopping.preference-ttl:7d}")
+    private Duration preferenceTtl = Duration.ofDays(7);
 
     public ShoppingPreferenceState loadPreference(String userId, String sessionId) {
-        String raw = redisTemplate.opsForValue().get(preferenceKey(userId, sessionId));
+        String key = preferenceKey(userId, sessionId);
+        String raw = redisTemplate.opsForValue().get(key);
         if (!StringUtils.hasText(raw)) {
             return new ShoppingPreferenceState();
         }
@@ -42,13 +44,17 @@ public class ShoppingStateService {
             return objectMapper.readValue(raw, ShoppingPreferenceState.class);
         }
         catch (JsonProcessingException ex) {
+            log.warn("Failed to deserialize shopping preference state. key={}, reason={}", key, ex.getOriginalMessage());
             return new ShoppingPreferenceState();
         }
     }
 
     public ShoppingPreferenceState mergePreference(String userId,
                                                    String sessionId,
-                                                   ShoppingPreferencePatch patch) {
+                                                   @NotNull @Valid ShoppingPreferencePatch patch) {
+        if (patch == null) {
+            throw new IllegalArgumentException("patch must not be null");
+        }
         ShoppingPreferenceState state = loadPreference(userId, sessionId);
         if (StringUtils.hasText(patch.category())) {
             state.setCategory(patch.category().trim());
@@ -74,64 +80,24 @@ public class ShoppingStateService {
         if (StringUtils.hasText(patch.usageScenario())) {
             state.setUsageScenario(patch.usageScenario().trim());
         }
+        validateBudgetRange(state);
         savePreference(userId, sessionId, state);
         return state;
     }
 
-    public Map<String, Integer> loadCart(String userId, String sessionId) {
-        Map<Object, Object> rawCart = redisTemplate.opsForHash().entries(cartKey(userId, sessionId));
-        Map<String, Integer> cart = new LinkedHashMap<>();
-        rawCart.forEach((key, value) -> {
-            int quantity = parseQuantity(value);
-            if (quantity > 0) {
-                cart.put(key.toString(), quantity);
-            }
-        });
-        return cart;
-    }
-
-    public Map<String, Integer> addToCart(String userId, String sessionId, String skuId, int quantity) {
-        String key = cartKey(userId, sessionId);
-        redisTemplate.opsForHash().increment(key, skuId, Math.max(1, quantity));
-        redisTemplate.expire(key, STATE_TTL);
-        return loadCart(userId, sessionId);
-    }
-
-    public Map<String, Integer> setCartItemQuantity(String userId, String sessionId, String skuId, int quantity) {
-        String key = cartKey(userId, sessionId);
-        if (quantity <= 0) {
-            redisTemplate.opsForHash().delete(key, skuId);
-        }
-        else {
-            redisTemplate.opsForHash().put(key, skuId, String.valueOf(quantity));
-            redisTemplate.expire(key, STATE_TTL);
-        }
-        return loadCart(userId, sessionId);
-    }
-
-    public Map<String, Integer> removeCartItem(String userId, String sessionId, String skuId) {
-        redisTemplate.opsForHash().delete(cartKey(userId, sessionId), skuId);
-        return loadCart(userId, sessionId);
-    }
-
     private void savePreference(String userId, String sessionId, ShoppingPreferenceState state) {
         try {
-            redisTemplate.opsForValue().set(preferenceKey(userId, sessionId), objectMapper.writeValueAsString(state), STATE_TTL);
+            redisTemplate.opsForValue().set(preferenceKey(userId, sessionId), objectMapper.writeValueAsString(state), preferenceTtl);
         }
         catch (JsonProcessingException ex) {
             throw new IllegalStateException("Failed to serialize shopping preference state", ex);
         }
     }
 
-    private int parseQuantity(Object value) {
-        if (value == null) {
-            return 0;
-        }
-        try {
-            return Integer.parseInt(value.toString().trim());
-        }
-        catch (NumberFormatException ex) {
-            return 0;
+    private void validateBudgetRange(ShoppingPreferenceState state) {
+        if (state.getBudgetMin() != null && state.getBudgetMax() != null
+                && state.getBudgetMin() > state.getBudgetMax()) {
+            throw new IllegalArgumentException("budgetMin must be less than or equal to budgetMax");
         }
     }
 
@@ -139,22 +105,26 @@ public class ShoppingStateService {
         return PREFERENCE_PREFIX + normalize(userId) + ":" + normalize(sessionId);
     }
 
-    private String cartKey(String userId, String sessionId) {
-        return CART_PREFIX + normalize(userId) + ":" + normalize(sessionId);
-    }
-
     private String normalize(String value) {
         return StringUtils.hasText(value) ? value.trim() : "default";
     }
 
     public record ShoppingPreferencePatch(
+            @Size(max = 64)
             String category,
+            @PositiveOrZero
             Integer budgetMin,
+            @PositiveOrZero
             Integer budgetMax,
+            @Size(max = 64)
             String brand,
+            @Size(max = 64)
             String size,
+            @Size(max = 64)
             String color,
+            @Size(max = 64)
             String style,
+            @Size(max = 128)
             String usageScenario
     ) {
     }

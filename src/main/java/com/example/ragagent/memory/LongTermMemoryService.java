@@ -1,20 +1,24 @@
 package com.example.ragagent.memory;
 
 import com.example.ragagent.config.HierarchicalMemoryProperties;
+import com.example.ragagent.config.MilvusVectorStoreConfiguration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
@@ -55,28 +59,18 @@ public class LongTermMemoryService {
             """;
 
     private final VectorStore vectorStore;
-    private final ChatClient.Builder chatClientBuilder;
     private final HierarchicalMemoryProperties properties;
     private final Executor executor;
+    private final ChatClient summarizerChatClient;
 
-    private ChatClient summarizerChatClient;
-
-    public LongTermMemoryService(VectorStore vectorStore,
+    public LongTermMemoryService(@Qualifier(MilvusVectorStoreConfiguration.MEMORY_VECTOR_STORE) VectorStore vectorStore,
                                  ChatClient.Builder chatClientBuilder,
                                  HierarchicalMemoryProperties properties,
                                  @Qualifier("hierarchicalMemoryExecutor") Executor executor) {
         this.vectorStore = vectorStore;
-        this.chatClientBuilder = chatClientBuilder;
         this.properties = properties;
         this.executor = executor;
-        init();
-    }
-
-    @jakarta.annotation.PostConstruct
-    public void init() {
-        if (this.summarizerChatClient == null && this.chatClientBuilder != null) {
-            this.summarizerChatClient = this.chatClientBuilder.clone().build();
-        }
+        this.summarizerChatClient = chatClientBuilder == null ? null : chatClientBuilder.clone().build();
     }
 
     public String retrieveLongTermMemory(String userId, String userText) {
@@ -106,26 +100,26 @@ public class LongTermMemoryService {
         return LONG_TERM_SYSTEM_PROMPT.replace("{" + LONG_TERM_MEMORY_PLACEHOLDER + "}", longTermMemory);
     }
 
-    public void scheduleSummaryIfNeeded(String userId,
-                                        String conversationId,
-                                        List<ConversationMemoryEntry> evictedEntries) {
+    public CompletableFuture<Boolean> scheduleSummaryIfNeeded(String userId,
+                                                              String conversationId,
+                                                              List<ConversationMemoryEntry> evictedEntries) {
         if (evictedEntries == null || evictedEntries.isEmpty() || executor == null) {
-            return;
+            return CompletableFuture.completedFuture(false);
         }
 
         List<ConversationMemoryEntry> batch = List.copyOf(evictedEntries);
-        CompletableFuture.runAsync(() -> summarizeAndPersist(userId, conversationId, batch), executor)
+        return CompletableFuture.supplyAsync(() -> summarizeAndPersist(userId, conversationId, batch), executor)
                 .exceptionally(ex -> {
                     log.warn("Failed to summarize evicted memory for user {} and conversation {}", userId, conversationId, ex);
-                    return null;
+                    return false;
                 });
     }
 
-    private void summarizeAndPersist(String userId,
-                                     String conversationId,
-                                     List<ConversationMemoryEntry> evictedEntries) {
+    private boolean summarizeAndPersist(String userId,
+                                        String conversationId,
+                                        List<ConversationMemoryEntry> evictedEntries) {
         if (summarizerChatClient == null || vectorStore == null) {
-            return;
+            return false;
         }
 
         String transcript = evictedEntries.stream()
@@ -134,7 +128,7 @@ public class LongTermMemoryService {
                 .orElse("");
 
         if (!StringUtils.hasText(transcript)) {
-            return;
+            return false;
         }
 
         String summaryPrompt = """
@@ -151,7 +145,7 @@ public class LongTermMemoryService {
                 .content();
 
         if (!StringUtils.hasText(summary)) {
-            return;
+            return false;
         }
 
         ConversationMemoryEntry first = evictedEntries.get(0);
@@ -168,21 +162,22 @@ public class LongTermMemoryService {
         metadata.put("summarizedAt", Instant.now().toEpochMilli());
 
         Document document = Document.builder()
-                .id(conversationId.replace("::", "-") + "-" + first.sequence() + "-" + last.sequence())
+                .id(buildMemoryDocumentId(conversationId, first.sequence(), last.sequence()))
                 .text(summary)
                 .metadata(metadata)
                 .build();
 
         vectorStore.add(List.of(document));
+        return true;
     }
 
-    private String buildLongTermFilter(String userId) {
-        return "userId == '" + escapeFilterValue(normalizeUserId(userId))
-                + "' && memoryType == '" + LONG_TERM_MEMORY_TYPE + "'";
-    }
-
-    private String escapeFilterValue(String value) {
-        return value.replace("\\", "\\\\").replace("'", "\\'");
+    private org.springframework.ai.vectorstore.filter.Filter.Expression buildLongTermFilter(String userId) {
+        FilterExpressionBuilder builder = new FilterExpressionBuilder();
+        return builder.and(
+                        builder.eq("userId", normalizeUserId(userId)),
+                        builder.eq("memoryType", LONG_TERM_MEMORY_TYPE)
+                )
+                .build();
     }
 
     private String toTranscriptLine(ConversationMemoryEntry entry) {
@@ -197,5 +192,14 @@ public class LongTermMemoryService {
 
     private String normalizeUserId(String userId) {
         return StringUtils.hasText(userId) ? userId : DEFAULT_USER_ID;
+    }
+
+    static String buildMemoryDocumentId(String conversationId, long fromSequence, long toSequence) {
+        String seed = normalizeDocumentIdPart(conversationId) + ":" + fromSequence + ":" + toSequence;
+        return UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
+    private static String normalizeDocumentIdPart(String value) {
+        return StringUtils.hasText(value) ? value : DEFAULT_USER_ID;
     }
 }

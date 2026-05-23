@@ -1,5 +1,6 @@
 package com.example.ragagent.controller;
 
+import com.example.ragagent.mall.MallAuthCache;
 import com.example.ragagent.mall.MallProperties;
 import com.example.ragagent.service.ReActAgent;
 import com.example.ragagent.service.ChatModelRegistry;
@@ -9,6 +10,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.core.Authentication;
 import org.springframework.util.MimeType;
 import org.springframework.util.StringUtils;
@@ -45,10 +47,21 @@ public class ChatController {
 
     private final MallProperties mallProperties;
 
-    public ChatController(ReActAgent reActAgent, ChatModelRegistry chatModelRegistry, MallProperties mallProperties) {
+    private final MallAuthCache mallAuthCache;
+
+    @Autowired
+    public ChatController(ReActAgent reActAgent,
+                          ChatModelRegistry chatModelRegistry,
+                          MallProperties mallProperties,
+                          MallAuthCache mallAuthCache) {
         this.reActAgent = reActAgent;
         this.chatModelRegistry = chatModelRegistry;
         this.mallProperties = mallProperties;
+        this.mallAuthCache = mallAuthCache;
+    }
+
+    public ChatController(ReActAgent reActAgent, ChatModelRegistry chatModelRegistry, MallProperties mallProperties) {
+        this(reActAgent, chatModelRegistry, mallProperties, null);
     }
 
     @PostMapping(value = "/react", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -68,15 +81,16 @@ public class ChatController {
             throw new ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST, "at most " + MAX_IMAGE_COUNT + " images are allowed");
         }
 
+        String currentUserId = resolveCurrentUserId(authentication);
         BasicCredentials credentials = resolveBasicAuth(request);
         return streamFlux(reActAgent.runStream(
-                resolveCurrentUserId(authentication),
+                currentUserId,
                 resolveSessionId(sessionId, request),
                 modelId,
                 normalizeMessage(message),
                 webSearchEnabled,
                 media,
-                resolveMallToken(request),
+                resolveMallToken(request, currentUserId),
                 credentials.username(),
                 credentials.password()
         ));
@@ -184,10 +198,20 @@ public class ChatController {
         return DEFAULT_SESSION_ID;
     }
 
-    private String resolveMallToken(HttpServletRequest request) {
+    private String resolveMallToken(HttpServletRequest request, String currentUserId) {
         String headerName = mallProperties == null ? "X-Mall-Authorization" : mallProperties.getAuthorizationHeader();
         String token = request == null ? "" : request.getHeader(headerName);
-        return StringUtils.hasText(token) ? token.trim() : "";
+        if (StringUtils.hasText(token)) {
+            return token.trim();
+        }
+        if (mallAuthCache == null || !StringUtils.hasText(currentUserId) || DEFAULT_USER_ID.equals(currentUserId)) {
+            return "";
+        }
+        return mallAuthCache.get(buildMallAuthCacheKey(currentUserId));
+    }
+
+    private String buildMallAuthCacheKey(String username) {
+        return username.trim() + ":default:mall";
     }
 
     private BasicCredentials resolveBasicAuth(HttpServletRequest request) {

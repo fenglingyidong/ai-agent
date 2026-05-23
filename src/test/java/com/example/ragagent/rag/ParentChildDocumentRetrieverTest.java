@@ -1,5 +1,6 @@
 package com.example.ragagent.rag;
 
+import com.example.ragagent.config.RagRetrievalProperties;
 import com.example.ragagent.rag.impl.ParentChildDocumentRetriever;
 import com.example.ragagent.rag.impl.ParentDocumentStore;
 import org.junit.jupiter.api.Test;
@@ -49,7 +50,11 @@ class ParentChildDocumentRetrieverTest {
                 .build();
         when(parentDocumentStore.load("parent-1")).thenReturn(Optional.of(parentDocument));
 
-        ParentChildDocumentRetriever retriever = new ParentChildDocumentRetriever(vectorStore, parentDocumentStore);
+        ParentChildDocumentRetriever retriever = new ParentChildDocumentRetriever(
+                vectorStore,
+                parentDocumentStore,
+                new RagRetrievalProperties()
+        );
 
         List<Document> documents = retriever.retrieve(new Query("guide sentence"));
 
@@ -66,7 +71,11 @@ class ParentChildDocumentRetrieverTest {
 
         when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
 
-        ParentChildDocumentRetriever retriever = new ParentChildDocumentRetriever(vectorStore, parentDocumentStore);
+        ParentChildDocumentRetriever retriever = new ParentChildDocumentRetriever(
+                vectorStore,
+                parentDocumentStore,
+                new RagRetrievalProperties()
+        );
 
         List<Document> documents = retriever.retrieve(new Query("missing"));
 
@@ -112,7 +121,11 @@ class ParentChildDocumentRetrieverTest {
                 .build();
         when(parentDocumentStore.load("parent-1")).thenReturn(Optional.of(parentDocument));
 
-        ParentChildDocumentRetriever retriever = new ParentChildDocumentRetriever(vectorStore, parentDocumentStore);
+        ParentChildDocumentRetriever retriever = new ParentChildDocumentRetriever(
+                vectorStore,
+                parentDocumentStore,
+                new RagRetrievalProperties()
+        );
 
         List<Document> documents = retriever.retrieve(new Query("guide sentence"));
 

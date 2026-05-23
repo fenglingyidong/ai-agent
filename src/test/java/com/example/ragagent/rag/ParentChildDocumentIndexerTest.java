@@ -129,7 +129,8 @@ class ParentChildDocumentIndexerTest {
                         "category", "运动鞋",
                         "brand", "Stride",
                         "price", 499,
-                        "stock", 38
+                        "stock", 38,
+                        "attributes", Map.of("颜色", "黑色", "鞋码", "42")
                 )
         );
 
@@ -141,6 +142,7 @@ class ParentChildDocumentIndexerTest {
         assertEquals("P1001", childDocuments.get(0).getMetadata().get("productId"));
         assertEquals("SKU-P1001-BLK-42", childDocuments.get(0).getMetadata().get("skuId"));
         assertEquals("运动鞋", childDocuments.get(0).getMetadata().get("category"));
+        assertEquals(Map.of("颜色", "黑色", "鞋码", "42"), childDocuments.get(0).getMetadata().get("attributes"));
         verify(parentDocumentStore).save(
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.eq("product-P1001"),
@@ -148,7 +150,9 @@ class ParentChildDocumentIndexerTest {
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyString(),
-                org.mockito.ArgumentMatchers.argThat(metadata -> "P1001".equals(metadata.get("productId")))
+                org.mockito.ArgumentMatchers.argThat(metadata ->
+                        "P1001".equals(metadata.get("productId"))
+                                && Map.of("颜色", "黑色", "鞋码", "42").equals(metadata.get("attributes")))
         );
     }
 }

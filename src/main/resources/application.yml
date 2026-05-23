@@ -22,6 +22,9 @@ management:
 spring:
   application:
     name: rag-agent
+  mvc:
+    async:
+      request-timeout: ${SPRING_MVC_ASYNC_REQUEST_TIMEOUT:180s}
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -40,16 +43,11 @@ spring:
       chat:
         completions-path: /chat/completions
         options:
-          model: qwen3.6-plus
+          model: qwen3.5-omni-plus-2026-03-15
       embedding:
         embeddings-path: /embeddings
         options:
           model: text-embedding-v3
-    vectorstore:
-      redis:
-        index-name: ${REDIS_VECTOR_INDEX:rag-index}
-        prefix: ${REDIS_VECTOR_PREFIX:rag:}
-        initialize-schema: ${REDIS_VECTOR_INITIALIZE_SCHEMA:true}
     mcp:
       client:
         enabled: true
@@ -67,13 +65,49 @@ spring:
               endpoint: /api/v1/mcps/WebSearch/mcp
 
 app:
+  vector:
+    milvus:
+      host: ${MILVUS_HOST:localhost}
+      port: ${MILVUS_PORT:19530}
+      uri: ${MILVUS_URI:}
+      token: ${MILVUS_TOKEN:}
+      username: ${MILVUS_USERNAME:}
+      password: ${MILVUS_PASSWORD:}
+      database-name: ${MILVUS_DATABASE:default}
+      secure: ${MILVUS_SECURE:false}
+      initialize-schema: ${MILVUS_INITIALIZE_SCHEMA:true}
+      embedding-dimension: ${MILVUS_EMBEDDING_DIMENSION:1024}
+      metric-type: ${MILVUS_METRIC_TYPE:COSINE}
+      index-type: ${MILVUS_INDEX_TYPE:IVF_FLAT}
+      index-parameters: '${MILVUS_INDEX_PARAMETERS:{"nlist":1024}}'
+    product:
+      collection-name: ${PRODUCT_VECTOR_COLLECTION:product_index}
+      bm25-enabled: ${PRODUCT_BM25_ENABLED:true}
+    memory:
+      collection-name: ${MEMORY_VECTOR_COLLECTION:memory_index}
+  rag:
+    retrieval:
+      dense-child-top-k: ${RAG_DENSE_CHILD_TOP_K:24}
+      dense-similarity-threshold: ${RAG_DENSE_SIMILARITY_THRESHOLD:0.2}
+      dense-fallback-top-k: ${RAG_DENSE_FALLBACK_TOP_K:32}
+      bm25-child-top-k: ${RAG_BM25_CHILD_TOP_K:8}
+      rrf-k: ${RAG_RRF_K:60}
+      min-child-results-to-keep: ${RAG_MIN_CHILD_RESULTS_TO_KEEP:4}
+      max-child-results-to-consider: ${RAG_MAX_CHILD_RESULTS_TO_CONSIDER:12}
+      max-parent-results: ${RAG_MAX_PARENT_RESULTS:6}
+      min-normalized-gap-to-truncate: ${RAG_MIN_NORMALIZED_GAP_TO_TRUNCATE:0.0}
   memory:
     max-recent-messages: 12
     max-recent-age: 3650d
+    short-term-ttl: ${MEMORY_SHORT_TERM_TTL:30d}
+    idle-summary-age: ${MEMORY_IDLE_SUMMARY_AGE:1d}
+    idle-summary-scan-interval: ${MEMORY_IDLE_SUMMARY_SCAN_INTERVAL:15m}
     long-term-top-k: 3
     long-term-similarity-threshold: 0.0
     summarization-concurrency: 2
     thread-queue-capacity: 100
+  shopping:
+    preference-ttl: ${SHOPPING_PREFERENCE_TTL:7d}
   ai:
     intent-router:
       enabled: ${INTENT_ROUTER_ENABLED:true}
@@ -87,8 +121,8 @@ app:
       default-model: qwen
       items:
         qwen:
-          label: Qwen 3.6 Plus
-          model: ${QWEN_CHAT_MODEL:qwen3.6-plus}
+          label: Qwen 3.5 Omni Plus
+          model: ${QWEN_CHAT_MODEL:qwen3.5-omni-plus-2026-03-15}
         deepseek:
           label: DeepSeek V3.2
           model: deepseek-v3.2
@@ -101,6 +135,8 @@ app:
   mall:
     base-url: ${MALL_BASE_URL:http://localhost:8100}
     authorization-header: ${MALL_AUTHORIZATION_HEADER:X-Mall-Authorization}
+    request-timeout: ${MALL_REQUEST_TIMEOUT:5s}
+    auth-cache-ttl: ${MALL_AUTH_CACHE_TTL:2h}
     mcp:
       base-url: ${MALL_MCP_BASE_URL:http://localhost:8120}
       endpoint: /mcp

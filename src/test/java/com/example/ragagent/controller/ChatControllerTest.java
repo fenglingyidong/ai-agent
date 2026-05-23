@@ -1,5 +1,6 @@
 package com.example.ragagent.controller;
 
+import com.example.ragagent.mall.MallAuthCache;
 import com.example.ragagent.mall.MallProperties;
 import com.example.ragagent.service.ChatModelRegistry;
 import com.example.ragagent.service.ReActAgent;
@@ -204,6 +205,46 @@ class ChatControllerTest {
         assertEquals("Bearer mall-token", mallTokenCaptor.getValue());
         assertEquals("mall-user", mallUsernameCaptor.getValue());
         assertEquals("mall-pass", mallPasswordCaptor.getValue());
+    }
+
+    @Test
+    void reactShouldUseCachedMallTokenWhenHeaderIsMissing() {
+        ReActAgent reActAgent = mock(ReActAgent.class);
+        MallAuthCache mallAuthCache = mock(MallAuthCache.class);
+        when(mallAuthCache.get("alice:default:mall")).thenReturn("Bearer cached-token");
+        ChatController controller = new ChatController(
+                reActAgent,
+                mock(ChatModelRegistry.class),
+                new MallProperties(),
+                mallAuthCache
+        );
+        whenRunStream(reActAgent).thenReturn(Flux.just("ok"));
+
+        controller.react(
+                "查购物车",
+                "front-session",
+                null,
+                false,
+                List.of(),
+                List.of(),
+                new MockHttpServletRequest(),
+                UsernamePasswordAuthenticationToken.authenticated("alice", null, List.of())
+        );
+
+        ArgumentCaptor<String> mallTokenCaptor = ArgumentCaptor.forClass(String.class);
+        verify(reActAgent).runStream(
+                anyString(),
+                anyString(),
+                isNull(),
+                anyString(),
+                anyBoolean(),
+                org.mockito.ArgumentMatchers.<List<Media>>any(),
+                mallTokenCaptor.capture(),
+                anyString(),
+                anyString()
+        );
+
+        assertEquals("Bearer cached-token", mallTokenCaptor.getValue());
     }
 
     private org.mockito.stubbing.OngoingStubbing<Flux<String>> whenRunStream(ReActAgent reActAgent) {

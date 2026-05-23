@@ -57,6 +57,7 @@ public class BuiltInTools {
             appendMetadata(builder, document, "brand", "品牌");
             appendMetadata(builder, document, "category", "类目");
             appendMetadata(builder, document, "sourceId", "来源");
+            appendMetadata(builder, document, "attributes", "属性");
             builder.append(System.lineSeparator()).append(document.getText());
         }
         return builder.toString();

@@ -63,6 +63,11 @@ class ShoppingIntentRouterTest {
                   "intent": "PRICE_STOCK_QUERY",
                   "visual_context": {},
                   "text_slots": {"product_name": "儿童积木套装 300片", "target_attribute": "stock"},
+                  "task_policies": ["PRODUCT_SELECTION"],
+                  "missing_slots": ["sku_id"],
+                  "tool_candidates": ["mall_get_product_detail"],
+                  "need_confirm": true,
+                  "risk_level": "LOW",
                   "route_to_core": true,
                   "confidence": 0.95,
                   "reason": "查库存"
@@ -74,6 +79,11 @@ class ShoppingIntentRouterTest {
 
         assertEquals("PRICE_STOCK_QUERY", route.normalizedIntent());
         assertEquals(false, route.routeToCore());
+        assertEquals(List.of("PRODUCT_SELECTION"), route.taskPolicies());
+        assertEquals(List.of("sku_id"), route.missingSlots());
+        assertEquals(List.of("mall_get_product_detail"), route.toolCandidates());
+        assertEquals(true, route.needConfirm());
+        assertEquals("LOW", route.riskLevel());
         assertTrue(route.reason().contains("短路候选"));
     }
 
@@ -96,6 +106,60 @@ class ShoppingIntentRouterTest {
         assertEquals("COMPLEX_RECOMMENDATION", route.normalizedIntent());
         assertEquals("C_COMPLEX_REACT", route.normalizedTaskType());
         assertTrue(route.routeToCore());
+    }
+
+    @Test
+    void routeShouldParseTaskPolicyMetadata() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "C_COMPLEX_REACT",
+                  "intent": "COMPLEX_RECOMMENDATION",
+                  "visual_context": {},
+                  "text_slots": {"budget": "300", "use_scene": "生日礼物"},
+                  "task_policies": ["PRODUCT_SELECTION", "FOLLOW_UP", "RECOMMENDATION"],
+                  "missing_slots": ["age"],
+                  "tool_candidates": ["searchProductKnowledge", "mall_search_products"],
+                  "need_confirm": false,
+                  "risk_level": "MEDIUM",
+                  "route_to_core": true,
+                  "confidence": 0.93,
+                  "reason": "复杂推荐，需要补齐年龄"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+
+        ShoppingIntentRoute route = router.route("预算300买生日礼物，帮我推荐", List.of());
+
+        assertEquals(List.of("PRODUCT_SELECTION", "FOLLOW_UP", "RECOMMENDATION"), route.taskPolicies());
+        assertEquals(List.of("age"), route.missingSlots());
+        assertEquals(List.of("searchProductKnowledge", "mall_search_products"), route.toolCandidates());
+        assertEquals(false, route.needConfirm());
+        assertEquals("MEDIUM", route.riskLevel());
+    }
+
+    @Test
+    void routePromptShouldAskForTaskPolicies() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "B_SIMPLE_SHOPPING_TOOL",
+                  "intent": "QUERY_ATTRIBUTE",
+                  "visual_context": {},
+                  "text_slots": {"target_attribute": "color"},
+                  "route_to_core": false,
+                  "confidence": 0.9,
+                  "reason": "查属性"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+
+        router.route("这件还有别的颜色吗", List.of());
+
+        ArgumentCaptor<String> systemCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mocks.requestSpec).system(systemCaptor.capture());
+        String systemPrompt = systemCaptor.getValue();
+        assertTrue(systemPrompt.contains("task_policies"));
+        assertTrue(systemPrompt.contains("PRODUCT_SELECTION"));
+        assertTrue(systemPrompt.contains("CART_CONFIRMATION"));
     }
 
     @Test

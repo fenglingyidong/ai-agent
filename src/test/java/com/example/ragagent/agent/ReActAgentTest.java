@@ -1,11 +1,13 @@
 package com.example.ragagent.agent;
 
+import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.service.ChatModelRegistry;
 import com.example.ragagent.service.ReActAgent;
 import com.example.ragagent.tools.BuiltInTools;
+import io.modelcontextprotocol.client.McpSyncClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -232,6 +234,47 @@ class ReActAgentTest {
                 "user-reset",
                 "session-reset",
                 secure("price?").modelInput(),
+                result
+        );
+    }
+
+    @Test
+    void runStreamShouldReturnMallMcpFailureWhenMallToolDiscoveryFails() {
+        ChatClient reactChatClient = mock(ChatClient.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        LongTermMemoryAdvisor longTermMemoryAdvisor = mock(LongTermMemoryAdvisor.class);
+        MessageChatMemoryAdvisor messageChatMemoryAdvisor = MessageChatMemoryAdvisor.builder(
+                MessageWindowChatMemory.builder()
+                        .chatMemoryRepository(new InMemoryChatMemoryRepository())
+                        .build()
+        ).build();
+        ConversationMemoryService conversationMemoryService = mock(ConversationMemoryService.class);
+        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        McpSyncClient syncClient = mock(McpSyncClient.class);
+        when(mallMcpClient.syncClient()).thenReturn(syncClient);
+        when(syncClient.listTools()).thenThrow(new IllegalStateException("mall-mcp 服务未启动或不可访问"));
+        ReActAgent agent = new ReActAgent(
+                builderFor(reactChatClient),
+                builtInTools,
+                longTermMemoryAdvisor,
+                messageChatMemoryAdvisor,
+                conversationMemoryService,
+                new PromptSecurityFilter(),
+                null,
+                null,
+                List.of(),
+                mallMcpClient
+        );
+
+        String result = collect(agent.runStream("user-mall", "session-mall", null, "查一下库存", false,
+                List.of(), "", "", ""));
+
+        assertEquals("商城 MCP 调用失败：mall-mcp 服务未启动或不可访问", result);
+        verify(reactChatClient, never()).prompt();
+        verify(conversationMemoryService).rememberTurn(
+                "user-mall",
+                "session-mall",
+                secure("查一下库存").modelInput(),
                 result
         );
     }

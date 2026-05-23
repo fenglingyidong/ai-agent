@@ -4,8 +4,10 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
@@ -17,7 +19,12 @@ public record ShoppingIntentRoute(
         @JsonProperty("text_slots") Map<String, Object> textSlots,
         @JsonProperty("route_to_core") Boolean routeToCore,
         Double confidence,
-        String reason
+        String reason,
+        @JsonProperty("task_policies") List<String> taskPolicies,
+        @JsonProperty("missing_slots") List<String> missingSlots,
+        @JsonProperty("tool_candidates") List<String> toolCandidates,
+        @JsonProperty("need_confirm") Boolean needConfirm,
+        @JsonProperty("risk_level") String riskLevel
 ) {
 
     public ShoppingIntentRoute {
@@ -28,6 +35,22 @@ public record ShoppingIntentRoute(
         routeToCore = routeToCore == null ? Boolean.TRUE : routeToCore;
         confidence = confidence == null ? 0.0 : Math.max(0.0, Math.min(1.0, confidence));
         reason = StringUtils.hasText(reason) ? reason.trim() : "";
+        taskPolicies = immutableStringList(taskPolicies);
+        missingSlots = immutableStringList(missingSlots);
+        toolCandidates = immutableStringList(toolCandidates);
+        needConfirm = needConfirm == null ? Boolean.FALSE : needConfirm;
+        riskLevel = normalizeRiskLevel(riskLevel);
+    }
+
+    public ShoppingIntentRoute(String intent,
+                               String taskType,
+                               Map<String, Object> visualContext,
+                               Map<String, Object> textSlots,
+                               Boolean routeToCore,
+                               Double confidence,
+                               String reason) {
+        this(intent, taskType, visualContext, textSlots, routeToCore, confidence, reason,
+                List.of(), List.of(), List.of(), false, "LOW");
     }
 
     public ShoppingIntentRoute(String intent,
@@ -63,6 +86,10 @@ public record ShoppingIntentRoute(
         return !textSlots.isEmpty();
     }
 
+    public boolean hasMissingSlots() {
+        return !missingSlots.isEmpty();
+    }
+
     private static Map<String, Object> immutableNonNullMap(Map<String, Object> source) {
         if (source == null || source.isEmpty()) {
             return Map.of();
@@ -74,6 +101,30 @@ public record ShoppingIntentRoute(
             }
         });
         return target.isEmpty() ? Map.of() : Collections.unmodifiableMap(target);
+    }
+
+    private static List<String> immutableStringList(List<String> source) {
+        if (source == null || source.isEmpty()) {
+            return List.of();
+        }
+        List<String> target = new ArrayList<>();
+        for (String value : source) {
+            if (StringUtils.hasText(value)) {
+                target.add(value.trim());
+            }
+        }
+        return target.isEmpty() ? List.of() : List.copyOf(target);
+    }
+
+    private static String normalizeRiskLevel(String riskLevel) {
+        if (!StringUtils.hasText(riskLevel)) {
+            return "LOW";
+        }
+        String normalized = riskLevel.trim().toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "LOW", "MEDIUM", "HIGH" -> normalized;
+            default -> "LOW";
+        };
     }
 
     private static String normalizeTaskType(String taskType, String intent) {

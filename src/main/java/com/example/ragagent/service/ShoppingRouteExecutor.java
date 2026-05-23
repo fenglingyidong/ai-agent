@@ -34,6 +34,9 @@ public class ShoppingRouteExecutor {
     @Autowired(required = false)
     private SimpleTaskAgent simpleTaskAgent;
 
+    @Autowired(required = false)
+    private ShoppingTaskPolicyRegistry taskPolicyRegistry;
+
     public ShoppingRouteExecutor() {
     }
 
@@ -48,6 +51,16 @@ public class ShoppingRouteExecutor {
         this.intentRouter = intentRouter;
         this.mallMcpContextClient = mallMcpContextClient;
         this.simpleTaskAgent = simpleTaskAgent;
+    }
+
+    public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
+                                 MallMcpContextClient mallMcpContextClient,
+                                 SimpleTaskAgent simpleTaskAgent,
+                                 ShoppingTaskPolicyRegistry taskPolicyRegistry) {
+        this.intentRouter = intentRouter;
+        this.mallMcpContextClient = mallMcpContextClient;
+        this.simpleTaskAgent = simpleTaskAgent;
+        this.taskPolicyRegistry = taskPolicyRegistry;
     }
 
     RoutedAgentRequest routeBeforeCore(String userId,
@@ -77,10 +90,14 @@ public class ShoppingRouteExecutor {
         }
 
         ShoppingIntentRoute route = intentRouter.route(normalizedMessage, safeMedia);
+        List<ShoppingTaskPolicy> taskPolicies = resolveTaskPolicies(route);
+        boolean mallToolsAllowedByPolicy = allowsMallToolsByPolicy(taskPolicies);
+        boolean simpleTaskAllowed = shouldRunSimpleTask(route)
+                && (!"B_SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType()) || mallToolsAllowedByPolicy);
         String fastLaneFallbackReason = "";
         boolean mallContextRegistered = false;
 
-        if (shouldRunSimpleTask(route) && "B_SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType())) {
+        if (simpleTaskAllowed && "B_SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType())) {
             MallMcpContextClient.MallMcpContextRegistration registration = registerMallMcpContext(
                     userId,
                     sessionId,
@@ -95,7 +112,7 @@ public class ShoppingRouteExecutor {
             mallContextRegistered = true;
         }
 
-        if (shouldRunSimpleTask(route)) {
+        if (simpleTaskAllowed) {
             FastLaneResult simpleTaskResult = simpleTaskAgent.tryRun(
                     route,
                     normalizedMessage,
@@ -110,7 +127,7 @@ public class ShoppingRouteExecutor {
             }
         }
 
-        if (!mallContextRegistered && requiresMallMcp(route, normalizedMessage, safeMedia.size())) {
+        if (!mallContextRegistered && mallToolsAllowedByPolicy && requiresMallMcp(route, normalizedMessage, safeMedia.size())) {
             MallMcpContextClient.MallMcpContextRegistration registration = registerMallMcpContext(
                     userId,
                     sessionId,
@@ -124,11 +141,29 @@ public class ShoppingRouteExecutor {
             }
         }
         return new RoutedAgentRequest(
-                buildCoreAgentMessage(normalizedMessage, route, safeMedia.size(), fastLaneFallbackReason),
+                buildCoreAgentMessage(normalizedMessage, route, safeMedia.size(), fastLaneFallbackReason, taskPolicies),
                 resolveCoreMedia(route, safeMedia),
                 null,
-                allowMallToolsForCore(route, normalizedMessage, safeMedia.size())
+                mallToolsAllowedByPolicy && allowMallToolsForCore(route, normalizedMessage, safeMedia.size()),
+                taskPolicies
         );
+    }
+
+    private List<ShoppingTaskPolicy> resolveTaskPolicies(ShoppingIntentRoute route) {
+        if (taskPolicyRegistry == null) {
+            return List.of();
+        }
+        return taskPolicyRegistry.resolve(route);
+    }
+
+    private boolean allowsMallToolsByPolicy(List<ShoppingTaskPolicy> taskPolicies) {
+        if (taskPolicies == null || taskPolicies.isEmpty()) {
+            return true;
+        }
+        java.util.Set<String> allowedToolNames = taskPolicies.stream()
+                .flatMap(policy -> policy.allowedToolNames().stream())
+                .collect(java.util.stream.Collectors.toSet());
+        return allowedToolNames.isEmpty() || allowedToolNames.stream().anyMatch(MallMcpToolCallback::isMallTool);
     }
 
     private boolean requiresMallMcp(ShoppingIntentRoute route, String message, int mediaCount) {
@@ -145,7 +180,7 @@ public class ShoppingRouteExecutor {
             };
         }
         if (mediaCount > 0) {
-            return false;
+            return hasExplicitRealtimeMallKeyword(message);
         }
         return StringUtils.hasText(message) && MALL_KEYWORD_TEXT.matcher(message.trim()).matches();
     }
@@ -185,6 +220,15 @@ public class ShoppingRouteExecutor {
         return StringUtils.hasText(normalizedMessage) && REALTIME_MALL_TOOL_TEXT.matcher(normalizedMessage).matches();
     }
 
+    private boolean hasExplicitRealtimeMallKeyword(String message) {
+        String normalizedMessage = StringUtils.hasText(message) ? message.trim() : "";
+        if (!StringUtils.hasText(normalizedMessage) || NO_REALTIME_MALL_TOOL_TEXT.matcher(normalizedMessage).matches()) {
+            return false;
+        }
+        return HARD_MALL_OPERATION_TEXT.matcher(normalizedMessage).matches()
+                || REALTIME_MALL_TOOL_TEXT.matcher(normalizedMessage).matches();
+    }
+
     private boolean hasSpecificSkuSlot(ShoppingIntentRoute route) {
         if (route == null || route.textSlots().isEmpty()) {
             return false;
@@ -219,12 +263,25 @@ public class ShoppingRouteExecutor {
     }
 
     private String buildCoreAgentMessage(String message, ShoppingIntentRoute route, int mediaCount, String fastLaneFallbackReason) {
+        return buildCoreAgentMessage(message, route, mediaCount, fastLaneFallbackReason, List.of());
+    }
+
+    private String buildCoreAgentMessage(String message,
+                                         ShoppingIntentRoute route,
+                                         int mediaCount,
+                                         String fastLaneFallbackReason,
+                                         List<ShoppingTaskPolicy> taskPolicies) {
         if (route != null && route.isHighConfidence(confidenceThreshold())) {
             return """
                     观察到的任务类型：%s
                     观察到的用户意图：%s
                     路由置信度：%.2f
                     快车道降级原因：%s
+                    Planner 选择策略：%s
+                    缺失槽位：%s
+                    候选工具：%s
+                    是否需要确认：%s
+                    风险等级：%s
                     视觉提取结果：%s
                     文本槽位：%s
                     用户原话：%s
@@ -233,6 +290,11 @@ public class ShoppingRouteExecutor {
                     route.normalizedIntent(),
                     route.confidence(),
                     StringUtils.hasText(fastLaneFallbackReason) ? fastLaneFallbackReason : "无",
+                    renderPolicyIds(taskPolicies),
+                    renderTextList(route.missingSlots()),
+                    renderTextList(route.toolCandidates()),
+                    route.needConfirm() ? "是" : "否",
+                    route.riskLevel(),
                     renderSlots(route.visualContext()),
                     renderSlots(route.textSlots()),
                     message
@@ -271,6 +333,26 @@ public class ShoppingRouteExecutor {
         List<String> parts = new ArrayList<>();
         appendSlotParts(parts, slots);
         return parts.isEmpty() ? "无" : String.join("，", parts);
+    }
+
+    private String renderPolicyIds(List<ShoppingTaskPolicy> policies) {
+        if (policies == null || policies.isEmpty()) {
+            return "无";
+        }
+        return policies.stream()
+                .map(ShoppingTaskPolicy::id)
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    private String renderTextList(List<String> values) {
+        if (values == null || values.isEmpty()) {
+            return "无";
+        }
+        String rendered = values.stream()
+                .filter(StringUtils::hasText)
+                .map(String::trim)
+                .collect(java.util.stream.Collectors.joining(", "));
+        return StringUtils.hasText(rendered) ? rendered : "无";
     }
 
     private String slotValueToText(Object value) {

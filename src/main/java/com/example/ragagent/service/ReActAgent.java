@@ -1,12 +1,10 @@
 package com.example.ragagent.service;
 
 import com.example.ragagent.mall.MallMcpClient;
-import com.example.ragagent.mall.MallMcpContextClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.tools.BuiltInTools;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -36,9 +34,6 @@ public class ReActAgent {
     private static final Logger log = LoggerFactory.getLogger(ReActAgent.class);
     private static final String TOOL_CONTEXT_USER_ID = "userId";
     private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
-    private static final String TOOL_CONTEXT_MALL_TOKEN = "mallToken";
-    private static final String TOOL_CONTEXT_MALL_USERNAME = "mallUsername";
-    private static final String TOOL_CONTEXT_MALL_PASSWORD = "mallPassword";
 
     private static final String REACT_SYSTEM_PROMPT_TEMPLATE = """
             你是多模态电商智能导购 Agent，负责帮助用户完成选品、对比、追问、推荐和加购。
@@ -67,9 +62,7 @@ public class ReActAgent {
     private final ChatModelRegistry chatModelRegistry;
     private final ShoppingRouteExecutor shoppingRouteExecutor;
     private final List<ToolCallbackProvider> externalToolCallbackProviders;
-    private final ObjectMapper objectMapper;
-    private final MallMcpOperations mallMcpOperations;
-    private final MallMcpContextClient mallMcpContextClient;
+    private final MallMcpToolCallback mallMcpToolCallback;
     private final ChatClient reactChatClient;
     private final List<ToolCallback> builtInToolCallbacks;
 
@@ -83,9 +76,7 @@ public class ReActAgent {
                       ChatModelRegistry chatModelRegistry,
                       ShoppingRouteExecutor shoppingRouteExecutor,
                       List<ToolCallbackProvider> externalToolCallbackProviders,
-                      ObjectMapper objectMapper,
-                      MallMcpClient mallMcpClient,
-                      MallMcpContextClient mallMcpContextClient) {
+                      MallMcpClient mallMcpClient) {
         this.builtInTools = builtInTools;
         this.longTermMemoryAdvisor = longTermMemoryAdvisor;
         this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
@@ -96,11 +87,9 @@ public class ReActAgent {
         this.externalToolCallbackProviders = externalToolCallbackProviders == null
                 ? List.of()
                 : List.copyOf(externalToolCallbackProviders);
-        this.objectMapper = objectMapper;
-        this.mallMcpOperations = objectMapper == null || mallMcpClient == null
+        this.mallMcpToolCallback = mallMcpClient == null
                 ? null
-                : new MallMcpOperations(objectMapper, mallMcpClient);
-        this.mallMcpContextClient = mallMcpContextClient;
+                : new MallMcpToolCallback(mallMcpClient);
         this.reactChatClient = builder.clone().build();
         this.builtInToolCallbacks = loadBuiltInToolCallbacks();
     }
@@ -124,8 +113,6 @@ public class ReActAgent {
                 chatModelRegistry,
                 shoppingRouteExecutor,
                 externalToolCallbackProviders,
-                new ObjectMapper(),
-                null,
                 null
         );
     }
@@ -160,9 +147,7 @@ public class ReActAgent {
                 webSearchEnabled,
                 routedRequest.media(),
                 routedRequest.mallToolsAllowed(),
-                mallToken,
-                mallUsername,
-                mallPassword,
+                routedRequest.taskPolicies(),
                 securedPrompt
         );
     }
@@ -187,16 +172,25 @@ public class ReActAgent {
 
     private Flux<String> runCoreStream(String userId,
                                        String sessionId,
-                                        String modelId,
-                                        boolean webSearchEnabled,
-                                        List<Media> media,
-                                        boolean mallToolsAllowed,
-                                        String mallToken,
-                                        String mallUsername,
-                                        String mallPassword,
-                                        PromptSecurityFilter.SecuredPrompt securedPrompt) {
-        ActiveToolCallbacks activeTools =
-                resolveActiveToolCallbacks(userId, sessionId, webSearchEnabled, mallToolsAllowed, mallToken, mallUsername, mallPassword);
+                                         String modelId,
+                                         boolean webSearchEnabled,
+                                         List<Media> media,
+                                         boolean mallToolsAllowed,
+                                         List<ShoppingTaskPolicy> taskPolicies,
+                                         PromptSecurityFilter.SecuredPrompt securedPrompt) {
+        ActiveToolCallbacks activeTools;
+        try {
+            activeTools = resolveActiveToolCallbacks(
+                    userId,
+                    sessionId,
+                    webSearchEnabled,
+                    mallToolsAllowed,
+                    taskPolicies
+            );
+        }
+        catch (MallMcpToolResolutionException ex) {
+            return rememberToolResolutionFailure(userId, sessionId, securedPrompt, ex);
+        }
         logAgentStart(userId, sessionId, modelId, webSearchEnabled, mediaCount(media), activeTools.callbacks().size(), securedPrompt);
 
         Message currentUserMessage = buildCurrentUserMessage(securedPrompt.modelInput(), media);
@@ -217,11 +211,23 @@ public class ReActAgent {
                 currentUserMessage,
                 activeTools,
                 webSearchEnabled,
-                mallToken,
-                mallUsername,
-                mallPassword,
+                taskPolicies,
                 securedPrompt
         );
+    }
+
+    private Flux<String> rememberToolResolutionFailure(String userId,
+                                                       String sessionId,
+                                                       PromptSecurityFilter.SecuredPrompt securedPrompt,
+                                                       MallMcpToolResolutionException ex) {
+        String answer = mallMcpFailureMessage(ex);
+        return Flux.just(answer)
+                .doOnComplete(() -> conversationMemoryService.rememberTurn(
+                        userId,
+                        sessionId,
+                        securedPrompt.modelInput(),
+                        answer
+                ));
     }
 
     private RoutedAgentRequest routeBeforeCore(String userId,
@@ -263,13 +269,16 @@ public class ReActAgent {
                                            Message currentUserMessage,
                                            ActiveToolCallbacks activeTools,
                                            boolean webSearchEnabled,
-                                           String mallToken,
-                                           String mallUsername,
-                                           String mallPassword,
+                                           List<ShoppingTaskPolicy> taskPolicies,
                                            PromptSecurityFilter.SecuredPrompt securedPrompt) {
         ChatClient.ChatClientRequestSpec requestSpec = applyModelOptions(reactChatClient.prompt(), modelId);
         ChatClient.ChatClientRequestSpec requestWithSystem =
-                requestSpec.system(buildReactSystemPrompt(activeTools.hasExternalTools(), activeTools.hasMallTools(), webSearchEnabled));
+                requestSpec.system(buildReactSystemPrompt(
+                        activeTools.hasExternalTools(),
+                        activeTools.hasMallTools(),
+                        webSearchEnabled,
+                        taskPolicies
+                ));
         if (requestWithSystem == null) {
             requestWithSystem = requestSpec;
         }
@@ -279,7 +288,7 @@ public class ReActAgent {
             requestWithTools = requestWithSystem;
         }
         ChatClient.ChatClientRequestSpec requestWithToolContext = requestWithTools.toolContext(
-                buildToolContext(userId, sessionId, mallToken, mallUsername, mallPassword)
+                buildToolContext(userId, sessionId)
         );
         if (requestWithToolContext == null) {
             requestWithToolContext = requestWithTools;
@@ -377,17 +386,10 @@ public class ReActAgent {
         return options == null ? requestSpec : requestSpec.options(options);
     }
 
-    private Map<String, Object> buildToolContext(String userId,
-                                                 String sessionId,
-                                                 String mallToken,
-                                                 String mallUsername,
-                                                 String mallPassword) {
+    private Map<String, Object> buildToolContext(String userId, String sessionId) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put(TOOL_CONTEXT_USER_ID, StringUtils.hasText(userId) ? userId.trim() : "");
         context.put(TOOL_CONTEXT_SESSION_ID, StringUtils.hasText(sessionId) ? sessionId.trim() : "");
-        context.put(TOOL_CONTEXT_MALL_TOKEN, StringUtils.hasText(mallToken) ? mallToken.trim() : "");
-        context.put(TOOL_CONTEXT_MALL_USERNAME, StringUtils.hasText(mallUsername) ? mallUsername.trim() : "");
-        context.put(TOOL_CONTEXT_MALL_PASSWORD, mallPassword == null ? "" : mallPassword);
         return context;
     }
 
@@ -461,26 +463,31 @@ public class ReActAgent {
                                                            String sessionId,
                                                            boolean webSearchEnabled,
                                                            boolean mallToolsAllowed,
-                                                           String mallToken,
-                                                           String mallUsername,
-                                                           String mallPassword) {
+                                                           List<ShoppingTaskPolicy> taskPolicies) {
         Map<String, ToolCallback> activeToolCallbacks = new LinkedHashMap<>();
         builtInToolCallbacks.forEach(callback -> putToolCallback(activeToolCallbacks, callback, userId, sessionId));
 
-        boolean hasMallTools = false;
-        if (mallToolsAllowed && objectMapper != null && mallMcpOperations != null && mallMcpContextClient != null) {
-            for (ToolCallback callback : MallMcpToolCallback.createToolCallbacks(
-                    objectMapper,
-                    mallMcpOperations,
-                    mallMcpContextClient
-            )) {
-                putToolCallback(activeToolCallbacks, callback, userId, sessionId);
-                hasMallTools = true;
+        if (allowsMallTools(mallToolsAllowed, taskPolicies) && mallMcpToolCallback != null) {
+            try {
+                List<ToolCallback> mallToolCallbacks = mallMcpToolCallback.getToolCallbacks();
+                if (mallToolCallbacks.isEmpty()) {
+                    throw new MallMcpToolResolutionException("未发现 mall_* MCP 工具");
+                }
+                for (ToolCallback callback : mallToolCallbacks) {
+                    putToolCallback(activeToolCallbacks, callback, userId, sessionId);
+                }
+            }
+            catch (RuntimeException ex) {
+                throw new MallMcpToolResolutionException(safeMallMcpMessage(ex), ex);
             }
         }
 
         if (!webSearchEnabled) {
-            return new ActiveToolCallbacks(List.copyOf(activeToolCallbacks.values()), false, hasMallTools);
+            List<ToolCallback> callbacks = filterCallbacksByTaskPolicies(
+                    List.copyOf(activeToolCallbacks.values()),
+                    taskPolicies
+            );
+            return new ActiveToolCallbacks(callbacks, false, hasMallTools(callbacks));
         }
 
         boolean hasExternalTools = false;
@@ -508,7 +515,67 @@ public class ReActAgent {
             }
         }
 
-        return new ActiveToolCallbacks(List.copyOf(activeToolCallbacks.values()), hasExternalTools, hasMallTools);
+        List<ToolCallback> callbacks = filterCallbacksByTaskPolicies(
+                List.copyOf(activeToolCallbacks.values()),
+                taskPolicies
+        );
+        return new ActiveToolCallbacks(callbacks, hasExternalTools, hasMallTools(callbacks));
+    }
+
+    private List<ToolCallback> filterCallbacksByTaskPolicies(List<ToolCallback> callbacks,
+                                                             List<ShoppingTaskPolicy> taskPolicies) {
+        if (callbacks == null || callbacks.isEmpty()) {
+            return List.of();
+        }
+        if (taskPolicies == null || taskPolicies.isEmpty()) {
+            return callbacks;
+        }
+
+        java.util.Set<String> allowedToolNames = taskPolicies.stream()
+                .flatMap(policy -> policy.allowedToolNames().stream())
+                .collect(java.util.stream.Collectors.toSet());
+        if (allowedToolNames.isEmpty()) {
+            return callbacks;
+        }
+
+        return callbacks.stream()
+                .filter(callback -> {
+                    String name = toolName(callback);
+                    return !isShoppingControlledTool(name) || allowedToolNames.contains(name);
+                })
+                .toList();
+    }
+
+    private boolean allowsMallTools(boolean mallToolsAllowed, List<ShoppingTaskPolicy> taskPolicies) {
+        if (!mallToolsAllowed) {
+            return false;
+        }
+        java.util.Set<String> allowedToolNames = allowedToolNames(taskPolicies);
+        return allowedToolNames.isEmpty() || allowedToolNames.stream().anyMatch(MallMcpToolCallback::isMallTool);
+    }
+
+    private boolean isShoppingControlledTool(String toolName) {
+        return "searchProductKnowledge".equals(toolName)
+                || "updateShoppingPreference".equals(toolName)
+                || MallMcpToolCallback.isMallTool(toolName);
+    }
+
+    private boolean hasMallTools(List<ToolCallback> callbacks) {
+        if (callbacks == null || callbacks.isEmpty()) {
+            return false;
+        }
+        return callbacks.stream()
+                .map(this::toolName)
+                .anyMatch(MallMcpToolCallback::isMallTool);
+    }
+
+    private java.util.Set<String> allowedToolNames(List<ShoppingTaskPolicy> taskPolicies) {
+        if (taskPolicies == null || taskPolicies.isEmpty()) {
+            return java.util.Set.of();
+        }
+        return taskPolicies.stream()
+                .flatMap(policy -> policy.allowedToolNames().stream())
+                .collect(java.util.stream.Collectors.toSet());
     }
 
     private void putToolCallback(Map<String, ToolCallback> activeToolCallbacks,
@@ -528,17 +595,73 @@ public class ReActAgent {
         return callback.getToolDefinition().name();
     }
 
-    private String buildReactSystemPrompt(boolean hasExternalTools, boolean hasMallTools, boolean webSearchEnabled) {
+    private String buildReactSystemPrompt(boolean hasExternalTools,
+                                          boolean hasMallTools,
+                                          boolean webSearchEnabled,
+                                          List<ShoppingTaskPolicy> taskPolicies) {
         String mallRule = hasMallTools
                 ? "当用户要求实时商品搜索、具体商品详情、价格、库存、相似款、加购物车、查购物车、订单确认或下单时，必须使用 mall_* MCP 工具；不要使用直连商城 REST 的假设。"
                 : "当前未注册 mall_* 实时商城工具；如问题不需要实时价格、库存、购物车或订单操作，可基于已知知识和用户条件直接回答，不要声称已经查询实时商城。";
         String networkRule = webSearchEnabled && hasExternalTools
                 ? "对于需要最新公开互联网信息的问题，优先使用联网搜索相关工具。"
                 : "当前未启用联网搜索工具，不要假设自己能够访问互联网。";
-        return REACT_SYSTEM_PROMPT_TEMPLATE.formatted(mallRule, networkRule);
+        String basePrompt = REACT_SYSTEM_PROMPT_TEMPLATE.formatted(mallRule, networkRule);
+        String policyPrompt = renderTaskPolicyPrompt(taskPolicies);
+        return StringUtils.hasText(policyPrompt)
+                ? basePrompt + System.lineSeparator() + System.lineSeparator() + policyPrompt
+                : basePrompt;
+    }
+
+    private String renderTaskPolicyPrompt(List<ShoppingTaskPolicy> taskPolicies) {
+        if (taskPolicies == null || taskPolicies.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder builder = new StringBuilder("当前导购任务策略：");
+        for (ShoppingTaskPolicy policy : taskPolicies) {
+            builder.append(System.lineSeparator())
+                    .append("- ")
+                    .append(policy.id())
+                    .append(" / ")
+                    .append(policy.name())
+                    .append("：")
+                    .append(policy.promptFragment());
+            if (!policy.allowedToolNames().isEmpty()) {
+                builder.append(" 受控工具范围：")
+                        .append(String.join(", ", policy.allowedToolNames()))
+                        .append("。");
+            }
+            if (policy.confirmationRequired()) {
+                builder.append(" 该策略需要用户确认，不能跳过确认步骤。");
+            }
+        }
+        return builder.toString();
+    }
+
+    private String mallMcpFailureMessage(MallMcpToolResolutionException ex) {
+        String message = safeMallMcpMessage(ex);
+        return message.startsWith("商城 MCP 调用失败：") ? message : "商城 MCP 调用失败：" + message;
+    }
+
+    private String safeMallMcpMessage(RuntimeException ex) {
+        if (ex == null || !StringUtils.hasText(ex.getMessage())) {
+            return "mall-mcp 服务未启动或不可访问";
+        }
+        return ex.getMessage().trim();
     }
 
     private record ActiveToolCallbacks(List<ToolCallback> callbacks, boolean hasExternalTools, boolean hasMallTools) {
+    }
+
+    private static final class MallMcpToolResolutionException extends RuntimeException {
+
+        private MallMcpToolResolutionException(String message) {
+            super(StringUtils.hasText(message) ? message : "mall-mcp 服务未启动或不可访问");
+        }
+
+        private MallMcpToolResolutionException(String message, Throwable cause) {
+            super(StringUtils.hasText(message) ? message : "mall-mcp 服务未启动或不可访问", cause);
+        }
     }
 
 }

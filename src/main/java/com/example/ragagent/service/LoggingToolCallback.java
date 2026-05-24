@@ -78,11 +78,11 @@ final class LoggingToolCallback implements ToolCallback {
     }
 
     private void logToolError(RuntimeException ex) {
-        log.warn("ReAct tool error: userId={}, sessionId={}, toolName={}, error={}",
+        log.warn("ReAct tool error: userId={}, sessionId={}, toolName={}, errorType={}",
                 userId,
                 sessionId,
                 toolName(),
-                ex.getMessage());
+                ex.getClass().getSimpleName());
     }
 
     private String toolName() {

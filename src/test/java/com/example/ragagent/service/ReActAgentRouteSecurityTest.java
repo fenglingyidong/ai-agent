@@ -12,11 +12,13 @@ import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -31,22 +33,24 @@ class ReActAgentRouteSecurityTest {
         LongTermMemoryAdvisor longTermMemoryAdvisor = mock(LongTermMemoryAdvisor.class);
         MessageChatMemoryAdvisor messageChatMemoryAdvisor = memoryAdvisor();
         ConversationMemoryService conversationMemoryService = mock(ConversationMemoryService.class);
-        ShoppingRouteExecutor routeExecutor = mock(ShoppingRouteExecutor.class);
-        org.mockito.ArgumentCaptor<String> messageCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
+        ShoppingRouteExecutor routeExecutor = new ShoppingRouteExecutor(intentRouter, null, simpleTaskAgent);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_KNOWLEDGE_QUERY",
+                "A_FAQ_SIMPLE_QUERY",
+                Map.of(),
+                Map.of("product_name", "儿童积木"),
+                false,
+                0.95,
+                "simple knowledge query"
+        );
+        org.mockito.ArgumentCaptor<String> routerMessageCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.ArgumentCaptor<String> simpleTaskMessageCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
 
-        when(routeExecutor.routeBeforeCore(
-                org.mockito.ArgumentMatchers.eq("user-sec"),
-                org.mockito.ArgumentMatchers.eq("session-sec"),
-                messageCaptor.capture(),
-                org.mockito.ArgumentMatchers.eq(List.of()),
-                org.mockito.ArgumentMatchers.eq(""),
-                org.mockito.ArgumentMatchers.eq(""),
-                org.mockito.ArgumentMatchers.eq("")
-        )).thenReturn(new RoutedAgentRequest(
-                "儿童积木价格 [[SECRET_1]]",
-                List.of(),
-                Flux.just("已走快车道")
-        ));
+        when(intentRouter.route(routerMessageCaptor.capture(), eq(List.of()))).thenReturn(route);
+        when(simpleTaskAgent.tryRun(eq(route), simpleTaskMessageCaptor.capture(), eq("session-sec"), eq(0.7)))
+                .thenReturn(FastLaneResult.handled(Flux.just("已走快车道")));
 
         ReActAgent agent = new ReActAgent(
                 builderFor(reactChatClient),
@@ -73,11 +77,15 @@ class ReActAgentRouteSecurityTest {
         ));
 
         assertEquals("已走快车道", result);
-        assertTrue(messageCaptor.getValue().contains("[FILTERED_PROMPT_INJECTION]"));
-        assertTrue(messageCaptor.getValue().contains("[[SECRET_1]]"));
-        assertFalse(messageCaptor.getValue().contains("token=abc123"));
+        assertSecuredRouteMessage(routerMessageCaptor.getValue());
+        assertSecuredRouteMessage(simpleTaskMessageCaptor.getValue());
         verify(reactChatClient, never()).prompt();
-        verify(conversationMemoryService).rememberTurn(anyString(), anyString(), anyString(), anyString());
+        verify(conversationMemoryService).rememberTurn(
+                eq("user-sec"),
+                eq("session-sec"),
+                anyString(),
+                eq("已走快车道")
+        );
     }
 
     private ChatClient.Builder builderFor(ChatClient reactChatClient) {
@@ -98,5 +106,11 @@ class ReActAgentRouteSecurityTest {
     private String collect(Flux<String> stream) {
         List<String> chunks = stream.collectList().block();
         return chunks == null ? "" : String.join("", chunks);
+    }
+
+    private void assertSecuredRouteMessage(String message) {
+        assertTrue(message.contains("[FILTERED_PROMPT_INJECTION]"));
+        assertTrue(message.contains("[[SECRET_1]]"));
+        assertFalse(message.contains("token=abc123"));
     }
 }

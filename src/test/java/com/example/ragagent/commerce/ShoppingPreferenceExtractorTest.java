@@ -2,6 +2,8 @@ package com.example.ragagent.commerce;
 
 import com.example.ragagent.service.ShoppingIntentRoute;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Map;
 
@@ -78,6 +80,19 @@ class ShoppingPreferenceExtractorTest {
 
         assertEquals(null, patch.budgetMin());
         assertEquals(300, patch.budgetMax());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"300-500", "300到500"})
+    void extractShouldReadPlainBudgetRangeFromUserText(String userMessage) {
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                userMessage,
+                null,
+                1L
+        );
+
+        assertEquals(300, patch.budgetMin());
+        assertEquals(500, patch.budgetMax());
     }
 
     @Test

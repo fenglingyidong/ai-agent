@@ -15,6 +15,7 @@ public class ShoppingPreferenceExtractor {
 
     private static final Pattern BUDGET_RANGE_WITH_PREFIX = Pattern.compile("(?:预算|价格|价位)\\s*(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)");
     private static final Pattern BUDGET_RANGE_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)\\s*(?:元|块)");
+    private static final Pattern BUDGET_RANGE_STANDALONE = Pattern.compile("^\\s*(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)\\s*$");
     private static final Pattern BUDGET_SLOT_RANGE = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)");
     private static final Pattern BUDGET_MAX_WITH_PREFIX = Pattern.compile("(?:预算|价格|价位)\\D{0,6}?(\\d+)");
     private static final Pattern BUDGET_MAX_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:元|块)(?:以内|以下)?");
@@ -113,6 +114,10 @@ public class ShoppingPreferenceExtractor {
             return range;
         }
         range = matchBudgetRange(BUDGET_RANGE_WITH_SUFFIX, text);
+        if (range.hasAny()) {
+            return range;
+        }
+        range = matchBudgetRange(BUDGET_RANGE_STANDALONE, text);
         if (range.hasAny()) {
             return range;
         }

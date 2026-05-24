@@ -70,7 +70,12 @@ public class ShoppingPreferencePromptRenderer {
         if (!StringUtils.hasText(value)) {
             return "";
         }
-        String sanitized = value.trim().replaceAll("\\s+", " ");
+        String sanitized = value
+                .replace((char) 0x2028, ' ')
+                .replace((char) 0x2029, ' ')
+                .replace((char) 0x0085, ' ')
+                .replaceAll("\\s+", " ")
+                .trim();
         if (sanitized.length() > MAX_FIELD_LENGTH) {
             return sanitized.substring(0, MAX_FIELD_LENGTH);
         }

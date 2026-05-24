@@ -149,16 +149,29 @@ class ShoppingPreferenceExtractorTest {
         assertEquals("耳机", patch.category());
     }
 
-    @Test
-    void extractShouldReadExplicitBudgetUpperBoundSuffix() {
+    @ParameterizedTest
+    @ValueSource(strings = {"不超过500元", "最多500元", "500元以内的跑鞋"})
+    void extractShouldReadExplicitBudgetUpperBound(String userMessage) {
         ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
-                "500元以内的跑鞋",
+                userMessage,
                 null,
                 9L
         );
 
         assertEquals(500, patch.budgetMax());
-        assertEquals("跑鞋", patch.category());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"最多推荐3款跑鞋", "不超过3双", "推荐3款以内"})
+    void extractShouldIgnoreQuantityLimitAsBudget(String userMessage) {
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                userMessage,
+                null,
+                11L
+        );
+
+        assertEquals(null, patch.budgetMin());
+        assertEquals(null, patch.budgetMax());
     }
 
     @Test

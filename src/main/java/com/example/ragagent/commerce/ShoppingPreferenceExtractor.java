@@ -17,8 +17,9 @@ public class ShoppingPreferenceExtractor {
     private static final Pattern BUDGET_RANGE_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)\\s*(?:元|块)");
     private static final Pattern BUDGET_RANGE_STANDALONE = Pattern.compile("^\\s*(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)\\s*$");
     private static final Pattern BUDGET_SLOT_RANGE = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)");
-    private static final Pattern BUDGET_MAX_WITH_PREFIX = Pattern.compile("(?:预算|价位|不超过|最多)\\D{0,6}?(\\d+)");
-    private static final Pattern BUDGET_MAX_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:元|块)?\\s*(?:以内|以下|内)");
+    private static final Pattern BUDGET_MAX_WITH_BUDGET_PREFIX = Pattern.compile("(?:预算|价位)\\D{0,6}?(\\d+)");
+    private static final Pattern BUDGET_MAX_WITH_LIMIT_PREFIX = Pattern.compile("(?:不超过|最多)\\D{0,6}?(\\d+)\\s*(?:元|块)");
+    private static final Pattern BUDGET_MAX_WITH_UNIT_SUFFIX = Pattern.compile("(\\d+)\\s*(?:元|块)\\s*(?:以内|以下|内)");
     private static final String[] CATEGORIES = {
             "降噪耳机", "儿童积木", "运动鞋", "跑鞋", "积木", "耳机",
             "书包", "手机", "电脑", "外套", "裙子", "玩具"
@@ -121,11 +122,15 @@ public class ShoppingPreferenceExtractor {
         if (range.matched()) {
             return range.budget();
         }
-        Integer max = matchBudgetMax(BUDGET_MAX_WITH_PREFIX, text);
+        Integer max = matchBudgetMax(BUDGET_MAX_WITH_BUDGET_PREFIX, text);
         if (max != null) {
             return new BudgetValues(null, max);
         }
-        max = matchBudgetMax(BUDGET_MAX_WITH_SUFFIX, text);
+        max = matchBudgetMax(BUDGET_MAX_WITH_LIMIT_PREFIX, text);
+        if (max != null) {
+            return new BudgetValues(null, max);
+        }
+        max = matchBudgetMax(BUDGET_MAX_WITH_UNIT_SUFFIX, text);
         return max == null ? BudgetValues.empty() : new BudgetValues(null, max);
     }
 

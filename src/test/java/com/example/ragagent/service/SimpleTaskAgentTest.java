@@ -2,8 +2,8 @@ package com.example.ragagent.service;
 
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.tools.BuiltInTools;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
@@ -19,15 +19,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SimpleTaskAgentTest {
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
     void shouldRunKnowledgeTaskWithOnlyRagTool() {
@@ -47,7 +45,7 @@ class SimpleTaskAgentTest {
 
         assertTrue(result.handled());
         assertEquals("儿童积木套装适合 3 岁以上儿童，主打益智启蒙。", collect(result.stream()));
-        List<ToolCallback> callbacks = capturedToolCallbacks(mocks);
+        List<ToolCallback> callbacks = capturedToolObjectCallbacks(mocks);
         assertEquals(1, callbacks.size());
         assertEquals("searchProductKnowledge", callbacks.get(0).getToolDefinition().name());
     }
@@ -55,7 +53,15 @@ class SimpleTaskAgentTest {
     @Test
     void shouldRunMallTaskWithOnlySimpleMallTools() {
         AgentMocks mocks = agentMocks("儿童积木套装 300片售价 149.00 元，库存充足。");
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mock(MallMcpOperations.class));
+        MallMcpClient mallMcpClient = mallMcpClientWithTools(
+                "mall_search_products",
+                "mall_get_product_detail",
+                "mall_add_to_cart",
+                "mall_view_cart",
+                "mall_prepare_order",
+                "mall_create_order"
+        );
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRICE_STOCK_QUERY",
                 "B_SIMPLE_SHOPPING_TOOL",
@@ -73,7 +79,14 @@ class SimpleTaskAgentTest {
         List<String> names = capturedToolCallbacks(mocks).stream()
                 .map(callback -> callback.getToolDefinition().name())
                 .toList();
-        assertEquals(Set.of("queryRealtimeProduct", "addToCart", "viewCart", "prepareOrder"), Set.copyOf(names));
+        assertEquals(Set.of(
+                "mall_search_products",
+                "mall_get_product_detail",
+                "mall_add_to_cart",
+                "mall_view_cart",
+                "mall_prepare_order"
+        ), Set.copyOf(names));
+        verify(mocks.requestSpec).toolContext(Map.of("sessionId", "session-1"));
     }
 
     @Test
@@ -88,36 +101,10 @@ class SimpleTaskAgentTest {
     }
 
     @Test
-    void shouldResolveUniqueProductAndCallAddToCart() {
-        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
-        MallMcpOperations operations = new MallMcpOperations(objectMapper, mallMcpClient);
-        SimpleTaskAgent.MallFastLaneTools tools = new SimpleTaskAgent.MallFastLaneTools(
-                operations,
-                "session-1",
-                "把儿童积木套装 300片加购物车，数量1"
-        );
-        when(mallMcpClient.callTool(eq("mall_search_products"), any(ObjectNode.class))).thenReturn("""
-                {"ok":true,"code":"OK","message":"success","data":[{"skuId":3020,"skuName":"儿童积木套装 300片","price":149.00,"stock":160}]}
-                """);
-        when(mallMcpClient.callTool(eq("mall_add_to_cart"), any(ObjectNode.class))).thenReturn("""
-                {"ok":true,"code":"OK","message":"success","data":{"skuId":3020,"quantity":1}}
-                """);
-
-        String result = tools.addToCart("儿童积木套装 300片", null, 1);
-
-        assertTrue(result.contains("\"ok\":true"));
-        ArgumentCaptor<ObjectNode> addArgs = ArgumentCaptor.forClass(ObjectNode.class);
-        verify(mallMcpClient).callTool(eq("mall_add_to_cart"), addArgs.capture());
-        assertEquals(3020, addArgs.getValue().path("skuId").asInt());
-        assertEquals(1, addArgs.getValue().path("quantity").asInt());
-        assertEquals("session-1", addArgs.getValue().path("sessionId").asText());
-    }
-
-    @Test
     void shouldReturnMcpFailureDirectlyWhenSimpleModelCallSeesMcpUnavailable() {
         AgentMocks mocks = agentMocks("不会返回");
         when(mocks.requestSpec.call()).thenThrow(new SimpleTaskAgent.McpUnavailableException("mall-mcp 服务未启动或不可访问"));
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mock(MallMcpOperations.class));
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "VIEW_CART",
                 "B_SIMPLE_SHOPPING_TOOL",
@@ -143,15 +130,49 @@ class SimpleTaskAgentTest {
         when(requestSpec.system(anyString())).thenReturn(requestSpec);
         when(requestSpec.user(anyString())).thenReturn(requestSpec);
         when(requestSpec.tools(any())).thenReturn(requestSpec);
+        when(requestSpec.toolCallbacks(org.mockito.ArgumentMatchers.<List<ToolCallback>>any())).thenReturn(requestSpec);
+        when(requestSpec.toolContext(anyMap())).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(callResponseSpec);
         when(callResponseSpec.content()).thenReturn(content);
         return new AgentMocks(chatClient, requestSpec);
     }
 
-    private List<ToolCallback> capturedToolCallbacks(AgentMocks mocks) {
+    private List<ToolCallback> capturedToolObjectCallbacks(AgentMocks mocks) {
         ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
         verify(mocks.requestSpec).tools(captor.capture());
         return List.of(ToolCallbacks.from(captor.getValue()));
+    }
+
+    private List<ToolCallback> capturedToolCallbacks(AgentMocks mocks) {
+        ArgumentCaptor<List<ToolCallback>> captor = ArgumentCaptor.forClass(List.class);
+        verify(mocks.requestSpec).toolCallbacks(captor.capture());
+        return captor.getValue();
+    }
+
+    private MallMcpClient mallMcpClientWithTools(String... toolNames) {
+        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        McpSyncClient syncClient = mock(McpSyncClient.class);
+        when(mallMcpClient.syncClient()).thenReturn(syncClient);
+        when(syncClient.listTools()).thenReturn(new McpSchema.ListToolsResult(
+                List.of(toolNames).stream().map(this::tool).toList(),
+                null
+        ));
+        return mallMcpClient;
+    }
+
+    private McpSchema.Tool tool(String name) {
+        return McpSchema.Tool.builder()
+                .name(name)
+                .description(name + " description from mcp")
+                .inputSchema(new McpSchema.JsonSchema(
+                        "object",
+                        Map.of("skuId", Map.of("type", "integer")),
+                        List.of(),
+                        null,
+                        null,
+                        null
+                ))
+                .build();
     }
 
     private String collect(Flux<String> stream) {

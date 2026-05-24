@@ -25,6 +25,7 @@ final class MallMcpToolCallback {
     List<ToolCallback> getToolCallbacks() {
         mallMcpClient.ensureInitialized();
         return Arrays.stream(delegateProvider.getToolCallbacks())
+                .map(callback -> (ToolCallback) new MallSessionToolCallback(callback))
                 .toList();
     }
 

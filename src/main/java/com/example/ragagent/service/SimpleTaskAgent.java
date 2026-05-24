@@ -1,13 +1,13 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.tools.BuiltInTools;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 @Service
 public class SimpleTaskAgent {
@@ -32,6 +33,13 @@ public class SimpleTaskAgent {
             "ADD_TO_CART",
             "PREPARE_ORDER"
     );
+    private static final Set<String> SIMPLE_MALL_TOOL_NAMES = Set.of(
+            "mall_search_products",
+            "mall_get_product_detail",
+            "mall_add_to_cart",
+            "mall_view_cart",
+            "mall_prepare_order"
+    );
 
     private static final String KNOWLEDGE_SYSTEM_PROMPT = """
             你是电商导购的简单知识库问答助手。
@@ -43,10 +51,10 @@ public class SimpleTaskAgent {
 
     private static final String MALL_SYSTEM_PROMPT = """
             你是电商导购的简单商城任务助手。
-            必须使用提供的商城快车道工具完成任务，再根据工具结果简短回答。
-            查价格、库存、属性和详情时调用 queryRealtimeProduct。
-            明确加购物车时调用 addToCart；查看购物车时调用 viewCart；确认订单摘要时调用 prepareOrder。
-            不允许创建订单、付款或编造 confirmationId；遇到确认下单应交给复杂任务。
+            必须使用提供的 mall_* MCP 工具完成任务，再根据工具结果简短回答。
+            搜索商品时调用 mall_search_products；查价格、库存、属性和详情时调用 mall_get_product_detail。
+            明确加购物车时调用 mall_add_to_cart；查看购物车时调用 mall_view_cart；确认订单摘要时调用 mall_prepare_order。
+            不允许创建订单、付款或编造 confirmationId；不得调用 mall_create_order，遇到确认下单应交给复杂任务。
             价格、库存、购物车和订单摘要只能来自工具结果。
             如果工具返回“商城 MCP 调用失败”，必须原样说明调用失败。
             输出纯文本中文回复，不要暴露工具名、JSON 或内部路由字段。
@@ -54,7 +62,7 @@ public class SimpleTaskAgent {
 
     private final ChatClient.Builder builder;
     private final BuiltInTools builtInTools;
-    private final MallMcpOperations mallMcpOperations;
+    private final MallMcpToolCallback mallMcpToolCallback;
 
     @Value("${app.ai.simple-task.enabled:true}")
     private boolean enabled = true;
@@ -70,19 +78,19 @@ public class SimpleTaskAgent {
     @Autowired
     public SimpleTaskAgent(ChatClient.Builder builder,
                            BuiltInTools builtInTools,
-                           MallMcpOperations mallMcpOperations) {
+                           MallMcpClient mallMcpClient) {
         this.builder = builder;
         this.builtInTools = builtInTools;
-        this.mallMcpOperations = mallMcpOperations;
+        this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
     }
 
     SimpleTaskAgent(ChatClient simpleTaskChatClient,
                     BuiltInTools builtInTools,
-                    MallMcpOperations mallMcpOperations) {
+                    MallMcpClient mallMcpClient) {
         this.builder = null;
         this.simpleTaskChatClient = simpleTaskChatClient;
         this.builtInTools = builtInTools;
-        this.mallMcpOperations = mallMcpOperations;
+        this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
     }
 
     @PostConstruct
@@ -115,7 +123,7 @@ public class SimpleTaskAgent {
         if (builtInTools == null) {
             return FastLaneResult.fallbackToCore("RAG 检索工具不可用");
         }
-        return callSimpleModel(
+        return callSimpleModelWithToolObject(
                 route,
                 userMessage,
                 KNOWLEDGE_SYSTEM_PROMPT,
@@ -130,35 +138,80 @@ public class SimpleTaskAgent {
         if (!StringUtils.hasText(sessionId)) {
             return FastLaneResult.fallbackToCore("简单商城任务缺少 sessionId");
         }
-        if (mallMcpOperations == null) {
+        if (mallMcpToolCallback == null) {
             return FastLaneResult.handled("商城 MCP 调用失败：mall-mcp client unavailable");
         }
-        return callSimpleModel(
+        List<ToolCallback> callbacks;
+        try {
+            callbacks = simpleMallToolCallbacks();
+        }
+        catch (McpUnavailableException ex) {
+            return FastLaneResult.handled("商城 MCP 调用失败：" + safeMessage(ex));
+        }
+        if (callbacks.isEmpty()) {
+            return FastLaneResult.handled("商城 MCP 调用失败：未发现 mall_* MCP 工具");
+        }
+        return callSimpleModelWithToolCallbacks(
                 route,
                 userMessage,
                 MALL_SYSTEM_PROMPT,
-                new MallFastLaneTools(mallMcpOperations, sessionId, userMessage)
+                callbacks,
+                Map.of("sessionId", sessionId)
         );
     }
 
-    private FastLaneResult callSimpleModel(ShoppingIntentRoute route,
-                                           String userMessage,
-                                           String systemPrompt,
-                                           Object toolObject) {
+    private List<ToolCallback> simpleMallToolCallbacks() {
+        try {
+            return mallMcpToolCallback.getToolCallbacks().stream()
+                    .filter(callback -> SIMPLE_MALL_TOOL_NAMES.contains(callback.getToolDefinition().name()))
+                    .toList();
+        }
+        catch (RuntimeException ex) {
+            throw new McpUnavailableException(safeMessage(ex));
+        }
+    }
+
+    private FastLaneResult callSimpleModelWithToolObject(ShoppingIntentRoute route,
+                                                         String userMessage,
+                                                         String systemPrompt,
+                                                         Object toolObject) {
+        return callSimpleModel(route, () -> simpleTaskChatClient.prompt()
+                .options(OpenAiChatOptions.builder()
+                        .model(modelName())
+                        .temperature(0.0)
+                        .maxTokens(Math.max(1, maxTokens))
+                        .build())
+                .system(systemPrompt)
+                .user(buildUserPrompt(route, userMessage))
+                .tools(toolObject)
+                .call()
+                .content());
+    }
+
+    private FastLaneResult callSimpleModelWithToolCallbacks(ShoppingIntentRoute route,
+                                                            String userMessage,
+                                                            String systemPrompt,
+                                                            List<ToolCallback> toolCallbacks,
+                                                            Map<String, Object> toolContext) {
+        return callSimpleModel(route, () -> simpleTaskChatClient.prompt()
+                .options(OpenAiChatOptions.builder()
+                        .model(modelName())
+                        .temperature(0.0)
+                        .maxTokens(Math.max(1, maxTokens))
+                        .build())
+                .system(systemPrompt)
+                .user(buildUserPrompt(route, userMessage))
+                .toolCallbacks(toolCallbacks)
+                .toolContext(toolContext)
+                .call()
+                .content());
+    }
+
+    private FastLaneResult callSimpleModel(ShoppingIntentRoute route, Supplier<String> modelCall) {
         try {
             log.info("简单任务小模型开始：taskType={}, intent={}, model={}",
                     route.normalizedTaskType(), route.normalizedIntent(), modelName());
-            String content = simpleTaskChatClient.prompt()
-                    .options(OpenAiChatOptions.builder()
-                            .model(modelName())
-                            .temperature(0.0)
-                            .maxTokens(Math.max(1, maxTokens))
-                            .build())
-                    .system(systemPrompt)
-                    .user(buildUserPrompt(route, userMessage))
-                    .tools(toolObject)
-                    .call()
-                    .content();
+            String content = modelCall.get();
             if (!StringUtils.hasText(content)) {
                 return FastLaneResult.fallbackToCore("简单任务小模型返回空内容");
             }
@@ -274,132 +327,6 @@ public class SimpleTaskAgent {
             catch (RuntimeException ex) {
                 throw new FastLaneFallbackException("A 类 RAG 检索失败：" + safeToolMessage(ex), ex);
             }
-        }
-    }
-
-    static final class MallFastLaneTools {
-
-        private final MallMcpOperations mallMcpOperations;
-        private final String sessionId;
-        private final String userMessage;
-
-        MallFastLaneTools(MallMcpOperations mallMcpOperations, String sessionId, String userMessage) {
-            this.mallMcpOperations = mallMcpOperations;
-            this.sessionId = sessionId;
-            this.userMessage = userMessage;
-        }
-
-        @Tool(description = "查询真实商城商品详情、实时价格、库存、属性和促销摘要。skuId 明确时优先传 skuId，否则传商品名。")
-        public String queryRealtimeProduct(
-                @ToolParam(description = "商品名称或关键词", required = false) String productName,
-                @ToolParam(description = "真实商城 SKU ID", required = false) Long skuId) {
-            Long resolvedSkuId = resolveSkuId(productName, skuId);
-            ObjectNode args = argsWithSession();
-            args.put("skuId", resolvedSkuId);
-            return call(MallTool.GET_PRODUCT_DETAIL, args);
-        }
-
-        @Tool(description = "把明确商品加入当前用户购物车。必须有商品名称或 skuId，并且 quantity 大于 0。")
-        public String addToCart(
-                @ToolParam(description = "商品名称或关键词", required = false) String productName,
-                @ToolParam(description = "真实商城 SKU ID", required = false) Long skuId,
-                @ToolParam(description = "加入购物车数量", required = true) Integer quantity) {
-            if (quantity == null || quantity < 1) {
-                throw new FastLaneFallbackException("加购物车缺少有效数量");
-            }
-            Long resolvedSkuId = resolveSkuId(productName, skuId);
-            ObjectNode args = argsWithSession();
-            args.put("skuId", resolvedSkuId);
-            args.put("quantity", quantity);
-            return call(MallTool.ADD_TO_CART, args);
-        }
-
-        @Tool(description = "查看当前用户购物车。")
-        public String viewCart() {
-            return call(MallTool.VIEW_CART, argsWithSession());
-        }
-
-        @Tool(description = "确认当前购物车订单摘要，返回待用户核对的订单确认信息和 confirmationId，但不创建订单。")
-        public String prepareOrder() {
-            return call(MallTool.PREPARE_ORDER, argsWithSession());
-        }
-
-        private Long resolveSkuId(String productName, Long skuId) {
-            if (skuId != null && skuId > 0) {
-                return skuId;
-            }
-            if (!StringUtils.hasText(productName)) {
-                throw new FastLaneFallbackException("简单商城任务缺少商品名称或 SKU");
-            }
-            ObjectNode args = argsWithSession();
-            args.put("keyword", productName.trim());
-            args.put("limit", 5);
-            MallMcpOperations.MallMcpCallResult result = mallMcpOperations.callTool(MallTool.SEARCH_PRODUCTS.toolName(), args);
-            if (result.serviceUnavailable()) {
-                throw new McpUnavailableException(result.message());
-            }
-            if (!result.ok()) {
-                return nullFromFailedSearch(result);
-            }
-            JsonNode data = result.envelope().path("data");
-            if (!data.isArray() || data.isEmpty()) {
-                throw new FastLaneFallbackException("没有查到匹配商品");
-            }
-            JsonNode selected = selectExactOrUnique(productName, data);
-            if (selected == null || !selected.path("skuId").canConvertToLong()) {
-                throw new FastLaneFallbackException("找到多个可能商品，需要主 Agent 追问确认");
-            }
-            return selected.path("skuId").asLong();
-        }
-
-        private Long nullFromFailedSearch(MallMcpOperations.MallMcpCallResult result) {
-            throw new FastLaneFallbackException("商城商品搜索失败：" + result.message());
-        }
-
-        private String call(MallTool tool, ObjectNode args) {
-            MallMcpOperations.MallMcpCallResult result = mallMcpOperations.callTool(tool.toolName(), args);
-            if (result.serviceUnavailable()) {
-                throw new McpUnavailableException(result.message());
-            }
-            return result.rawResult();
-        }
-
-        private ObjectNode argsWithSession() {
-            return mallMcpOperations.argsWithSession(sessionId);
-        }
-
-        private JsonNode selectExactOrUnique(String productName, JsonNode data) {
-            if (data.size() == 1) {
-                return data.get(0);
-            }
-            String normalizedProductName = compact(productName);
-            String normalizedUserMessage = compact(userMessage);
-            List<JsonNode> exactMatches = new ArrayList<>();
-            data.forEach(item -> {
-                String itemName = firstText(
-                        item.path("skuName").asText(""),
-                        item.path("spuName").asText("")
-                );
-                String normalizedItemName = compact(itemName);
-                if (StringUtils.hasText(normalizedItemName)
-                        && (normalizedProductName.equals(normalizedItemName) || normalizedUserMessage.contains(normalizedItemName))) {
-                    exactMatches.add(item);
-                }
-            });
-            return exactMatches.size() == 1 ? exactMatches.get(0) : null;
-        }
-
-        private String compact(String value) {
-            return StringUtils.hasText(value) ? value.replaceAll("\\s+", "").trim() : "";
-        }
-
-        private String firstText(String... values) {
-            for (String value : values) {
-                if (StringUtils.hasText(value)) {
-                    return value.trim();
-                }
-            }
-            return "";
         }
     }
 

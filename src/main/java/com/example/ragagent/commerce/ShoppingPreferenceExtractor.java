@@ -17,8 +17,8 @@ public class ShoppingPreferenceExtractor {
     private static final Pattern BUDGET_RANGE_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)\\s*(?:元|块)");
     private static final Pattern BUDGET_RANGE_STANDALONE = Pattern.compile("^\\s*(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)\\s*$");
     private static final Pattern BUDGET_SLOT_RANGE = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)");
-    private static final Pattern BUDGET_MAX_WITH_PREFIX = Pattern.compile("(?:预算|价格|价位)\\D{0,6}?(\\d+)");
-    private static final Pattern BUDGET_MAX_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:元|块)(?:以内|以下)?");
+    private static final Pattern BUDGET_MAX_WITH_PREFIX = Pattern.compile("(?:预算|价位|不超过|最多)\\D{0,6}?(\\d+)");
+    private static final Pattern BUDGET_MAX_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:元|块)?\\s*(?:以内|以下|内)");
     private static final String[] CATEGORIES = {
             "降噪耳机", "儿童积木", "运动鞋", "跑鞋", "积木", "耳机",
             "书包", "手机", "电脑", "外套", "裙子", "玩具"
@@ -109,17 +109,17 @@ public class ShoppingPreferenceExtractor {
         if (!StringUtils.hasText(text)) {
             return BudgetValues.empty();
         }
-        BudgetValues range = matchBudgetRange(BUDGET_RANGE_WITH_PREFIX, text);
-        if (range.hasAny()) {
-            return range;
+        BudgetRangeMatch range = matchBudgetRange(BUDGET_RANGE_WITH_PREFIX, text);
+        if (range.matched()) {
+            return range.budget();
         }
         range = matchBudgetRange(BUDGET_RANGE_WITH_SUFFIX, text);
-        if (range.hasAny()) {
-            return range;
+        if (range.matched()) {
+            return range.budget();
         }
         range = matchBudgetRange(BUDGET_RANGE_STANDALONE, text);
-        if (range.hasAny()) {
-            return range;
+        if (range.matched()) {
+            return range.budget();
         }
         Integer max = matchBudgetMax(BUDGET_MAX_WITH_PREFIX, text);
         if (max != null) {
@@ -140,20 +140,25 @@ public class ShoppingPreferenceExtractor {
         if (!StringUtils.hasText(text)) {
             return BudgetValues.empty();
         }
-        BudgetValues range = matchBudgetRange(BUDGET_SLOT_RANGE, text);
-        if (range.hasAny()) {
-            return range;
+        BudgetRangeMatch range = matchBudgetRange(BUDGET_SLOT_RANGE, text);
+        if (range.matched()) {
+            return range.budget();
         }
         Integer max = matchBudgetMax(Pattern.compile("(\\d+)"), text);
         return max == null ? BudgetValues.empty() : new BudgetValues(null, max);
     }
 
-    private BudgetValues matchBudgetRange(Pattern pattern, String text) {
+    private BudgetRangeMatch matchBudgetRange(Pattern pattern, String text) {
         Matcher matcher = pattern.matcher(text);
         if (!matcher.find()) {
-            return BudgetValues.empty();
+            return BudgetRangeMatch.notMatched();
         }
-        return new BudgetValues(parsePositiveInt(matcher.group(1)), parsePositiveInt(matcher.group(2)));
+        Integer min = parsePositiveInt(matcher.group(1));
+        Integer max = parsePositiveInt(matcher.group(2));
+        if (min == null || max == null || min > max) {
+            return BudgetRangeMatch.matched(BudgetValues.empty());
+        }
+        return BudgetRangeMatch.matched(new BudgetValues(min, max));
     }
 
     private Integer matchBudgetMax(Pattern pattern, String text) {
@@ -263,6 +268,17 @@ public class ShoppingPreferenceExtractor {
 
         BudgetValues overrideWith(BudgetValues other) {
             return other != null && other.hasAny() ? other : this;
+        }
+    }
+
+    private record BudgetRangeMatch(boolean matched, BudgetValues budget) {
+
+        static BudgetRangeMatch notMatched() {
+            return new BudgetRangeMatch(false, BudgetValues.empty());
+        }
+
+        static BudgetRangeMatch matched(BudgetValues budget) {
+            return new BudgetRangeMatch(true, budget);
         }
     }
 

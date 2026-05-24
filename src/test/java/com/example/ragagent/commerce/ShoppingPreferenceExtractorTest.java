@@ -125,6 +125,71 @@ class ShoppingPreferenceExtractorTest {
     }
 
     @Test
+    void extractShouldIgnoreReversedBudgetRangeFromUserText() {
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "预算500-300，帮我推荐跑鞋",
+                null,
+                7L
+        );
+
+        assertEquals(null, patch.budgetMin());
+        assertEquals(null, patch.budgetMax());
+        assertEquals("跑鞋", patch.category());
+    }
+
+    @Test
+    void extractShouldIgnorePlainProductPriceAsBudget() {
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "这款199元的耳机怎么样",
+                null,
+                8L
+        );
+
+        assertEquals(null, patch.budgetMax());
+        assertEquals("耳机", patch.category());
+    }
+
+    @Test
+    void extractShouldReadExplicitBudgetUpperBoundSuffix() {
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "500元以内的跑鞋",
+                null,
+                9L
+        );
+
+        assertEquals(500, patch.budgetMax());
+        assertEquals("跑鞋", patch.category());
+    }
+
+    @Test
+    void extractShouldIgnoreReversedBudgetRangeFromRouteSlot() {
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "C_COMPLEX_REACT",
+                "COMPLEX_RECOMMENDATION",
+                Map.of(),
+                Map.of("budget", "500-300", "category", "跑鞋"),
+                true,
+                0.87,
+                "复杂推荐",
+                java.util.List.of("RECOMMENDATION"),
+                java.util.List.of(),
+                java.util.List.of(),
+                false,
+                "LOW"
+        );
+
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "帮我推荐",
+                route,
+                10L
+        );
+
+        assertEquals(null, patch.budgetMin());
+        assertEquals(null, patch.budgetMax());
+        assertEquals("跑鞋", patch.category());
+    }
+
+    @Test
     void extractShouldReadVisualAliases() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "C_COMPLEX_REACT",

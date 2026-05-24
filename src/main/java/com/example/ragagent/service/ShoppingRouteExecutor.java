@@ -2,6 +2,7 @@ package com.example.ragagent.service;
 
 import com.example.ragagent.commerce.ShoppingPreferenceExtractor;
 import com.example.ragagent.commerce.ShoppingPreferencePromptRenderer;
+import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
 import com.example.ragagent.mall.MallMcpContextClient;
@@ -204,11 +205,37 @@ public class ShoppingRouteExecutor {
         if (shoppingStateService != null && shoppingPreferenceExtractor != null) {
             ShoppingStateService.ShoppingPreferencePatch patch =
                     shoppingPreferenceExtractor.extract(normalizedMessage, route, null);
-            if (hasPositiveConfidence(patch)) {
+            if (shouldMergePreferencePatch(patch)) {
                 shoppingStateService.mergePreference(userId, sessionId, patch);
+            }
+            else if (isLowConfidenceAutomaticPatch(patch)) {
+                ShoppingStateService.ShoppingPreferencePatch textPatch =
+                        shoppingPreferenceExtractor.extract(normalizedMessage, null, null);
+                if (hasPositiveConfidence(textPatch)) {
+                    shoppingStateService.mergePreference(userId, sessionId, textPatch);
+                }
             }
         }
         return renderPreferenceContext(loadPreference(userId, sessionId));
+    }
+
+    private boolean shouldMergePreferencePatch(ShoppingStateService.ShoppingPreferencePatch patch) {
+        if (!hasPositiveConfidence(patch)) {
+            return false;
+        }
+        return !isAutomaticPreferencePatch(patch) || patch.confidence() >= confidenceThreshold();
+    }
+
+    private boolean isLowConfidenceAutomaticPatch(ShoppingStateService.ShoppingPreferencePatch patch) {
+        return hasPositiveConfidence(patch)
+                && isAutomaticPreferencePatch(patch)
+                && patch.confidence() < confidenceThreshold();
+    }
+
+    private boolean isAutomaticPreferencePatch(ShoppingStateService.ShoppingPreferencePatch patch) {
+        return patch != null
+                && (ShoppingPreferenceSource.ROUTER_SLOT.name().equals(patch.source())
+                || ShoppingPreferenceSource.VISUAL_CONTEXT.name().equals(patch.source()));
     }
 
     private boolean hasPositiveConfidence(ShoppingStateService.ShoppingPreferencePatch patch) {

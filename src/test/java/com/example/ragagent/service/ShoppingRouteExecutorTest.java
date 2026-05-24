@@ -615,6 +615,53 @@ class ShoppingRouteExecutorTest {
     }
 
     @Test
+    void routeBeforeCoreShouldSkipLowConfidenceRouteSlotPreferenceAndKeepExplicitTextPreference() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
+        ShoppingPreferenceExtractor shoppingPreferenceExtractor = new ShoppingPreferenceExtractor();
+        ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "COMPLEX_RECOMMENDATION",
+                "C_COMPLEX_REACT",
+                Map.of(),
+                Map.of("brand", "Nike", "category", "跑鞋"),
+                true,
+                0.4,
+                "低置信推荐"
+        );
+        ArgumentCaptor<ShoppingStateService.ShoppingPreferencePatch> patchCaptor =
+                ArgumentCaptor.forClass(ShoppingStateService.ShoppingPreferencePatch.class);
+        when(shoppingStateService.loadPreference("user-1", "session-1"))
+                .thenReturn(new ShoppingPreferenceState());
+        when(intentRouter.route("预算500以内，随便看看", List.of(), "")).thenReturn(route);
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                null,
+                null,
+                shoppingStateService,
+                shoppingPreferenceExtractor,
+                shoppingPreferencePromptRenderer
+        );
+
+        executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                "预算500以内，随便看看",
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        verify(shoppingStateService).mergePreference(eq("user-1"), eq("session-1"), patchCaptor.capture());
+        ShoppingStateService.ShoppingPreferencePatch mergedPatch = patchCaptor.getValue();
+        assertEquals(ShoppingPreferenceSource.USER_EXPLICIT.name(), mergedPatch.source());
+        assertEquals(500, mergedPatch.budgetMax());
+        assertEquals(null, mergedPatch.brand());
+    }
+
+    @Test
     void shouldRegisterMallContextForLowConfidenceImageRequestWithRealtimeKeyword() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         MallMcpContextClient contextClient = mock(MallMcpContextClient.class);

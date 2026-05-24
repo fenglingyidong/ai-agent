@@ -463,7 +463,32 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 
 Redis 不再承载商品向量、长期记忆向量或本地购物车；购物车真实数据只走 `mall-mcp`。Redis 只保留短期窗口、父块缓存、导购偏好状态和商城 token 缓存。
 
-### 6.2 Milvus 索引拆分
+### 6.2 MySQL 原文会话流水
+
+用户提问和最终可见回答由 `ConversationLogService` 通过 MyBatis-Plus 持久化到 MySQL：
+
+- `conversation_sessions`：保存 `userId/sessionId`、会话标题、下一轮 `turn_no`。
+- `conversation_turns`：保存每轮用户提问、助手最终可见回答、模型、联网开关、状态、错误摘要和元数据。
+
+这套流水是权威原文历史，不参与短期窗口裁剪，也不参与长期摘要压缩。Redis 仍只用于短期窗口、父块缓存、导购偏好和 token 缓存；Milvus 仍只用于商品知识向量和长期摘要向量。
+
+默认连接到当前 Docker 中的 `mall-mysql`。该容器内端口是 `3306`，宿主机映射端口是 `3307`，所以本机 IDE 启动后端时使用：
+
+```powershell
+$env:MYSQL_URL="jdbc:mysql://localhost:3307/rag_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true"
+$env:MYSQL_USERNAME="root"
+$env:MYSQL_PASSWORD="root"
+```
+
+如果后端也运行在与 `mall-mysql` 相同的 Docker network 中，连接地址改为：
+
+```powershell
+$env:MYSQL_URL="jdbc:mysql://mall-mysql:3306/rag_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true"
+$env:MYSQL_USERNAME="root"
+$env:MYSQL_PASSWORD="root"
+```
+
+### 6.3 Milvus 索引拆分
 
 项目将向量索引拆成两个 Milvus collection：
 

@@ -1,5 +1,7 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.conversation.ConversationLogService;
+import com.example.ragagent.conversation.ConversationTurnRecord;
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,6 +61,7 @@ public class ReActAgent {
     private final LongTermMemoryAdvisor longTermMemoryAdvisor;
     private final MessageChatMemoryAdvisor messageChatMemoryAdvisor;
     private final ConversationMemoryService conversationMemoryService;
+    private final ConversationLogService conversationLogService;
     private final PromptSecurityFilter promptSecurityFilter;
     private final ChatModelRegistry chatModelRegistry;
     private final ShoppingRouteExecutor shoppingRouteExecutor;
@@ -76,11 +80,13 @@ public class ReActAgent {
                       ChatModelRegistry chatModelRegistry,
                       ShoppingRouteExecutor shoppingRouteExecutor,
                       List<ToolCallbackProvider> externalToolCallbackProviders,
-                      MallMcpClient mallMcpClient) {
+                      MallMcpClient mallMcpClient,
+                      ConversationLogService conversationLogService) {
         this.builtInTools = builtInTools;
         this.longTermMemoryAdvisor = longTermMemoryAdvisor;
         this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
         this.conversationMemoryService = conversationMemoryService;
+        this.conversationLogService = conversationLogService;
         this.promptSecurityFilter = promptSecurityFilter;
         this.chatModelRegistry = chatModelRegistry;
         this.shoppingRouteExecutor = shoppingRouteExecutor;
@@ -102,7 +108,8 @@ public class ReActAgent {
                       PromptSecurityFilter promptSecurityFilter,
                       ChatModelRegistry chatModelRegistry,
                       ShoppingRouteExecutor shoppingRouteExecutor,
-                      List<ToolCallbackProvider> externalToolCallbackProviders) {
+                      List<ToolCallbackProvider> externalToolCallbackProviders,
+                      ConversationLogService conversationLogService) {
         this(
                 builder,
                 builtInTools,
@@ -113,7 +120,8 @@ public class ReActAgent {
                 chatModelRegistry,
                 shoppingRouteExecutor,
                 externalToolCallbackProviders,
-                null
+                null,
+                conversationLogService
         );
     }
 
@@ -126,48 +134,66 @@ public class ReActAgent {
                                   String mallToken,
                                   String mallUsername,
                                   String mallPassword) {
-        PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt = promptSecurityFilter.secure(userMessage);
-        RoutedAgentRequest routedRequest = routeBeforeCore(
-                userId,
-                sessionId,
-                preRouteSecuredPrompt.safeInput(),
-                media,
-                mallToken,
-                mallUsername,
-                mallPassword
-        );
-        if (routedRequest.shortCircuitStream() != null) {
-            return rememberShortCircuitTurn(
-                    userId,
-                    sessionId,
-                    routedRequest.userMessage(),
-                    routedRequest.shortCircuitStream(),
-                    preRouteSecuredPrompt
-            );
-        }
-
-        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(
-                routedRequest.userMessage(),
-                preRouteSecuredPrompt.sensitiveValues()
-        );
-        return runCoreStream(
+        List<Media> safeMedia = media == null ? List.of() : media;
+        ConversationTurnRecord conversationTurn = conversationLogService.beginTurn(
                 userId,
                 sessionId,
                 modelId,
                 webSearchEnabled,
-                routedRequest.media(),
-                routedRequest.mallToolsAllowed(),
-                routedRequest.taskPolicies(),
-                routedRequest.orderCreationAllowed(),
-                securedPrompt
+                userMessage,
+                safeMedia.size()
         );
+        try {
+            PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt = promptSecurityFilter.secure(userMessage);
+            RoutedAgentRequest routedRequest = routeBeforeCore(
+                    userId,
+                    sessionId,
+                    preRouteSecuredPrompt.safeInput(),
+                    safeMedia,
+                    mallToken,
+                    mallUsername,
+                    mallPassword
+            );
+            if (routedRequest.shortCircuitStream() != null) {
+                return rememberShortCircuitTurn(
+                        userId,
+                        sessionId,
+                        routedRequest.userMessage(),
+                        routedRequest.shortCircuitStream(),
+                        preRouteSecuredPrompt,
+                        conversationTurn
+                );
+            }
+
+            PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(
+                    routedRequest.userMessage(),
+                    preRouteSecuredPrompt.sensitiveValues()
+            );
+            return runCoreStream(
+                    userId,
+                    sessionId,
+                    modelId,
+                    webSearchEnabled,
+                    routedRequest.media(),
+                    routedRequest.mallToolsAllowed(),
+                    routedRequest.taskPolicies(),
+                    routedRequest.orderCreationAllowed(),
+                    securedPrompt,
+                    conversationTurn
+            );
+        }
+        catch (RuntimeException ex) {
+            conversationLogService.failTurn(conversationTurn, "", ex);
+            throw ex;
+        }
     }
 
     private Flux<String> rememberShortCircuitTurn(String userId,
                                                   String sessionId,
                                                   String userMessage,
                                                   Flux<String> shortCircuitStream,
-                                                  PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt) {
+                                                  PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt,
+                                                  ConversationTurnRecord conversationTurn) {
         PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(
                 userMessage,
                 preRouteSecuredPrompt.sensitiveValues()
@@ -175,12 +201,15 @@ public class ReActAgent {
         return Flux.defer(() -> {
             StreamingSensitiveValueRestorer restorer =
                     new StreamingSensitiveValueRestorer(preRouteSecuredPrompt.sensitiveValues());
-            StringBuilder answerBuilder = new StringBuilder();
+            StringBuilder memoryAnswerBuilder = new StringBuilder();
+            StringBuilder visibleAnswerBuilder = new StringBuilder();
+            AtomicBoolean persisted = new AtomicBoolean(false);
             Flux<String> restoredStream = shortCircuitStream
                     .handle((chunk, sink) -> {
-                        answerBuilder.append(chunk);
+                        memoryAnswerBuilder.append(chunk);
                         String restoredChunk = restorer.accept(chunk);
                         if (restoredChunk != null && !restoredChunk.isEmpty()) {
+                            visibleAnswerBuilder.append(restoredChunk);
                             sink.next(restoredChunk);
                         }
                     })
@@ -189,16 +218,34 @@ public class ReActAgent {
                                 if (remaining == null || remaining.isEmpty()) {
                                     return Flux.empty();
                                 }
+                                visibleAnswerBuilder.append(remaining);
                                 return Flux.just(remaining);
                             }))
                     .cast(String.class);
             return restoredStream
-                    .doOnComplete(() -> conversationMemoryService.rememberTurn(
-                            userId,
-                            sessionId,
-                            securedPrompt.modelInput(),
-                            answerBuilder.toString().trim()
-                    ));
+                    .doOnComplete(() -> {
+                        conversationMemoryService.rememberTurn(
+                                userId,
+                                sessionId,
+                                securedPrompt.modelInput(),
+                                memoryAnswerBuilder.toString().trim()
+                        );
+                        conversationLogService.completeTurn(conversationTurn, visibleAnswerBuilder.toString().trim());
+                        persisted.set(true);
+                    })
+                    .doOnError(ex -> {
+                        conversationLogService.failTurn(conversationTurn, visibleAnswerBuilder.toString().trim(), ex);
+                        persisted.set(true);
+                    })
+                    .doFinally(signalType -> {
+                        if (signalType == SignalType.CANCEL && persisted.compareAndSet(false, true)) {
+                            conversationLogService.partialTurn(
+                                    conversationTurn,
+                                    visibleAnswerBuilder.toString().trim(),
+                                    "stream cancelled"
+                            );
+                        }
+                    });
         });
     }
 
@@ -210,7 +257,8 @@ public class ReActAgent {
                                          boolean mallToolsAllowed,
                                          List<ShoppingTaskPolicy> taskPolicies,
                                          boolean orderCreationAllowed,
-                                         PromptSecurityFilter.SecuredPrompt securedPrompt) {
+                                         PromptSecurityFilter.SecuredPrompt securedPrompt,
+                                         ConversationTurnRecord conversationTurn) {
         ActiveToolCallbacks activeTools;
         try {
             activeTools = resolveActiveToolCallbacks(
@@ -223,7 +271,7 @@ public class ReActAgent {
             );
         }
         catch (MallMcpToolResolutionException ex) {
-            return rememberToolResolutionFailure(userId, sessionId, securedPrompt, ex);
+            return rememberToolResolutionFailure(userId, sessionId, securedPrompt, conversationTurn, ex);
         }
         logAgentStart(userId, sessionId, modelId, webSearchEnabled, mediaCount(media), activeTools.callbacks().size(), securedPrompt);
 
@@ -246,22 +294,27 @@ public class ReActAgent {
                 activeTools,
                 webSearchEnabled,
                 taskPolicies,
-                securedPrompt
+                securedPrompt,
+                conversationTurn
         );
     }
 
     private Flux<String> rememberToolResolutionFailure(String userId,
                                                        String sessionId,
                                                        PromptSecurityFilter.SecuredPrompt securedPrompt,
+                                                       ConversationTurnRecord conversationTurn,
                                                        MallMcpToolResolutionException ex) {
         String answer = mallMcpFailureMessage(ex);
         return Flux.just(answer)
-                .doOnComplete(() -> conversationMemoryService.rememberTurn(
-                        userId,
-                        sessionId,
-                        securedPrompt.modelInput(),
-                        answer
-                ));
+                .doOnComplete(() -> {
+                    conversationMemoryService.rememberTurn(
+                            userId,
+                            sessionId,
+                            securedPrompt.modelInput(),
+                            answer
+                    );
+                    conversationLogService.completeTurn(conversationTurn, answer);
+                });
     }
 
     private RoutedAgentRequest routeBeforeCore(String userId,
@@ -304,7 +357,8 @@ public class ReActAgent {
                                            ActiveToolCallbacks activeTools,
                                            boolean webSearchEnabled,
                                            List<ShoppingTaskPolicy> taskPolicies,
-                                           PromptSecurityFilter.SecuredPrompt securedPrompt) {
+                                           PromptSecurityFilter.SecuredPrompt securedPrompt,
+                                           ConversationTurnRecord conversationTurn) {
         ChatClient.ChatClientRequestSpec requestSpec = applyModelOptions(reactChatClient.prompt(), modelId);
         ChatClient.ChatClientRequestSpec requestWithSystem =
                 requestSpec.system(buildReactSystemPrompt(
@@ -344,47 +398,84 @@ public class ReActAgent {
             StringBuilder rawAnswerBuilder = new StringBuilder();
             StringBuilder restoredAnswerBuilder = new StringBuilder();
             AtomicBoolean fallbackUsed = new AtomicBoolean(false);
+            AtomicBoolean persisted = new AtomicBoolean(false);
 
-            Flux<String> restoredStream = finalRequestWithMemory
-                    .messages(List.of(currentUserMessage))
-                    .stream()
-                    .content()
-                    .handle((chunk, sink) -> {
-                        rawAnswerBuilder.append(chunk);
-                        String restoredChunk = restorer.accept(chunk);
-                        if (restoredChunk != null && !restoredChunk.isEmpty()) {
-                            restoredAnswerBuilder.append(restoredChunk);
-                            sink.next(restoredChunk);
-                        }
-                    })
-                    .concatWith(Mono.fromSupplier(restorer::flush)
-                            .flatMapMany(remaining -> {
-                                if (remaining == null || remaining.isEmpty()) {
-                                    return Flux.empty();
-                                }
-                                restoredAnswerBuilder.append(remaining);
-                                return Flux.just(remaining);
-                            }))
-                    .cast(String.class);
+            try {
+                Flux<String> restoredStream = finalRequestWithMemory
+                        .messages(List.of(currentUserMessage))
+                        .stream()
+                        .content()
+                        .handle((chunk, sink) -> {
+                            rawAnswerBuilder.append(chunk);
+                            String restoredChunk = restorer.accept(chunk);
+                            if (restoredChunk != null && !restoredChunk.isEmpty()) {
+                                restoredAnswerBuilder.append(restoredChunk);
+                                sink.next(restoredChunk);
+                            }
+                        })
+                        .concatWith(Mono.fromSupplier(restorer::flush)
+                                .flatMapMany(remaining -> {
+                                    if (remaining == null || remaining.isEmpty()) {
+                                        return Flux.empty();
+                                    }
+                                    restoredAnswerBuilder.append(remaining);
+                                    return Flux.just(remaining);
+                                }))
+                        .cast(String.class);
 
-            return restoredStream
-                    .onErrorResume(ex -> resumeWithModelStreamFallback(
-                            ex,
-                            userId,
-                            sessionId,
-                            modelId,
-                            fallbackUsed,
-                            rawAnswerBuilder,
-                            restoredAnswerBuilder
-                    ))
-                    .doOnComplete(() -> finishStreamingResponse(
-                            userId,
-                            sessionId,
-                            modelId,
-                            securedPrompt,
-                            fallbackUsed.get(),
-                            rawAnswerBuilder.toString().trim()
-                    ));
+                return restoredStream
+                        .onErrorResume(ex -> resumeWithModelStreamFallback(
+                                ex,
+                                userId,
+                                sessionId,
+                                modelId,
+                                fallbackUsed,
+                                rawAnswerBuilder,
+                                restoredAnswerBuilder
+                        ))
+                        .doOnComplete(() -> {
+                            if (fallbackUsed.get()) {
+                                conversationLogService.partialTurn(
+                                        conversationTurn,
+                                        restoredAnswerBuilder.toString().trim(),
+                                        "model stream fallback"
+                                );
+                            }
+                            else {
+                                conversationLogService.completeTurn(
+                                        conversationTurn,
+                                        restoredAnswerBuilder.toString().trim()
+                                );
+                            }
+                            persisted.set(true);
+                            finishStreamingResponse(
+                                    userId,
+                                    sessionId,
+                                    modelId,
+                                    securedPrompt,
+                                    fallbackUsed.get(),
+                                    rawAnswerBuilder.toString().trim()
+                            );
+                        })
+                        .doOnError(ex -> {
+                            conversationLogService.failTurn(conversationTurn, restoredAnswerBuilder.toString().trim(), ex);
+                            persisted.set(true);
+                        })
+                        .doFinally(signalType -> {
+                            if (signalType == SignalType.CANCEL && persisted.compareAndSet(false, true)) {
+                                conversationLogService.partialTurn(
+                                        conversationTurn,
+                                        restoredAnswerBuilder.toString().trim(),
+                                        "stream cancelled"
+                                );
+                            }
+                        });
+            }
+            catch (RuntimeException ex) {
+                conversationLogService.failTurn(conversationTurn, restoredAnswerBuilder.toString().trim(), ex);
+                persisted.set(true);
+                return Flux.error(ex);
+            }
         });
     }
 

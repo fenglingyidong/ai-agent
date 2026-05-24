@@ -7,7 +7,14 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
-@SpringBootTest(properties = "app.vector.milvus.initialize-schema=false")
+@SpringBootTest(properties = {
+        "app.vector.milvus.initialize-schema=false",
+        "spring.datasource.url=jdbc:h2:mem:rag_agent_test;MODE=MySQL;DATABASE_TO_LOWER=TRUE",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.datasource.username=sa",
+        "spring.datasource.password=",
+        "spring.sql.init.mode=never"
+})
 class RagAgentApplicationTests {
 
     @MockitoBean(name = "milvusServiceClient")

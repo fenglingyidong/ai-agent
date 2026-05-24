@@ -1,5 +1,6 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
@@ -84,7 +85,8 @@ class ReActAgentTaskPolicyTest {
                 new PromptSecurityFilter(),
                 null,
                 routeExecutor,
-                List.of()
+                List.of(),
+                mock(ConversationLogService.class)
         );
 
         collect(agent.runStream("user-1", "session-1", null, "帮我推荐", false,
@@ -149,7 +151,8 @@ class ReActAgentTaskPolicyTest {
                 null,
                 routeExecutor,
                 List.of(),
-                mallMcpClient
+                mallMcpClient,
+                mock(ConversationLogService.class)
         );
 
         collect(agent.runStream("user-1", "session-1", null, "查库存", false,
@@ -207,7 +210,8 @@ class ReActAgentTaskPolicyTest {
                 null,
                 routeExecutor,
                 List.of(),
-                mallMcpClient
+                mallMcpClient,
+                mock(ConversationLogService.class)
         );
 
         collect(agent.runStream("user-1", "session-1", null, "确认下单", false,
@@ -260,7 +264,8 @@ class ReActAgentTaskPolicyTest {
                 null,
                 routeExecutor,
                 List.of(),
-                mallMcpClient
+                mallMcpClient,
+                mock(ConversationLogService.class)
         );
 
         collect(agent.runStream("user-1", "session-1", null, "确认下单", false,

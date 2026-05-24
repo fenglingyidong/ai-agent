@@ -1,5 +1,6 @@
 package com.example.ragagent.agent;
 
+import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
@@ -126,7 +127,8 @@ class ReActAgentTest {
                 new PromptSecurityFilter(),
                 null,
                 null,
-                List.of(externalProvider)
+                List.of(externalProvider),
+                mock(ConversationLogService.class)
         );
 
         String result = collect(agent.runStream("user-web", "session-web", null, "today news", true,
@@ -166,7 +168,8 @@ class ReActAgentTest {
                 new PromptSecurityFilter(),
                 chatModelRegistry,
                 null,
-                List.of()
+                List.of(),
+                mock(ConversationLogService.class)
         );
 
         String result = collect(agent.runStream("user-4", "session-4", "deepseek", "Who are you?", false,
@@ -263,7 +266,8 @@ class ReActAgentTest {
                 null,
                 null,
                 List.of(),
-                mallMcpClient
+                mallMcpClient,
+                mock(ConversationLogService.class)
         );
 
         String result = collect(agent.runStream("user-mall", "session-mall", null, "查一下库存", false,
@@ -294,7 +298,8 @@ class ReActAgentTest {
                 new PromptSecurityFilter(),
                 null,
                 null,
-                List.of()
+                List.of(),
+                mock(ConversationLogService.class)
         );
     }
 

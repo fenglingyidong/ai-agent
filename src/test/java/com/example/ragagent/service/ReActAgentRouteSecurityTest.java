@@ -1,5 +1,6 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.security.PromptSecurityFilter;
@@ -63,7 +64,8 @@ class ReActAgentRouteSecurityTest {
                 new PromptSecurityFilter(),
                 null,
                 routeExecutor,
-                List.of()
+                List.of(),
+                mock(ConversationLogService.class)
         );
 
         String result = collect(agent.runStream(
@@ -127,7 +129,8 @@ class ReActAgentRouteSecurityTest {
                 new PromptSecurityFilter(),
                 null,
                 routeExecutor,
-                List.of()
+                List.of(),
+                mock(ConversationLogService.class)
         );
 
         String result = collect(agent.runStream(
@@ -200,7 +203,8 @@ class ReActAgentRouteSecurityTest {
                 new PromptSecurityFilter(),
                 null,
                 routeExecutor,
-                List.of()
+                List.of(),
+                mock(ConversationLogService.class)
         );
 
         String result = collect(agent.runStream(

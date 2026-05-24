@@ -1,5 +1,6 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.mall.MallMcpContextClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
@@ -61,7 +62,8 @@ class ReActAgentShortCircuitMemoryTest {
                 new PromptSecurityFilter(),
                 null,
                 new ShoppingRouteExecutor(intentRouter, mallMcpContextClient, simpleTaskAgent),
-                List.of()
+                List.of(),
+                mock(ConversationLogService.class)
         );
 
         String result = collect(agent.runStream(

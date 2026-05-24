@@ -22,6 +22,15 @@ management:
 spring:
   application:
     name: rag-agent
+  datasource:
+    url: ${MYSQL_URL:jdbc:mysql://localhost:3307/rag_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  sql:
+    init:
+      mode: ${SPRING_SQL_INIT_MODE:always}
+      encoding: UTF-8
   mvc:
     async:
       request-timeout: ${SPRING_MVC_ASYNC_REQUEST_TIMEOUT:180s}
@@ -64,7 +73,16 @@ spring:
               url: https://dashscope.aliyuncs.com
               endpoint: /api/v1/mcps/WebSearch/mcp
 
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
 app:
+  conversation-log:
+    enabled: ${CONVERSATION_LOG_ENABLED:true}
+    max-turns-per-session: ${CONVERSATION_LOG_MAX_TURNS_PER_SESSION:1000}
   vector:
     milvus:
       host: ${MILVUS_HOST:localhost}

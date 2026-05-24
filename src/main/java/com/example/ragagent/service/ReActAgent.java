@@ -126,10 +126,11 @@ public class ReActAgent {
                                   String mallToken,
                                   String mallUsername,
                                   String mallPassword) {
+        PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt = promptSecurityFilter.secure(userMessage);
         RoutedAgentRequest routedRequest = routeBeforeCore(
                 userId,
                 sessionId,
-                userMessage,
+                preRouteSecuredPrompt.safeInput(),
                 media,
                 mallToken,
                 mallUsername,

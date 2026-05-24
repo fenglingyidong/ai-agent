@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -47,7 +49,7 @@ class ReActAgentShortCircuitMemoryTest {
                 "price query"
         );
 
-        when(intentRouter.route("How much are blocks?", List.of())).thenReturn(route);
+        when(intentRouter.route(eq("How much are blocks?"), eq(List.of()), anyString())).thenReturn(route);
         when(mallMcpContextClient.register("user-fast", "session-fast", "", "", ""))
                 .thenReturn(MallMcpContextClient.MallMcpContextRegistration.success());
         when(simpleTaskAgent.tryRun(route, "How much are blocks?", "session-fast", 0.7))

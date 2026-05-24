@@ -51,7 +51,7 @@ class ReActAgentRouteSecurityTest {
         org.mockito.ArgumentCaptor<String> routerMessageCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
         org.mockito.ArgumentCaptor<String> simpleTaskMessageCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
 
-        when(intentRouter.route(routerMessageCaptor.capture(), eq(List.of()))).thenReturn(route);
+        when(intentRouter.route(routerMessageCaptor.capture(), eq(List.of()), anyString())).thenReturn(route);
         when(simpleTaskAgent.tryRun(eq(route), simpleTaskMessageCaptor.capture(), eq("session-sec"), eq(0.7)))
                 .thenReturn(FastLaneResult.handled(Flux.just("已走快车道")));
 
@@ -116,7 +116,7 @@ class ReActAgentRouteSecurityTest {
         org.mockito.ArgumentCaptor<String> rememberedAnswerCaptor =
                 org.mockito.ArgumentCaptor.forClass(String.class);
 
-        when(intentRouter.route(anyString(), eq(List.of()))).thenReturn(route);
+        when(intentRouter.route(anyString(), eq(List.of()), anyString())).thenReturn(route);
         when(simpleTaskAgent.tryRun(eq(route), anyString(), eq("session-sec"), eq(0.7)))
                 .thenReturn(FastLaneResult.handled(Flux.just("已保护值：[[SEC", "RET_1]]")));
 
@@ -181,7 +181,7 @@ class ReActAgentRouteSecurityTest {
         );
         org.mockito.ArgumentCaptor<String> routerMessageCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
 
-        when(intentRouter.route(routerMessageCaptor.capture(), eq(List.of()))).thenReturn(route);
+        when(intentRouter.route(routerMessageCaptor.capture(), eq(List.of()), anyString())).thenReturn(route);
         when(conversationMemoryService.buildConversationId(anyString(), anyString()))
                 .thenAnswer(invocation -> invocation.getArgument(0) + "::" + invocation.getArgument(1));
         when(reactChatClient.prompt()).thenReturn(requestSpec);

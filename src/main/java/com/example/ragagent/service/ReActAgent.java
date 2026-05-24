@@ -158,6 +158,7 @@ public class ReActAgent {
                 routedRequest.media(),
                 routedRequest.mallToolsAllowed(),
                 routedRequest.taskPolicies(),
+                routedRequest.orderCreationAllowed(),
                 securedPrompt
         );
     }
@@ -208,6 +209,7 @@ public class ReActAgent {
                                          List<Media> media,
                                          boolean mallToolsAllowed,
                                          List<ShoppingTaskPolicy> taskPolicies,
+                                         boolean orderCreationAllowed,
                                          PromptSecurityFilter.SecuredPrompt securedPrompt) {
         ActiveToolCallbacks activeTools;
         try {
@@ -216,7 +218,8 @@ public class ReActAgent {
                     sessionId,
                     webSearchEnabled,
                     mallToolsAllowed,
-                    taskPolicies
+                    taskPolicies,
+                    orderCreationAllowed
             );
         }
         catch (MallMcpToolResolutionException ex) {
@@ -494,9 +497,16 @@ public class ReActAgent {
                                                            String sessionId,
                                                            boolean webSearchEnabled,
                                                            boolean mallToolsAllowed,
-                                                           List<ShoppingTaskPolicy> taskPolicies) {
+                                                           List<ShoppingTaskPolicy> taskPolicies,
+                                                           boolean orderCreationAllowed) {
         Map<String, ToolCallback> activeToolCallbacks = new LinkedHashMap<>();
-        builtInToolCallbacks.forEach(callback -> putToolCallback(activeToolCallbacks, callback, userId, sessionId));
+        builtInToolCallbacks.forEach(callback -> putToolCallback(
+                activeToolCallbacks,
+                callback,
+                userId,
+                sessionId,
+                orderCreationAllowed
+        ));
 
         if (allowsMallTools(mallToolsAllowed, taskPolicies) && mallMcpToolCallback != null) {
             try {
@@ -505,7 +515,7 @@ public class ReActAgent {
                     throw new MallMcpToolResolutionException("未发现 mall_* MCP 工具");
                 }
                 for (ToolCallback callback : mallToolCallbacks) {
-                    putToolCallback(activeToolCallbacks, callback, userId, sessionId);
+                    putToolCallback(activeToolCallbacks, callback, userId, sessionId, orderCreationAllowed);
                 }
             }
             catch (RuntimeException ex) {
@@ -516,7 +526,8 @@ public class ReActAgent {
         if (!webSearchEnabled) {
             List<ToolCallback> callbacks = filterCallbacksByTaskPolicies(
                     List.copyOf(activeToolCallbacks.values()),
-                    taskPolicies
+                    taskPolicies,
+                    orderCreationAllowed
             );
             return new ActiveToolCallbacks(callbacks, false, hasMallTools(callbacks));
         }
@@ -537,7 +548,7 @@ public class ReActAgent {
                     if (MallMcpToolCallback.isMallTool(toolName)) {
                         continue;
                     }
-                    putToolCallback(activeToolCallbacks, callback, userId, sessionId);
+                    putToolCallback(activeToolCallbacks, callback, userId, sessionId, orderCreationAllowed);
                     hasExternalTools = true;
                 }
             }
@@ -548,31 +559,34 @@ public class ReActAgent {
 
         List<ToolCallback> callbacks = filterCallbacksByTaskPolicies(
                 List.copyOf(activeToolCallbacks.values()),
-                taskPolicies
+                taskPolicies,
+                orderCreationAllowed
         );
         return new ActiveToolCallbacks(callbacks, hasExternalTools, hasMallTools(callbacks));
     }
 
     private List<ToolCallback> filterCallbacksByTaskPolicies(List<ToolCallback> callbacks,
-                                                             List<ShoppingTaskPolicy> taskPolicies) {
+                                                             List<ShoppingTaskPolicy> taskPolicies,
+                                                             boolean orderCreationAllowed) {
         if (callbacks == null || callbacks.isEmpty()) {
             return List.of();
         }
-        if (taskPolicies == null || taskPolicies.isEmpty()) {
-            return callbacks;
-        }
 
-        java.util.Set<String> allowedToolNames = taskPolicies.stream()
+        List<ShoppingTaskPolicy> safeTaskPolicies = taskPolicies == null ? List.of() : taskPolicies;
+        java.util.Set<String> allowedToolNames = safeTaskPolicies.stream()
                 .flatMap(policy -> policy.allowedToolNames().stream())
                 .collect(java.util.stream.Collectors.toSet());
-        if (allowedToolNames.isEmpty()) {
-            return callbacks;
-        }
 
         return callbacks.stream()
                 .filter(callback -> {
                     String name = toolName(callback);
-                    return !isShoppingControlledTool(name) || allowedToolNames.contains(name);
+                    if (MallTool.CREATE_ORDER.toolName().equals(name) && !orderCreationAllowed) {
+                        return false;
+                    }
+                    return safeTaskPolicies.isEmpty()
+                            || allowedToolNames.isEmpty()
+                            || !isShoppingControlledTool(name)
+                            || allowedToolNames.contains(name);
                 })
                 .toList();
     }
@@ -612,10 +626,14 @@ public class ReActAgent {
     private void putToolCallback(Map<String, ToolCallback> activeToolCallbacks,
                                  ToolCallback callback,
                                  String userId,
-                                 String sessionId) {
+                                 String sessionId,
+                                 boolean orderCreationAllowed) {
         String toolName = toolName(callback);
         if (StringUtils.hasText(toolName)) {
-            activeToolCallbacks.put(toolName, new LoggingToolCallback(callback, userId, sessionId));
+            ToolCallback guardedCallback = MallTool.CREATE_ORDER.toolName().equals(toolName)
+                    ? new OrderCreationGuardedToolCallback(callback, orderCreationAllowed)
+                    : callback;
+            activeToolCallbacks.put(toolName, new LoggingToolCallback(guardedCallback, userId, sessionId));
         }
     }
 

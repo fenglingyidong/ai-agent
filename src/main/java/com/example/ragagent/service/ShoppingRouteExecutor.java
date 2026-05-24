@@ -145,8 +145,16 @@ public class ShoppingRouteExecutor {
                 resolveCoreMedia(route, safeMedia),
                 null,
                 mallToolsAllowedByPolicy && allowMallToolsForCore(route, normalizedMessage, safeMedia.size()),
-                taskPolicies
+                taskPolicies,
+                isOrderCreationAllowed(route)
         );
+    }
+
+    private boolean isOrderCreationAllowed(ShoppingIntentRoute route) {
+        return route != null
+                && route.isHighConfidence(confidenceThreshold())
+                && "CREATE_ORDER".equals(route.normalizedIntent())
+                && Boolean.TRUE.equals(route.needConfirm());
     }
 
     private List<ShoppingTaskPolicy> resolveTaskPolicies(ShoppingIntentRoute route) {

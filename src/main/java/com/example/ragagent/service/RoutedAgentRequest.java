@@ -9,7 +9,8 @@ record RoutedAgentRequest(String userMessage,
                           List<Media> media,
                           Flux<String> shortCircuitStream,
                           boolean mallToolsAllowed,
-                          List<ShoppingTaskPolicy> taskPolicies) {
+                          List<ShoppingTaskPolicy> taskPolicies,
+                          boolean orderCreationAllowed) {
 
     RoutedAgentRequest {
         media = media == null ? List.of() : List.copyOf(media);
@@ -17,13 +18,21 @@ record RoutedAgentRequest(String userMessage,
     }
 
     RoutedAgentRequest(String userMessage, List<Media> media, Flux<String> shortCircuitStream) {
-        this(userMessage, media, shortCircuitStream, true, List.of());
+        this(userMessage, media, shortCircuitStream, true, List.of(), false);
     }
 
     RoutedAgentRequest(String userMessage,
                        List<Media> media,
                        Flux<String> shortCircuitStream,
                        boolean mallToolsAllowed) {
-        this(userMessage, media, shortCircuitStream, mallToolsAllowed, List.of());
+        this(userMessage, media, shortCircuitStream, mallToolsAllowed, List.of(), false);
+    }
+
+    RoutedAgentRequest(String userMessage,
+                       List<Media> media,
+                       Flux<String> shortCircuitStream,
+                       boolean mallToolsAllowed,
+                       List<ShoppingTaskPolicy> taskPolicies) {
+        this(userMessage, media, shortCircuitStream, mallToolsAllowed, taskPolicies, false);
     }
 }

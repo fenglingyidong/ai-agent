@@ -22,6 +22,56 @@ import static org.mockito.Mockito.when;
 class ShoppingRouteExecutorTest {
 
     @Test
+    void shouldAllowOrderCreationOnlyForConfirmedCreateOrderRoute() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        ShoppingTaskPolicyRegistry policyRegistry = new ShoppingTaskPolicyRegistry();
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "CREATE_ORDER",
+                "C_COMPLEX_REACT",
+                Map.of(),
+                Map.of("confirmationId", "confirm-1"),
+                true,
+                0.95,
+                "用户明确二次确认",
+                List.of("CART_CONFIRMATION"),
+                List.of(),
+                List.of("mall_create_order"),
+                true,
+                "HIGH"
+        );
+        when(intentRouter.route("确认下单", List.of())).thenReturn(route);
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, null, null, policyRegistry);
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "user-1", "session-1", "确认下单", List.of(), "", "", ""
+        );
+
+        assertTrue(request.orderCreationAllowed());
+    }
+
+    @Test
+    void shouldNotAllowOrderCreationForPrepareOrderRoute() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PREPARE_ORDER",
+                "B_SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of(),
+                true,
+                0.95,
+                "确认订单摘要"
+        );
+        when(intentRouter.route("帮我确认订单", List.of())).thenReturn(route);
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, null, null);
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "user-1", "session-1", "帮我确认订单", List.of(), "", "", ""
+        );
+
+        assertFalse(request.orderCreationAllowed());
+    }
+
+    @Test
     void shouldReturnShortCircuitStreamWhenSimpleTaskAgentHandlesConfidentMallRoute() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         MallMcpContextClient contextClient = mock(MallMcpContextClient.class);

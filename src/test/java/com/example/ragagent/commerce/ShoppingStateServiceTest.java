@@ -140,6 +140,42 @@ class ShoppingStateServiceTest {
     }
 
     @Test
+    void mergePreferenceShouldClearStaleFieldsWhenCategoryIsAddedToUncategorizedState() {
+        TestFixture fixture = fixture(Duration.ofDays(7));
+        when(fixture.valueOperations.get("shopping:preference:alice:session-1"))
+                .thenReturn("""
+                        {"budgetMax":500,"brand":"Nike","size":"42","color":"黑色","style":"缓震","usageScenario":"通勤"}
+                        """);
+
+        ShoppingPreferenceState state = fixture.service.mergePreference(
+                "alice",
+                "session-1",
+                new ShoppingStateService.ShoppingPreferencePatch(
+                        "儿童积木",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "5岁生日礼物",
+                        Set.of(),
+                        ShoppingPreferenceSource.USER_EXPLICIT.name(),
+                        1.0,
+                        5L
+                )
+        );
+
+        assertEquals("儿童积木", state.getCategory());
+        assertEquals(500, state.getBudgetMax());
+        assertNull(state.getBrand());
+        assertNull(state.getSize());
+        assertNull(state.getColor());
+        assertNull(state.getStyle());
+        assertEquals("5岁生日礼物", state.getUsageScenario());
+    }
+
+    @Test
     void loadPreferenceShouldReturnEmptyStateWhenStoredJsonIsBroken() {
         TestFixture fixture = fixture(Duration.ofDays(7));
         when(fixture.valueOperations.get("shopping:preference:alice:session-1")).thenReturn("{bad-json");

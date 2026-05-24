@@ -13,7 +13,7 @@ public class ShoppingPreferenceMergePolicy {
         clearFields(state, patch);
         if (StringUtils.hasText(patch.category())) {
             String category = patch.category().trim();
-            if (StringUtils.hasText(state.getCategory()) && !state.getCategory().equals(category)) {
+            if (!category.equals(state.getCategory())) {
                 clearCategorySpecificFields(state);
             }
             state.setCategory(category);

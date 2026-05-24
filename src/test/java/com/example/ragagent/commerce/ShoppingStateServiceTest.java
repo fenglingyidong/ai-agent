@@ -6,12 +6,17 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.time.Duration;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -183,6 +188,56 @@ class ShoppingStateServiceTest {
         ShoppingPreferenceState state = fixture.service.loadPreference("alice", "session-1");
 
         assertNull(state.getCategory());
+    }
+
+    @Test
+    void loadPreferenceShouldReturnEmptyStateWhenStoredJsonIsNullLiteral() {
+        TestFixture fixture = fixture(Duration.ofDays(7));
+        when(fixture.valueOperations.get("shopping:preference:alice:session-1")).thenReturn("null");
+
+        ShoppingPreferenceState state = fixture.service.loadPreference("alice", "session-1");
+
+        assertNotNull(state);
+        assertNull(state.getCategory());
+    }
+
+    @Test
+    void mergePreferenceShouldBeSynchronizedToProtectSingleInstanceReadModifyWrite() throws Exception {
+        Method method = ShoppingStateService.class.getDeclaredMethod(
+                "mergePreference",
+                String.class,
+                String.class,
+                ShoppingStateService.ShoppingPreferencePatch.class
+        );
+
+        assertTrue(Modifier.isSynchronized(method.getModifiers()));
+    }
+
+    @Test
+    void shoppingPreferencePatchShouldClampNonFiniteConfidence() {
+        ShoppingStateService.ShoppingPreferencePatch nanPatch = new ShoppingStateService.ShoppingPreferencePatch(
+                null, null, null, null, null, null, null, null,
+                Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), Double.NaN, null
+        );
+        ShoppingStateService.ShoppingPreferencePatch infinityPatch = new ShoppingStateService.ShoppingPreferencePatch(
+                null, null, null, null, null, null, null, null,
+                Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), Double.POSITIVE_INFINITY, null
+        );
+        ShoppingStateService.ShoppingPreferencePatch negativePatch = new ShoppingStateService.ShoppingPreferencePatch(
+                null, null, null, null, null, null, null, null,
+                Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), -1.0, null
+        );
+        ShoppingStateService.ShoppingPreferencePatch tooLargePatch = new ShoppingStateService.ShoppingPreferencePatch(
+                null, null, null, null, null, null, null, null,
+                Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), 2.0, null
+        );
+
+        assertFalse(Double.isNaN(nanPatch.confidence()));
+        assertEquals(1.0, nanPatch.confidence());
+        assertTrue(Double.isFinite(infinityPatch.confidence()));
+        assertEquals(1.0, infinityPatch.confidence());
+        assertEquals(0.0, negativePatch.confidence());
+        assertEquals(1.0, tooLargePatch.confidence());
     }
 
     @SuppressWarnings("unchecked")

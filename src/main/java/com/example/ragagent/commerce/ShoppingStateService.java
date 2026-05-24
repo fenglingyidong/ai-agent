@@ -45,7 +45,8 @@ public class ShoppingStateService {
             return new ShoppingPreferenceState();
         }
         try {
-            return objectMapper.readValue(raw, ShoppingPreferenceState.class);
+            ShoppingPreferenceState state = objectMapper.readValue(raw, ShoppingPreferenceState.class);
+            return state == null ? new ShoppingPreferenceState() : state;
         }
         catch (JsonProcessingException ex) {
             log.warn("Failed to deserialize shopping preference state. key={}, reason={}", key, ex.getOriginalMessage());
@@ -53,9 +54,10 @@ public class ShoppingStateService {
         }
     }
 
-    public ShoppingPreferenceState mergePreference(String userId,
-                                                   String sessionId,
-                                                   @NotNull @Valid ShoppingPreferencePatch patch) {
+    // 单实例内串行化 Redis 读-改-写，降低自动偏好写入时的字段丢失风险；Redis TTL/持久化策略保持不变。
+    public synchronized ShoppingPreferenceState mergePreference(String userId,
+                                                                String sessionId,
+                                                                @NotNull @Valid ShoppingPreferencePatch patch) {
         if (patch == null) {
             throw new IllegalArgumentException("patch must not be null");
         }
@@ -154,7 +156,7 @@ public class ShoppingStateService {
         }
 
         private static Double clampConfidence(Double confidence) {
-            if (confidence == null) {
+            if (confidence == null || !Double.isFinite(confidence)) {
                 return 1.0;
             }
             return Math.max(0.0, Math.min(1.0, confidence));

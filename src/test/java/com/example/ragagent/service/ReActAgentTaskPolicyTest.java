@@ -20,10 +20,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentCaptor.forClass;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -262,9 +266,30 @@ class ReActAgentTaskPolicyTest {
         collect(agent.runStream("user-1", "session-1", null, "确认下单", false,
                 List.of(), "", "", ""));
 
-        assertTrue(registeredCallbacks.stream()
-                .map(callback -> callback.getToolDefinition().name())
-                .anyMatch("mall_create_order"::equals));
+        ToolCallback createOrderCallback = registeredCallbacks.stream()
+                .filter(callback -> "mall_create_order".equals(callback.getToolDefinition().name()))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(createOrderCallback);
+
+        assertBlocked(createOrderCallback.call("{\"userConfirmed\":true}"), "MISSING_CONFIRMATION_ID");
+        assertBlocked(createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":false}"),
+                "USER_NOT_CONFIRMED");
+        assertBlocked(createOrderCallback.call("{"), "INVALID_ARGUMENTS");
+        verify(syncClient, never()).callTool(any(McpSchema.CallToolRequest.class));
+
+        when(syncClient.callTool(any(McpSchema.CallToolRequest.class))).thenReturn(new McpSchema.CallToolResult(
+                List.of(new McpSchema.TextContent("{\"ok\":true,\"orderId\":\"order-1\"}")),
+                false
+        ));
+
+        String result = createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":true}");
+
+        assertTrue(result.contains("ok"));
+        assertTrue(result.contains("order-1"));
+        var requestCaptor = forClass(McpSchema.CallToolRequest.class);
+        verify(syncClient).callTool(requestCaptor.capture());
+        assertEquals("mall_create_order", requestCaptor.getValue().name());
     }
 
     private ChatClient.Builder builderFor(ChatClient reactChatClient) {
@@ -305,12 +330,21 @@ class ReActAgentTaskPolicyTest {
                 .description(name + " description from mcp")
                 .inputSchema(new McpSchema.JsonSchema(
                         "object",
-                        Map.of("confirmationId", Map.of("type", "string")),
-                        List.of(),
+                        Map.of(
+                                "confirmationId", Map.of("type", "string"),
+                                "userConfirmed", Map.of("type", "boolean")
+                        ),
+                        List.of("confirmationId", "userConfirmed"),
                         null,
                         null,
                         null
                 ))
                 .build();
+    }
+
+    private void assertBlocked(String result, String reason) {
+        assertTrue(result.contains("\"ok\":false"));
+        assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(result.contains("\"reason\":\"" + reason + "\""));
     }
 }

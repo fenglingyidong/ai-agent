@@ -6,6 +6,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -24,6 +25,8 @@ class OrderCreationGuardedToolCallbackTest {
 
         assertTrue(result.contains("\"ok\":false"));
         assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(result.contains("\"reason\":\"ROUTE_NOT_ALLOWED\""));
+        verify(delegate, never()).call(any(String.class));
         verify(delegate, never()).call(any(String.class), any(ToolContext.class));
     }
 
@@ -36,6 +39,8 @@ class OrderCreationGuardedToolCallbackTest {
 
         assertTrue(result.contains("\"ok\":false"));
         assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(result.contains("\"reason\":\"MISSING_CONFIRMATION_ID\""));
+        verify(delegate, never()).call(any(String.class));
         verify(delegate, never()).call(any(String.class), any(ToolContext.class));
     }
 
@@ -48,6 +53,22 @@ class OrderCreationGuardedToolCallbackTest {
 
         assertTrue(result.contains("\"ok\":false"));
         assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(result.contains("\"reason\":\"USER_NOT_CONFIRMED\""));
+        verify(delegate, never()).call(any(String.class));
+        verify(delegate, never()).call(any(String.class), any(ToolContext.class));
+    }
+
+    @Test
+    void shouldBlockInvalidJson() {
+        ToolCallback delegate = delegate();
+        OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);
+
+        String result = callback.call("{");
+
+        assertTrue(result.contains("\"ok\":false"));
+        assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(result.contains("\"reason\":\"INVALID_ARGUMENTS\""));
+        verify(delegate, never()).call(any(String.class));
         verify(delegate, never()).call(any(String.class), any(ToolContext.class));
     }
 
@@ -63,6 +84,11 @@ class OrderCreationGuardedToolCallbackTest {
 
         assertEquals("{\"ok\":true}", result);
         verify(delegate).call(input, toolContext);
+    }
+
+    @Test
+    void shouldRejectNullDelegate() {
+        assertThrows(NullPointerException.class, () -> new OrderCreationGuardedToolCallback(null, true));
     }
 
     private ToolCallback delegate() {

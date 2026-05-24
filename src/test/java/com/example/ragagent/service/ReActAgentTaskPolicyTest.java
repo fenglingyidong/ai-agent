@@ -275,6 +275,10 @@ class ReActAgentTaskPolicyTest {
         assertBlocked(createOrderCallback.call("{\"userConfirmed\":true}"), "MISSING_CONFIRMATION_ID");
         assertBlocked(createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":false}"),
                 "USER_NOT_CONFIRMED");
+        assertBlocked(createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":\"true\"}"),
+                "USER_NOT_CONFIRMED");
+        assertBlocked(createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":1}"),
+                "USER_NOT_CONFIRMED");
         assertBlocked(createOrderCallback.call("{"), "INVALID_ARGUMENTS");
         verify(syncClient, never()).callTool(any(McpSchema.CallToolRequest.class));
 
@@ -290,6 +294,8 @@ class ReActAgentTaskPolicyTest {
         var requestCaptor = forClass(McpSchema.CallToolRequest.class);
         verify(syncClient).callTool(requestCaptor.capture());
         assertEquals("mall_create_order", requestCaptor.getValue().name());
+        assertEquals("confirm-1", requestCaptor.getValue().arguments().get("confirmationId"));
+        assertEquals(Boolean.TRUE, requestCaptor.getValue().arguments().get("userConfirmed"));
     }
 
     private ChatClient.Builder builderFor(ChatClient reactChatClient) {

@@ -58,11 +58,14 @@ final class OrderCreationGuardedToolCallback implements ToolCallback {
             return "INVALID_ARGUMENTS";
         }
         String confirmationId = root.path("confirmationId").asText("");
-        boolean userConfirmed = root.path("userConfirmed").asBoolean(false);
         if (!StringUtils.hasText(confirmationId)) {
             return "MISSING_CONFIRMATION_ID";
         }
-        return userConfirmed ? null : "USER_NOT_CONFIRMED";
+        JsonNode userConfirmedNode = root.get("userConfirmed");
+        if (userConfirmedNode == null || !userConfirmedNode.isBoolean() || !userConfirmedNode.booleanValue()) {
+            return "USER_NOT_CONFIRMED";
+        }
+        return null;
     }
 
     private JsonNode parseInput(String input) {

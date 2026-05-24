@@ -59,6 +59,34 @@ class OrderCreationGuardedToolCallbackTest {
     }
 
     @Test
+    void shouldBlockWhenUserConfirmedIsStringTrue() {
+        ToolCallback delegate = delegate();
+        OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);
+
+        String result = callback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":\"true\"}");
+
+        assertTrue(result.contains("\"ok\":false"));
+        assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(result.contains("\"reason\":\"USER_NOT_CONFIRMED\""));
+        verify(delegate, never()).call(any(String.class));
+        verify(delegate, never()).call(any(String.class), any(ToolContext.class));
+    }
+
+    @Test
+    void shouldBlockWhenUserConfirmedIsNumberOne() {
+        ToolCallback delegate = delegate();
+        OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);
+
+        String result = callback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":1}");
+
+        assertTrue(result.contains("\"ok\":false"));
+        assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(result.contains("\"reason\":\"USER_NOT_CONFIRMED\""));
+        verify(delegate, never()).call(any(String.class));
+        verify(delegate, never()).call(any(String.class), any(ToolContext.class));
+    }
+
+    @Test
     void shouldBlockInvalidJson() {
         ToolCallback delegate = delegate();
         OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);

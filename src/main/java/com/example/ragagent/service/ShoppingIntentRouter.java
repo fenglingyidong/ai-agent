@@ -100,6 +100,10 @@ public class ShoppingIntentRouter {
     }
 
     public ShoppingIntentRoute route(String userMessage, List<Media> media) {
+        return route(userMessage, media, "");
+    }
+
+    public ShoppingIntentRoute route(String userMessage, List<Media> media, String preferenceContext) {
         if (!enabled) {
             return ShoppingIntentRoute.fallback("intent router disabled");
         }
@@ -114,11 +118,11 @@ public class ShoppingIntentRouter {
                     .options(buildOptions())
                     .system(ROUTER_SYSTEM_PROMPT);
             if (safeMedia.isEmpty()) {
-                requestSpec = requestSpec.user(buildUserPrompt(normalizedMessage, 0));
+                requestSpec = requestSpec.user(buildUserPrompt(normalizedMessage, 0, preferenceContext));
             }
             else {
                 requestSpec = requestSpec.user(user -> user
-                        .text(buildUserPrompt(normalizedMessage, safeMedia.size()))
+                        .text(buildUserPrompt(normalizedMessage, safeMedia.size(), preferenceContext))
                         .media(safeMedia.toArray(Media[]::new)));
             }
 
@@ -149,8 +153,12 @@ public class ShoppingIntentRouter {
     }
 
     private String buildUserPrompt(String userMessage, int mediaCount) {
-        return """
-                用户原话：
+        return buildUserPrompt(userMessage, mediaCount, "");
+    }
+
+    private String buildUserPrompt(String userMessage, int mediaCount, String preferenceContext) {
+        String prompt = """
+                用户本轮输入：
                 <user_input>
                 %s
                 </user_input>
@@ -162,6 +170,10 @@ public class ShoppingIntentRouter {
                 mediaCount,
                 mediaCount > 0 ? "和图片" : ""
         );
+        if (!StringUtils.hasText(preferenceContext)) {
+            return prompt;
+        }
+        return preferenceContext.trim() + "\n\n" + prompt;
     }
 
     private ShoppingIntentRoute normalizeFastLaneRoute(ShoppingIntentRoute route) {

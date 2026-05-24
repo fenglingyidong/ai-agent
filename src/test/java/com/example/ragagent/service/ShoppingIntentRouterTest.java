@@ -163,6 +163,89 @@ class ShoppingIntentRouterTest {
     }
 
     @Test
+    void routeShouldIncludePreferenceContextWhenProvided() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "C_COMPLEX_REACT",
+                  "intent": "COMPLEX_RECOMMENDATION",
+                  "visual_context": {},
+                  "text_slots": {},
+                  "route_to_core": true,
+                  "confidence": 0.85,
+                  "reason": "结合偏好继续推荐"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+
+        router.route("再推荐几双", List.of(), "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内");
+
+        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mocks.requestSpec).user(userPromptCaptor.capture());
+        String userPrompt = userPromptCaptor.getValue();
+        assertTrue(userPrompt.contains("当前会话短期导购偏好"));
+        assertTrue(userPrompt.contains("品类：跑鞋"));
+        assertTrue(userPrompt.contains("用户本轮输入"));
+        assertTrue(userPrompt.contains("再推荐几双"));
+    }
+
+    @Test
+    void routeShouldIncludePreferenceContextWhenMediaProvided() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "intent": "QUERY_ATTRIBUTE",
+                  "visual_context": {"category": "运动鞋"},
+                  "text_slots": {"target_attribute": "颜色"},
+                  "route_to_core": false,
+                  "confidence": 0.9,
+                  "reason": "查颜色"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        Media media = new Media(MediaType.IMAGE_PNG, new ByteArrayResource(new byte[]{1, 2, 3}));
+
+        router.route("再推荐几双", List.of(media), "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Consumer<ChatClient.PromptUserSpec>> userCaptor = ArgumentCaptor.forClass(Consumer.class);
+        verify(mocks.requestSpec).user(userCaptor.capture());
+        ChatClient.PromptUserSpec userSpec = mock(ChatClient.PromptUserSpec.class);
+        when(userSpec.text(anyString())).thenReturn(userSpec);
+        userCaptor.getValue().accept(userSpec);
+
+        ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
+        verify(userSpec).text(textCaptor.capture());
+        String userPrompt = textCaptor.getValue();
+        assertTrue(userPrompt.contains("当前会话短期导购偏好"));
+        assertTrue(userPrompt.contains("品类：跑鞋"));
+        assertTrue(userPrompt.contains("用户本轮输入"));
+        assertTrue(userPrompt.contains("再推荐几双"));
+        verify(userSpec).media(media);
+    }
+
+    @Test
+    void routeShouldNotIncludePreferenceContextWhenMissing() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "B_SIMPLE_SHOPPING_TOOL",
+                  "intent": "QUERY_ATTRIBUTE",
+                  "visual_context": {},
+                  "text_slots": {"target_attribute": "color"},
+                  "route_to_core": false,
+                  "confidence": 0.9,
+                  "reason": "查属性"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+
+        router.route("x", List.of());
+
+        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mocks.requestSpec).user(userPromptCaptor.capture());
+        String userPrompt = userPromptCaptor.getValue();
+        assertTrue(!userPrompt.contains("当前会话短期导购偏好"));
+    }
+
+    @Test
     void routeShouldParseSimpleRagTaskType() {
         RouterMocks mocks = routerMocks("""
                 {

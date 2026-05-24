@@ -4,8 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
-import org.springframework.util.StringUtils;
 
 final class LoggingToolCallback implements ToolCallback {
 
@@ -62,45 +62,35 @@ final class LoggingToolCallback implements ToolCallback {
     }
 
     private void logToolInput(String input) {
-        log.info("""
-                ReAct 工具调用开始：
-                userId={}
-                sessionId={}
-                toolName={}
-                toolInput={}
-                """,
+        log.info("ReAct tool start: userId={}, sessionId={}, toolName={}, inputLength={}",
                 userId,
                 sessionId,
-                getToolDefinition().name(),
-                StringUtils.hasText(input) ? input : "<empty>");
+                toolName(),
+                textLength(input));
     }
 
     private void logToolOutput(String result) {
-        log.info("""
-                ReAct 工具调用完成：
-                userId={}
-                sessionId={}
-                toolName={}
-                toolOutput={}
-                """,
+        log.info("ReAct tool finish: userId={}, sessionId={}, toolName={}, outputLength={}",
                 userId,
                 sessionId,
-                getToolDefinition().name(),
-                StringUtils.hasText(result) ? result : "<empty>");
+                toolName(),
+                textLength(result));
     }
 
     private void logToolError(RuntimeException ex) {
-        log.warn("""
-                ReAct 工具调用失败：
-                userId={}
-                sessionId={}
-                toolName={}
-                error={}
-                """,
+        log.warn("ReAct tool error: userId={}, sessionId={}, toolName={}, error={}",
                 userId,
                 sessionId,
-                getToolDefinition().name(),
-                ex.getMessage(),
-                ex);
+                toolName(),
+                ex.getMessage());
+    }
+
+    private String toolName() {
+        ToolDefinition definition = getToolDefinition();
+        return definition == null ? "<unknown>" : definition.name();
+    }
+
+    private int textLength(String text) {
+        return text == null ? 0 : text.length();
     }
 }

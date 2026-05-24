@@ -16,6 +16,7 @@ import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
+import java.util.Set;
 
 @Service
 @Validated
@@ -33,6 +34,9 @@ public class ShoppingStateService {
 
     @Value("${app.shopping.preference-ttl:7d}")
     private Duration preferenceTtl = Duration.ofDays(7);
+
+    @Autowired
+    private ShoppingPreferenceMergePolicy mergePolicy;
 
     public ShoppingPreferenceState loadPreference(String userId, String sessionId) {
         String key = preferenceKey(userId, sessionId);
@@ -55,31 +59,7 @@ public class ShoppingStateService {
         if (patch == null) {
             throw new IllegalArgumentException("patch must not be null");
         }
-        ShoppingPreferenceState state = loadPreference(userId, sessionId);
-        if (StringUtils.hasText(patch.category())) {
-            state.setCategory(patch.category().trim());
-        }
-        if (patch.budgetMin() != null) {
-            state.setBudgetMin(patch.budgetMin());
-        }
-        if (patch.budgetMax() != null) {
-            state.setBudgetMax(patch.budgetMax());
-        }
-        if (StringUtils.hasText(patch.brand())) {
-            state.setBrand(patch.brand().trim());
-        }
-        if (StringUtils.hasText(patch.size())) {
-            state.setSize(patch.size().trim());
-        }
-        if (StringUtils.hasText(patch.color())) {
-            state.setColor(patch.color().trim());
-        }
-        if (StringUtils.hasText(patch.style())) {
-            state.setStyle(patch.style().trim());
-        }
-        if (StringUtils.hasText(patch.usageScenario())) {
-            state.setUsageScenario(patch.usageScenario().trim());
-        }
+        ShoppingPreferenceState state = mergePolicy.merge(loadPreference(userId, sessionId), patch);
         validateBudgetRange(state);
         savePreference(userId, sessionId, state);
         return state;
@@ -125,7 +105,59 @@ public class ShoppingStateService {
             @Size(max = 64)
             String style,
             @Size(max = 128)
-            String usageScenario
+            String usageScenario,
+            Set<String> clearFields,
+            String source,
+            Double confidence,
+            Long turnNo
     ) {
+        public ShoppingPreferencePatch(String category,
+                                       Integer budgetMin,
+                                       Integer budgetMax,
+                                       String brand,
+                                       String size,
+                                       String color,
+                                       String style,
+                                       String usageScenario) {
+            this(
+                    category,
+                    budgetMin,
+                    budgetMax,
+                    brand,
+                    size,
+                    color,
+                    style,
+                    usageScenario,
+                    Set.of(),
+                    ShoppingPreferenceSource.USER_EXPLICIT.name(),
+                    1.0,
+                    null
+            );
+        }
+
+        public ShoppingPreferencePatch {
+            clearFields = clearFields == null ? Set.of() : Set.copyOf(clearFields);
+            source = normalizeSource(source);
+            confidence = clampConfidence(confidence);
+        }
+
+        private static String normalizeSource(String source) {
+            if (!StringUtils.hasText(source)) {
+                return ShoppingPreferenceSource.USER_EXPLICIT.name();
+            }
+            try {
+                return ShoppingPreferenceSource.valueOf(source.trim()).name();
+            }
+            catch (IllegalArgumentException ex) {
+                return ShoppingPreferenceSource.USER_EXPLICIT.name();
+            }
+        }
+
+        private static Double clampConfidence(Double confidence) {
+            if (confidence == null) {
+                return 1.0;
+            }
+            return Math.max(0.0, Math.min(1.0, confidence));
+        }
     }
 }

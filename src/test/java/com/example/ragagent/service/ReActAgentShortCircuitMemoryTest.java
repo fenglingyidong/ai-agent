@@ -52,7 +52,7 @@ class ReActAgentShortCircuitMemoryTest {
         when(intentRouter.route(eq("How much are blocks?"), eq(List.of()), anyString())).thenReturn(route);
         when(mallMcpContextClient.register("user-fast", "session-fast", "", "", ""))
                 .thenReturn(MallMcpContextClient.MallMcpContextRegistration.success());
-        when(simpleTaskAgent.tryRun(route, "How much are blocks?", "session-fast", 0.7))
+        when(simpleTaskAgent.tryRun(route, "How much are blocks?", "session-fast", 0.7, ""))
                 .thenReturn(FastLaneResult.handled(Flux.just("Blocks cost ", "49 yuan")));
 
         ReActAgent agent = new ReActAgent(

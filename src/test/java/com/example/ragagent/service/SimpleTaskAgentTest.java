@@ -62,6 +62,38 @@ class SimpleTaskAgentTest {
     }
 
     @Test
+    void tryRunShouldIncludePreferenceContextInSimpleTaskPrompt() {
+        AgentMocks mocks = agentMocks("继续推荐跑鞋");
+        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
+        when(mocks.requestSpec.user(userPromptCaptor.capture())).thenReturn(mocks.requestSpec);
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_KNOWLEDGE_QUERY",
+                "A_FAQ_SIMPLE_QUERY",
+                Map.of(),
+                Map.of("category", "跑鞋"),
+                false,
+                0.92,
+                "知识库简单查询"
+        );
+
+        FastLaneResult result = agent.tryRun(
+                route,
+                "再推荐几双",
+                "session-1",
+                0.7,
+                "当前会话短期导购偏好：\n- 品类：跑鞋"
+        );
+
+        assertTrue(result.handled());
+        String prompt = userPromptCaptor.getValue();
+        assertTrue(prompt.contains("当前会话短期导购偏好"));
+        assertTrue(prompt.contains("品类：跑鞋"));
+        assertTrue(prompt.contains("用户本轮输入："));
+        assertTrue(prompt.contains("再推荐几双"));
+    }
+
+    @Test
     void shouldRunMallTaskWithOnlySimpleMallTools() {
         AgentMocks mocks = agentMocks("儿童积木套装 300片售价 149.00 元，库存充足。");
         ArgumentCaptor<String> systemPromptCaptor = ArgumentCaptor.forClass(String.class);

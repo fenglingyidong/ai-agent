@@ -7,6 +7,7 @@ import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.content.Media;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -95,7 +96,7 @@ class ShoppingRouteExecutorTest {
         when(intentRouter.route("儿童积木套装 300片要多少钱", List.of(), "")).thenReturn(route);
         when(contextClient.register("user-1", "session-1", "", "", ""))
                 .thenReturn(MallMcpContextClient.MallMcpContextRegistration.success());
-        when(simpleTaskAgent.tryRun(route, "儿童积木套装 300片要多少钱", "session-1", 0.7))
+        when(simpleTaskAgent.tryRun(route, "儿童积木套装 300片要多少钱", "session-1", 0.7, ""))
                 .thenReturn(FastLaneResult.handled(Flux.just("儿童积木套装 300片的价格是 149.00 元。")));
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, contextClient, simpleTaskAgent);
 
@@ -112,7 +113,7 @@ class ShoppingRouteExecutorTest {
         assertNotNull(request.shortCircuitStream());
         assertEquals("儿童积木套装 300片的价格是 149.00 元。", collect(request.shortCircuitStream()));
         verify(contextClient).register("user-1", "session-1", "", "", "");
-        verify(simpleTaskAgent).tryRun(route, "儿童积木套装 300片要多少钱", "session-1", 0.7);
+        verify(simpleTaskAgent).tryRun(route, "儿童积木套装 300片要多少钱", "session-1", 0.7, "");
     }
 
     @Test
@@ -129,7 +130,7 @@ class ShoppingRouteExecutorTest {
                 "知识库简单查询"
         );
         when(intentRouter.route("儿童积木套装有什么特点", List.of(), "")).thenReturn(route);
-        when(simpleTaskAgent.tryRun(route, "儿童积木套装有什么特点", "session-1", 0.7))
+        when(simpleTaskAgent.tryRun(route, "儿童积木套装有什么特点", "session-1", 0.7, ""))
                 .thenReturn(FastLaneResult.handled("根据知识库，我查到：儿童积木适合启蒙。"));
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, null, simpleTaskAgent);
 
@@ -316,7 +317,7 @@ class ShoppingRouteExecutorTest {
         assertFalse(request.mallToolsAllowed());
         assertTrue(request.userMessage().contains("Planner 选择策略：FOLLOW_UP"));
         verify(contextClient, never()).register("user-1", "session-1", "Bearer token", "", "");
-        verify(simpleTaskAgent, never()).tryRun(route, message, "session-1", 0.7);
+        verify(simpleTaskAgent, never()).tryRun(route, message, "session-1", 0.7, "");
     }
 
     @Test
@@ -458,6 +459,77 @@ class ShoppingRouteExecutorTest {
         verify(shoppingStateService).mergePreference("user-1", "session-1", patch);
         assertTrue(request.userMessage().contains("品牌：Nike"));
         assertTrue(request.userMessage().contains("观察到的用户意图"));
+    }
+
+    @Test
+    void routeBeforeCoreShouldPassUpdatedPreferenceContextToSimpleTaskAgent() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
+        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
+        ShoppingPreferenceExtractor shoppingPreferenceExtractor = mock(ShoppingPreferenceExtractor.class);
+        ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
+        ShoppingPreferenceState oldState = new ShoppingPreferenceState();
+        ShoppingPreferenceState updatedState = new ShoppingPreferenceState();
+        updatedState.setCategory("跑鞋");
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_KNOWLEDGE_QUERY",
+                "A_FAQ_SIMPLE_QUERY",
+                Map.of(),
+                Map.of("category", "跑鞋"),
+                false,
+                0.95,
+                "简单知识库查询"
+        );
+        ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
+                "跑鞋",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                ShoppingPreferenceSource.ROUTER_SLOT.name(),
+                0.9,
+                null
+        );
+        ArgumentCaptor<String> preferenceContextCaptor = ArgumentCaptor.forClass(String.class);
+        when(shoppingStateService.loadPreference("user-1", "session-1"))
+                .thenReturn(oldState)
+                .thenReturn(updatedState);
+        when(intentRouter.route("再推荐几双", List.of(), "")).thenReturn(route);
+        when(shoppingPreferenceExtractor.extract("再推荐几双", route, null)).thenReturn(patch);
+        when(shoppingStateService.mergePreference("user-1", "session-1", patch)).thenReturn(updatedState);
+        when(simpleTaskAgent.tryRun(
+                eq(route),
+                eq("再推荐几双"),
+                eq("session-1"),
+                eq(0.7),
+                preferenceContextCaptor.capture()
+        )).thenReturn(FastLaneResult.handled("已推荐跑鞋"));
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                simpleTaskAgent,
+                null,
+                shoppingStateService,
+                shoppingPreferenceExtractor,
+                shoppingPreferencePromptRenderer
+        );
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                "再推荐几双",
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        assertEquals("已推荐跑鞋", collect(request.shortCircuitStream()));
+        assertTrue(preferenceContextCaptor.getValue().contains("品类：跑鞋"));
     }
 
     @Test

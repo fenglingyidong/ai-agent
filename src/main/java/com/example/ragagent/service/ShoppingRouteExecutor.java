@@ -148,7 +148,8 @@ public class ShoppingRouteExecutor {
                     route,
                     normalizedMessage,
                     sessionId,
-                    confidenceThreshold()
+                    confidenceThreshold(),
+                    preferenceContextAfterRoute
             );
             if (simpleTaskResult.handled()) {
                 return new RoutedAgentRequest(normalizedMessage, safeMedia, simpleTaskResult.stream());

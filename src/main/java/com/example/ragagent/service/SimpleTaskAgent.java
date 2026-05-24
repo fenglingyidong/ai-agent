@@ -107,6 +107,14 @@ public class SimpleTaskAgent {
                           String userMessage,
                           String sessionId,
                           double confidenceThreshold) {
+        return tryRun(route, userMessage, sessionId, confidenceThreshold, "");
+    }
+
+    FastLaneResult tryRun(ShoppingIntentRoute route,
+                          String userMessage,
+                          String sessionId,
+                          double confidenceThreshold,
+                          String preferenceContext) {
         if (!enabled || route == null || !route.isHighConfidence(confidenceThreshold)
                 || Boolean.TRUE.equals(route.routeToCore())) {
             return FastLaneResult.notHandled();
@@ -116,25 +124,29 @@ public class SimpleTaskAgent {
         }
 
         return switch (route.normalizedTaskType()) {
-            case "A_FAQ_SIMPLE_QUERY" -> runKnowledgeTask(route, userMessage);
-            case "B_SIMPLE_SHOPPING_TOOL" -> runMallTask(route, userMessage, sessionId);
+            case "A_FAQ_SIMPLE_QUERY" -> runKnowledgeTask(route, userMessage, preferenceContext);
+            case "B_SIMPLE_SHOPPING_TOOL" -> runMallTask(route, userMessage, sessionId, preferenceContext);
             default -> FastLaneResult.notHandled();
         };
     }
 
-    private FastLaneResult runKnowledgeTask(ShoppingIntentRoute route, String userMessage) {
+    private FastLaneResult runKnowledgeTask(ShoppingIntentRoute route, String userMessage, String preferenceContext) {
         if (builtInTools == null) {
             return FastLaneResult.fallbackToCore("RAG 检索工具不可用");
         }
         return callSimpleModelWithToolObject(
                 route,
                 userMessage,
+                preferenceContext,
                 KNOWLEDGE_SYSTEM_PROMPT,
                 new KnowledgeFastLaneTools(builtInTools)
         );
     }
 
-    private FastLaneResult runMallTask(ShoppingIntentRoute route, String userMessage, String sessionId) {
+    private FastLaneResult runMallTask(ShoppingIntentRoute route,
+                                       String userMessage,
+                                       String sessionId,
+                                       String preferenceContext) {
         if (!SIMPLE_MALL_INTENTS.contains(route.normalizedIntent())) {
             return FastLaneResult.notHandled();
         }
@@ -157,6 +169,7 @@ public class SimpleTaskAgent {
         return callSimpleModelWithToolCallbacks(
                 route,
                 userMessage,
+                preferenceContext,
                 MALL_SYSTEM_PROMPT,
                 callbacks,
                 Map.of("sessionId", sessionId)
@@ -176,6 +189,7 @@ public class SimpleTaskAgent {
 
     private FastLaneResult callSimpleModelWithToolObject(ShoppingIntentRoute route,
                                                          String userMessage,
+                                                         String preferenceContext,
                                                          String systemPrompt,
                                                          Object toolObject) {
         return callSimpleModel(route, () -> simpleTaskChatClient.prompt()
@@ -185,7 +199,7 @@ public class SimpleTaskAgent {
                         .maxTokens(Math.max(1, maxTokens))
                         .build())
                 .system(systemPrompt)
-                .user(buildUserPrompt(route, userMessage))
+                .user(buildUserPrompt(route, userMessage, preferenceContext))
                 .tools(toolObject)
                 .call()
                 .content());
@@ -193,6 +207,7 @@ public class SimpleTaskAgent {
 
     private FastLaneResult callSimpleModelWithToolCallbacks(ShoppingIntentRoute route,
                                                             String userMessage,
+                                                            String preferenceContext,
                                                             String systemPrompt,
                                                             List<ToolCallback> toolCallbacks,
                                                             Map<String, Object> toolContext) {
@@ -203,7 +218,7 @@ public class SimpleTaskAgent {
                         .maxTokens(Math.max(1, maxTokens))
                         .build())
                 .system(systemPrompt)
-                .user(buildUserPrompt(route, userMessage))
+                .user(buildUserPrompt(route, userMessage, preferenceContext))
                 .toolCallbacks(toolCallbacks)
                 .toolContext(toolContext)
                 .call()
@@ -238,9 +253,9 @@ public class SimpleTaskAgent {
         }
     }
 
-    private String buildUserPrompt(ShoppingIntentRoute route, String userMessage) {
-        return """
-                用户原话：
+    private String buildUserPrompt(ShoppingIntentRoute route, String userMessage, String preferenceContext) {
+        String routePrompt = """
+                用户本轮输入：
                 %s
 
                 路由任务类型：%s
@@ -258,6 +273,10 @@ public class SimpleTaskAgent {
                 renderSlots(route.visualContext()),
                 route.reason()
         ).trim();
+        if (!StringUtils.hasText(preferenceContext)) {
+            return routePrompt;
+        }
+        return preferenceContext.trim() + System.lineSeparator() + System.lineSeparator() + routePrompt;
     }
 
     private String renderSlots(Map<String, Object> slots) {

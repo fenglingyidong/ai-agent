@@ -52,7 +52,7 @@ class ReActAgentRouteSecurityTest {
         org.mockito.ArgumentCaptor<String> simpleTaskMessageCaptor = org.mockito.ArgumentCaptor.forClass(String.class);
 
         when(intentRouter.route(routerMessageCaptor.capture(), eq(List.of()), anyString())).thenReturn(route);
-        when(simpleTaskAgent.tryRun(eq(route), simpleTaskMessageCaptor.capture(), eq("session-sec"), eq(0.7)))
+        when(simpleTaskAgent.tryRun(eq(route), simpleTaskMessageCaptor.capture(), eq("session-sec"), eq(0.7), eq("")))
                 .thenReturn(FastLaneResult.handled(Flux.just("已走快车道")));
 
         ReActAgent agent = new ReActAgent(
@@ -117,7 +117,7 @@ class ReActAgentRouteSecurityTest {
                 org.mockito.ArgumentCaptor.forClass(String.class);
 
         when(intentRouter.route(anyString(), eq(List.of()), anyString())).thenReturn(route);
-        when(simpleTaskAgent.tryRun(eq(route), anyString(), eq("session-sec"), eq(0.7)))
+        when(simpleTaskAgent.tryRun(eq(route), anyString(), eq("session-sec"), eq(0.7), eq("")))
                 .thenReturn(FastLaneResult.handled(Flux.just("已保护值：[[SEC", "RET_1]]")));
 
         ReActAgent agent = new ReActAgent(
@@ -225,7 +225,8 @@ class ReActAgentRouteSecurityTest {
                 org.mockito.ArgumentMatchers.any(),
                 anyString(),
                 anyString(),
-                org.mockito.ArgumentMatchers.anyDouble()
+                org.mockito.ArgumentMatchers.anyDouble(),
+                anyString()
         );
     }
 

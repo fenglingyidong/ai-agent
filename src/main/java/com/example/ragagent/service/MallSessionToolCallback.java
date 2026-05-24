@@ -56,9 +56,7 @@ final class MallSessionToolCallback implements ToolCallback {
                 return input;
             }
             ObjectNode object = (ObjectNode) root;
-            if (!StringUtils.hasText(object.path("sessionId").asText(""))) {
-                object.put("sessionId", sessionId);
-            }
+            object.put("sessionId", sessionId);
             return OBJECT_MAPPER.writeValueAsString(object);
         }
         catch (Exception ex) {

@@ -35,14 +35,16 @@ class MallSessionToolCallbackTest {
     }
 
     @Test
-    void shouldKeepExistingSessionId() {
+    void shouldOverrideModelProvidedSessionIdWithTrustedContext() throws Exception {
         ToolCallback delegate = delegateReturning("ok");
         MallSessionToolCallback callback = new MallSessionToolCallback(delegate);
         ToolContext toolContext = new ToolContext(Map.of("sessionId", "session-1"));
 
-        callback.call("{\"skuId\":3020,\"sessionId\":\"existing-session\"}", toolContext);
+        callback.call("{\"skuId\":3020,\"sessionId\":\"attacker-session\"}", toolContext);
 
-        verify(delegate).call(eq("{\"skuId\":3020,\"sessionId\":\"existing-session\"}"), eq(toolContext));
+        JsonNode delegatedInput = delegatedInput(delegate);
+        assertEquals(3020, delegatedInput.path("skuId").asInt());
+        assertEquals("session-1", delegatedInput.path("sessionId").asText());
     }
 
     @Test

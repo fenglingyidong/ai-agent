@@ -140,7 +140,10 @@ public class ReActAgent {
             return rememberShortCircuitTurn(userId, sessionId, routedRequest.userMessage(), routedRequest.shortCircuitStream());
         }
 
-        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(routedRequest.userMessage());
+        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(
+                routedRequest.userMessage(),
+                preRouteSecuredPrompt.sensitiveValues()
+        );
         return runCoreStream(
                 userId,
                 sessionId,

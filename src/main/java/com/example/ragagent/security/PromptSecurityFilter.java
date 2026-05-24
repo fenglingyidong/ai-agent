@@ -44,8 +44,18 @@ public class PromptSecurityFilter {
      * 构建可安全发送给模型的净化提示词上下文。
      */
     public SecuredPrompt secure(String rawInput) {
+        return secure(rawInput, Map.of());
+    }
+
+    /**
+     * 在已有敏感值映射基础上继续过滤文本，保留前序占位符的恢复能力。
+     */
+    public SecuredPrompt secure(String rawInput, Map<String, String> existingSensitiveValues) {
         String input = StringUtils.hasText(rawInput) ? rawInput : "";
         Map<String, String> sensitiveValues = new LinkedHashMap<>();
+        if (existingSensitiveValues != null) {
+            sensitiveValues.putAll(existingSensitiveValues);
+        }
         String filteredInput = filterPromptInjection(input);
         String maskedInput = maskSensitiveValues(filteredInput, sensitiveValues);
         return new SecuredPrompt(input, maskedInput, wrapUserInput(maskedInput), sensitiveValues);

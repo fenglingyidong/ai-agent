@@ -1,5 +1,7 @@
 # 导购 Agent 保守收敛实现计划
 
+> 本文件是 2026-05-24 的历史实施计划归档，包含当时的任务拆解和中间过程。最终稳定状态以仓库根目录的 `README.md`、`TESTING.md` 和 `plan.md` 为准。
+
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
 **目标：** 在不重写主链路、不拆新 Agent 的前提下，收敛导购 Agent 的安全、订单、日志和商城 MCP 快车道边界。

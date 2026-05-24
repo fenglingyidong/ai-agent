@@ -21,7 +21,7 @@
 
 - Agent 系统提示词已收敛到电商导购场景，约束选品、追问、推荐、查库存和加购流程。
 - 内置工具已收敛为商品知识库检索和短期偏好更新；实时商品、购物车和普通订单链路统一改为 `mall_*` MCP 工具。
-- 新增三段式路由：`ShoppingIntentRouter` 在 `ReActAgent.runStream(...)` 起点用小模型做一次 JSON 路由，A 类 FAQ/简单查询进入 `SimpleTaskAgent` 知识库快车道，B 类单步商城任务进入 `SimpleTaskAgent` 商城 MCP 快车道，C 类复杂推荐/对比/规划再进入主模型 ReAct 链路。
+- 新增三段式路由：`ReActAgent.runStream(...)` 先做路由前安全过滤，再由 `ShoppingIntentRouter` 用小模型做一次 JSON 路由，A 类 FAQ/简单查询进入 `SimpleTaskAgent` 知识库快车道，B 类单步商城任务进入 `SimpleTaskAgent` 商城 MCP 快车道，C 类复杂推荐/对比/规划再进入主模型 ReAct 链路。
 - 新增商城 MCP 适配层 `mall/`，支持通过 `X-Mall-Authorization` 透传商城 Token，或把 Basic 登录信息注册到 `mall-mcp` 上下文接口。
 - `POST /api/react` 是唯一 ReActAgent 对话入口，支持 multipart 文本、图片、图片 URL、模型选择、联网开关和会话参数。
 - 前端已改为导购工作台，包含聊天区、商品卡片、图片上传、对比视图和购物车抽屉；前端不直接管理商城 Token。
@@ -30,7 +30,7 @@
 - Spring AI 框架 API 已进一步收敛：路由输出用 `ChatClient.entity(ShoppingIntentRoute.class)` 解析，简单任务工具用 `ChatClient.tools(...)` 注册，主 Agent 内置工具定义用 `ToolCallbacks.from(...)` 生成，工具名/描述/schema 由 `ToolCallback` 元数据交给模型，工具上下文用 `toolContext(...)` 透传，商城 MCP 协议调用改为 `McpSyncClient`，主 Agent 的 `mall_*` 工具注册交给 `SyncMcpToolCallbackProvider`。
 - 安全过滤已前置到路由和快车道之前：进入 `ShoppingIntentRouter`、`SimpleTaskAgent` 和主 Agent 的文本都会先经过 `PromptSecurityFilter` 过滤提示词注入片段并掩码敏感值。
 - `mall_create_order` 增加 Java 侧硬门禁：只有路由明确为 `CREATE_ORDER` 且工具参数包含有效 `confirmationId` 与 `userConfirmed=true` 时才会放行。
-- 商城快车道已复用 Spring AI MCP `ToolCallback`，不再维护单独的 `MallMcpOperations` 手写工具调用层；`sessionId` 由薄包装 `MallSessionToolCallback` 注入。
+- 商城快车道已复用 Spring AI MCP `ToolCallback`，不再维护单独的手写工具调用层；`sessionId` 由薄包装 `MallSessionToolCallback` 注入。
 - 工具调用 info 日志只记录工具名、输入长度、输出长度和错误摘要，不记录完整工具入参或工具返回值。
 - `ReActAgent` 日志统一使用 SLF4J，已压缩为 `start / memory / finish / error` 结构化短日志，不再在 info 级别记录完整 prompt 或完整输出。
 - 测试已同步到导购工具集合、商城登录和统一 Agent 入口；手工测试计划见 [TESTING.md](TESTING.md)。
@@ -134,7 +134,7 @@ RAGAgent
 
 ### 4.3 小模型三段式路由：`ShoppingIntentRouter` / `ShoppingRouteExecutor`
 
-`ShoppingIntentRouter` 负责调用路由小模型，并通过 Spring AI `ChatClient.entity(ShoppingIntentRoute.class)` 直接获得结构化路由结果；`ShoppingRouteExecutor` 负责把路由结果转换为主 Agent 输入、执行高置信简单任务快车道，并在商城相关意图进入主模型前注册 `mall-mcp` 上下文。`ReActAgent.runStream(...)` 会在 Prompt 安全过滤和主模型调用之前先执行这一步；`ReActAgent` 对外只保留这一个完整参数入口，默认值由 Controller 或测试显式传入。
+`ShoppingIntentRouter` 负责调用路由小模型，并通过 Spring AI `ChatClient.entity(ShoppingIntentRoute.class)` 直接获得结构化路由结果；`ShoppingRouteExecutor` 负责把路由结果转换为主 Agent 输入、执行高置信简单任务快车道，并在商城相关意图进入主模型前注册 `mall-mcp` 上下文。`ReActAgent.runStream(...)` 会先用 `PromptSecurityFilter` 过滤原始输入，再把 `safeInput()` 交给路由和快车道；`ReActAgent` 对外只保留这一个完整参数入口，默认值由 Controller 或测试显式传入。
 
 路由模型默认使用：
 
@@ -182,16 +182,17 @@ RAGAgent
 它的处理流程可以概括成：
 
 1. 用户请求进入唯一对外 `runStream(...)`
-2. `ShoppingRouteExecutor` 先执行小模型路由，商城相关意图先预检 `mall-mcp` 上下文
-3. 高置信简单意图由 `SimpleTaskAgent` 调用简单任务小模型，并通过限定工具访问 RAG 或 `mall-mcp` 后直接返回
-4. 未短路的请求进入 `PromptSecurityFilter.secure(...)`，对输入做注入过滤和敏感信息脱敏
-5. 通过 `LongTermMemoryAdvisor` 召回并注入长期摘要记忆
-6. 通过 Spring AI `MessageChatMemoryAdvisor` 自动装载短期对话窗口
-7. 默认注册 `mall_*` MCP 工具，根据 `webSearchEnabled` 决定是否额外暴露 WebSearch MCP 工具；若路由选择了 `ShoppingTaskPolicy`，则只对商品知识库、偏好更新和 `mall_*` 等导购受控工具做策略级过滤
-8. 根据 `modelId` 从 `ChatModelRegistry` 选择模型参数
-9. 通过 Spring AI `ChatClient` 发起流式调用
-10. 输出时把类似 `[[PHONE_1]]` 这样的占位符恢复成原值
-11. 正常响应由 Spring AI 记忆 advisor 自动写回；短路和 fallback 响应由 `ConversationMemoryService` 显式写回
+2. `PromptSecurityFilter.secure(...)` 先处理原始输入，过滤提示词注入片段并收集敏感值映射
+3. `ShoppingRouteExecutor` 使用 `safeInput()` 执行小模型路由，商城相关意图先预检 `mall-mcp` 上下文
+4. 高置信简单意图由 `SimpleTaskAgent` 调用简单任务小模型，并通过限定工具访问 RAG 或 `mall-mcp` 后直接返回；短路输出会用前置安全过滤得到的敏感值映射做脱敏恢复
+5. 未短路的请求会基于路由后的主 Agent 上下文再次构造安全包装，继续做注入过滤、敏感信息脱敏和输出恢复
+6. 通过 `LongTermMemoryAdvisor` 召回并注入长期摘要记忆
+7. 通过 Spring AI `MessageChatMemoryAdvisor` 自动装载短期对话窗口
+8. 默认注册 `mall_*` MCP 工具，根据 `webSearchEnabled` 决定是否额外暴露 WebSearch MCP 工具；若路由选择了 `ShoppingTaskPolicy`，则只对商品知识库、偏好更新和 `mall_*` 等导购受控工具做策略级过滤
+9. 根据 `modelId` 从 `ChatModelRegistry` 选择模型参数
+10. 通过 Spring AI `ChatClient` 发起流式调用
+11. 输出时把类似 `[[PHONE_1]]` 这样的占位符恢复成原值
+12. 正常响应由 Spring AI 记忆 advisor 自动写回；短路和 fallback 响应由 `ConversationMemoryService` 显式写回
 
 这个类虽然名为 ReAct，但实现方式并不是自己手写 Thought/Action/Observation 循环，而是借助 Spring AI 的工具调用能力，让模型在系统提示词约束下自动调用工具。
 
@@ -407,11 +408,12 @@ RAG 模块是本项目的另一条主线，主要由下面几个类组成。
 用户请求
 -> ChatController(/api/react)
 -> ReActAgent.runStream
+-> PromptSecurityFilter.secure(userMessage)
 -> ShoppingRouteExecutor
 -> ShoppingIntentRouter(qwen3-vl-8b-instruct)
 -> 商城相关意图：注册 mall-mcp 上下文；失败则直接返回商城 MCP 调用失败
--> 高置信简单请求：SimpleTaskAgent 用简单任务小模型 + 限定工具完成；商城工具内部调用 mall-mcp
--> 复杂、低置信、槽位不足或最终下单：进入 ReActAgent 主模型链路，由模型调用 mall_* MCP 工具
+-> 高置信简单请求：SimpleTaskAgent 接收已过滤、已掩码输入，用简单任务小模型 + 限定工具完成；商城工具内部调用 mall-mcp
+-> 复杂、低置信、槽位不足或最终下单：进入 ReActAgent 主模型链路，基于路由后的上下文再次安全包装后由模型调用 mall_* MCP 工具
 -> 高置信图文复杂请求：注入 visual_context 文本，不传原图
 -> 低置信图文请求：原图透传给主 Agent 兜底
 -> 返回前端
@@ -647,7 +649,7 @@ Authorization: Basic ...
 
 ### 8.2 ReAct 图文对话
 
-该接口是唯一 Agent loop 入口，会把文本和图片交给 `ReActAgent.runStream(...)`。Agent 起点再经过 `ShoppingRouteExecutor` 与 `ShoppingIntentRouter`：即使不上传图片，也会先用小模型判断意图；只有复杂、低置信、槽位不足或路由失败时才进入主模型链路。
+该接口是唯一 Agent loop 入口，会把文本和图片交给 `ReActAgent.runStream(...)`。Agent 起点先用 `PromptSecurityFilter` 过滤原始输入，再经过 `ShoppingRouteExecutor` 与 `ShoppingIntentRouter`：即使不上传图片，也会先用小模型判断意图；只有复杂、低置信、槽位不足或路由失败时才进入主模型链路。
 
 ```http
 POST /api/react

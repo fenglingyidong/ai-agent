@@ -6,6 +6,8 @@ import org.springframework.util.StringUtils;
 @Component
 public class ShoppingPreferencePromptRenderer {
 
+    private static final int MAX_FIELD_LENGTH = 80;
+
     public String render(ShoppingPreferenceState state) {
         if (isEmpty(state)) {
             return "";
@@ -26,23 +28,23 @@ public class ShoppingPreferencePromptRenderer {
 
     private boolean isEmpty(ShoppingPreferenceState state) {
         return state == null
-                || (!StringUtils.hasText(state.getCategory())
-                && state.getBudgetMin() == null
-                && state.getBudgetMax() == null
-                && !StringUtils.hasText(state.getBrand())
-                && !StringUtils.hasText(state.getSize())
-                && !StringUtils.hasText(state.getColor())
-                && !StringUtils.hasText(state.getStyle())
-                && !StringUtils.hasText(state.getUsageScenario()));
+                || (!StringUtils.hasText(sanitize(state.getCategory()))
+                && !StringUtils.hasText(renderBudget(state))
+                && !StringUtils.hasText(sanitize(state.getBrand()))
+                && !StringUtils.hasText(sanitize(state.getSize()))
+                && !StringUtils.hasText(sanitize(state.getColor()))
+                && !StringUtils.hasText(sanitize(state.getStyle()))
+                && !StringUtils.hasText(sanitize(state.getUsageScenario())));
     }
 
     private void appendLine(StringBuilder builder, String label, String value) {
-        if (StringUtils.hasText(value)) {
+        String safeValue = sanitize(value);
+        if (StringUtils.hasText(safeValue)) {
             builder.append(System.lineSeparator())
                     .append("- ")
                     .append(label)
                     .append("：")
-                    .append(value.trim());
+                    .append(safeValue);
         }
     }
 
@@ -50,14 +52,28 @@ public class ShoppingPreferencePromptRenderer {
         Integer min = state.getBudgetMin();
         Integer max = state.getBudgetMax();
         if (min != null && max != null) {
-            return min + "-" + max;
+            if (min > max) {
+                return "";
+            }
+            return min + "-" + max + "元";
         }
         if (max != null) {
-            return max + "以内";
+            return max + "元以内";
         }
         if (min != null) {
-            return min + "以上";
+            return min + "元以上";
         }
         return "";
+    }
+
+    private String sanitize(String value) {
+        if (!StringUtils.hasText(value)) {
+            return "";
+        }
+        String sanitized = value.trim().replaceAll("\\s+", " ");
+        if (sanitized.length() > MAX_FIELD_LENGTH) {
+            return sanitized.substring(0, MAX_FIELD_LENGTH);
+        }
+        return sanitized;
     }
 }

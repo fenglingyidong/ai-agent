@@ -58,6 +58,42 @@ class MallSessionToolCallbackTest {
     }
 
     @Test
+    void shouldInjectSessionIdWhenInputIsNull() throws Exception {
+        ToolCallback delegate = delegateReturning("ok");
+        MallSessionToolCallback callback = new MallSessionToolCallback(delegate);
+        ToolContext toolContext = new ToolContext(Map.of("sessionId", " session-1 "));
+
+        callback.call(null, toolContext);
+
+        JsonNode delegatedInput = delegatedInput(delegate);
+        assertEquals("session-1", delegatedInput.path("sessionId").asText());
+    }
+
+    @Test
+    void shouldInjectSessionIdWhenInputIsEmpty() throws Exception {
+        ToolCallback delegate = delegateReturning("ok");
+        MallSessionToolCallback callback = new MallSessionToolCallback(delegate);
+        ToolContext toolContext = new ToolContext(Map.of("sessionId", " session-1 "));
+
+        callback.call("", toolContext);
+
+        JsonNode delegatedInput = delegatedInput(delegate);
+        assertEquals("session-1", delegatedInput.path("sessionId").asText());
+    }
+
+    @Test
+    void shouldInjectSessionIdWhenInputIsBlank() throws Exception {
+        ToolCallback delegate = delegateReturning("ok");
+        MallSessionToolCallback callback = new MallSessionToolCallback(delegate);
+        ToolContext toolContext = new ToolContext(Map.of("sessionId", " session-1 "));
+
+        callback.call("   ", toolContext);
+
+        JsonNode delegatedInput = delegatedInput(delegate);
+        assertEquals("session-1", delegatedInput.path("sessionId").asText());
+    }
+
+    @Test
     void shouldDelegateOriginalInputWhenContextHasNoSessionId() {
         ToolCallback delegate = delegateReturning("ok");
         MallSessionToolCallback callback = new MallSessionToolCallback(delegate);

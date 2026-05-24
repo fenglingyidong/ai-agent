@@ -8,6 +8,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.ai.tool.execution.ToolExecutionException;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -163,7 +165,7 @@ public class SimpleTaskAgent {
     private List<ToolCallback> simpleMallToolCallbacks() {
         try {
             return mallMcpToolCallback.getToolCallbacks().stream()
-                    .filter(callback -> SIMPLE_MALL_TOOL_NAMES.contains(callback.getToolDefinition().name()))
+                    .filter(callback -> SIMPLE_MALL_TOOL_NAMES.contains(toolName(callback)))
                     .toList();
         }
         catch (RuntimeException ex) {
@@ -283,6 +285,10 @@ public class SimpleTaskAgent {
             if (current instanceof McpUnavailableException) {
                 return true;
             }
+            if (current instanceof ToolExecutionException toolExecutionException
+                    && MallMcpToolCallback.isMallTool(toolName(toolExecutionException.getToolDefinition()))) {
+                return true;
+            }
             String message = current.getMessage();
             if (StringUtils.hasText(message) && message.contains("mall-mcp 服务未启动或不可访问")) {
                 return true;
@@ -290,6 +296,14 @@ public class SimpleTaskAgent {
             current = current.getCause();
         }
         return false;
+    }
+
+    private String toolName(ToolCallback callback) {
+        return callback == null ? null : toolName(callback.getToolDefinition());
+    }
+
+    private String toolName(ToolDefinition definition) {
+        return definition == null || !StringUtils.hasText(definition.name()) ? null : definition.name();
     }
 
     private String safeMessage(Throwable ex) {

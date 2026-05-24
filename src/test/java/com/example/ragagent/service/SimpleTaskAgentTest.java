@@ -9,6 +9,8 @@ import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
+import org.springframework.ai.tool.execution.ToolExecutionException;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -121,6 +123,31 @@ class SimpleTaskAgentTest {
         assertEquals("商城 MCP 调用失败：mall-mcp 服务未启动或不可访问", collect(result.stream()));
     }
 
+    @Test
+    void shouldReturnMcpFailureDirectlyWhenMallToolExecutionFails() {
+        AgentMocks mocks = agentMocks("不会返回");
+        ToolExecutionException exception = new ToolExecutionException(
+                toolDefinition("mall_view_cart"),
+                new RuntimeException("mcp call failed")
+        );
+        when(mocks.requestSpec.call()).thenThrow(exception);
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "VIEW_CART",
+                "B_SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of(),
+                false,
+                0.9,
+                "查购物车"
+        );
+
+        FastLaneResult result = agent.tryRun(route, "查看我的购物车", "session-1", 0.7);
+
+        assertTrue(result.handled());
+        assertTrue(collect(result.stream()).startsWith("商城 MCP 调用失败："));
+    }
+
     private AgentMocks agentMocks(String content) {
         ChatClient chatClient = mock(ChatClient.class);
         ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
@@ -173,6 +200,12 @@ class SimpleTaskAgentTest {
                         null
                 ))
                 .build();
+    }
+
+    private ToolDefinition toolDefinition(String name) {
+        ToolDefinition definition = mock(ToolDefinition.class);
+        when(definition.name()).thenReturn(name);
+        return definition;
     }
 
     private String collect(Flux<String> stream) {

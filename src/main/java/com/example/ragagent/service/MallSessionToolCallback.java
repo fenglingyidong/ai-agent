@@ -45,6 +45,11 @@ final class MallSessionToolCallback implements ToolCallback {
         if (!StringUtils.hasText(sessionId)) {
             return input;
         }
+        if (!StringUtils.hasText(input)) {
+            ObjectNode object = OBJECT_MAPPER.createObjectNode();
+            object.put("sessionId", sessionId);
+            return object.toString();
+        }
         try {
             JsonNode root = OBJECT_MAPPER.readTree(input);
             if (!root.isObject()) {
@@ -66,6 +71,10 @@ final class MallSessionToolCallback implements ToolCallback {
             return null;
         }
         Object value = toolContext.getContext().get("sessionId");
-        return value == null ? null : value.toString();
+        if (value == null) {
+            return null;
+        }
+        String sessionId = value.toString().trim();
+        return StringUtils.hasText(sessionId) ? sessionId : null;
     }
 }

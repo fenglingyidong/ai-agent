@@ -137,7 +137,13 @@ public class ReActAgent {
                 mallPassword
         );
         if (routedRequest.shortCircuitStream() != null) {
-            return rememberShortCircuitTurn(userId, sessionId, routedRequest.userMessage(), routedRequest.shortCircuitStream());
+            return rememberShortCircuitTurn(
+                    userId,
+                    sessionId,
+                    routedRequest.userMessage(),
+                    routedRequest.shortCircuitStream(),
+                    preRouteSecuredPrompt
+            );
         }
 
         PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(
@@ -159,12 +165,33 @@ public class ReActAgent {
     private Flux<String> rememberShortCircuitTurn(String userId,
                                                   String sessionId,
                                                   String userMessage,
-                                                  Flux<String> shortCircuitStream) {
-        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(userMessage);
+                                                  Flux<String> shortCircuitStream,
+                                                  PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt) {
+        PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(
+                userMessage,
+                preRouteSecuredPrompt.sensitiveValues()
+        );
         return Flux.defer(() -> {
+            StreamingSensitiveValueRestorer restorer =
+                    new StreamingSensitiveValueRestorer(preRouteSecuredPrompt.sensitiveValues());
             StringBuilder answerBuilder = new StringBuilder();
-            return shortCircuitStream
-                    .doOnNext(answerBuilder::append)
+            Flux<String> restoredStream = shortCircuitStream
+                    .handle((chunk, sink) -> {
+                        answerBuilder.append(chunk);
+                        String restoredChunk = restorer.accept(chunk);
+                        if (restoredChunk != null && !restoredChunk.isEmpty()) {
+                            sink.next(restoredChunk);
+                        }
+                    })
+                    .concatWith(Mono.fromSupplier(restorer::flush)
+                            .flatMapMany(remaining -> {
+                                if (remaining == null || remaining.isEmpty()) {
+                                    return Flux.empty();
+                                }
+                                return Flux.just(remaining);
+                            }))
+                    .cast(String.class);
+            return restoredStream
                     .doOnComplete(() -> conversationMemoryService.rememberTurn(
                             userId,
                             sessionId,

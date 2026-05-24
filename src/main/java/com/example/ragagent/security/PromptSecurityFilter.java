@@ -113,12 +113,28 @@ public class PromptSecurityFilter {
         Matcher matcher = pattern.matcher(input);
         StringBuffer result = new StringBuffer();
         while (matcher.find()) {
-            String placeholder = "[[" + label + "_" + (sensitiveValues.size() + 1) + "]]";
+            String placeholder = nextPlaceholder(label, sensitiveValues, input, result);
             sensitiveValues.put(placeholder, matcher.group());
             matcher.appendReplacement(result, Matcher.quoteReplacement(placeholder));
         }
         matcher.appendTail(result);
         return result.toString();
+    }
+
+    private String nextPlaceholder(String label,
+                                   Map<String, String> sensitiveValues,
+                                   String input,
+                                   StringBuffer currentResult) {
+        int index = sensitiveValues.size() + 1;
+        String placeholder;
+        do {
+            placeholder = "[[" + label + "_" + index + "]]";
+            index++;
+        }
+        while (sensitiveValues.containsKey(placeholder)
+                || input.contains(placeholder)
+                || currentResult.indexOf(placeholder) >= 0);
+        return placeholder;
     }
 
     /**

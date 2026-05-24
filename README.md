@@ -28,6 +28,10 @@
 - 前端不再直连商城 REST；商品查询、加购、查购物车和普通订单动作都通过 `/api/react` 进入 Agent，再由 `mall_*` MCP 工具调用 `mall-mcp`。
 - `ReActAgent` 已收敛为单一构造函数和单一对外 `runStream(...)` 入口；Controller 显式传入用户、会话、模型、媒体和商城上下文。
 - Spring AI 框架 API 已进一步收敛：路由输出用 `ChatClient.entity(ShoppingIntentRoute.class)` 解析，简单任务工具用 `ChatClient.tools(...)` 注册，主 Agent 内置工具定义用 `ToolCallbacks.from(...)` 生成，工具名/描述/schema 由 `ToolCallback` 元数据交给模型，工具上下文用 `toolContext(...)` 透传，商城 MCP 协议调用改为 `McpSyncClient`，主 Agent 的 `mall_*` 工具注册交给 `SyncMcpToolCallbackProvider`。
+- 安全过滤已前置到路由和快车道之前：进入 `ShoppingIntentRouter`、`SimpleTaskAgent` 和主 Agent 的文本都会先经过 `PromptSecurityFilter` 过滤提示词注入片段并掩码敏感值。
+- `mall_create_order` 增加 Java 侧硬门禁：只有路由明确为 `CREATE_ORDER` 且工具参数包含有效 `confirmationId` 与 `userConfirmed=true` 时才会放行。
+- 商城快车道已复用 Spring AI MCP `ToolCallback`，不再维护单独的 `MallMcpOperations` 手写工具调用层；`sessionId` 由薄包装 `MallSessionToolCallback` 注入。
+- 工具调用 info 日志只记录工具名、输入长度、输出长度和错误摘要，不记录完整工具入参或工具返回值。
 - `ReActAgent` 日志统一使用 SLF4J，已压缩为 `start / memory / finish / error` 结构化短日志，不再在 info 级别记录完整 prompt 或完整输出。
 - 测试已同步到导购工具集合、商城登录和统一 Agent 入口；手工测试计划见 [TESTING.md](TESTING.md)。
 

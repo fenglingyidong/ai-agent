@@ -51,6 +51,13 @@ mvn -q -Dtest=BuiltInToolsTest test
 mvn -q -Dtest=ChatControllerTest test
 ```
 
+新增保守收敛覆盖：
+
+- 快车道安全过滤：验证路由和简单任务收到的是已过滤、已掩码的用户输入。
+- 订单创建门禁：验证 `mall_create_order` 在路由未放行、缺少 `confirmationId` 或 `userConfirmed=false` 时不会调用真实 MCP 工具。
+- 工具日志脱敏：验证 info 日志不包含完整工具入参、工具返回值或敏感 token。
+- 商城 MCP 快车道：验证 B 类简单任务只暴露限定的 `mall_*` MCP 工具，且不暴露 `mall_create_order`。
+
 最后跑全量测试：
 
 ```powershell

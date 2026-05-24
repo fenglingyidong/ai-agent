@@ -68,20 +68,9 @@ Agent 效果评测
 4. 最后替换 MCP 协议层，确保上下文注册、`sessionId` 注入和失败文案不变。
 5. 每步完成后运行相关单元测试，最后更新 README 的当前实现状态。
 
-### 本轮实施状态
+### 本轮保守收敛状态
 
-- 已完成：`ShoppingIntentRouter` 路由结果改为 `ChatClient.call().entity(ShoppingIntentRoute.class)`，删除手写 JSON 截取/解析。
-- 已完成：`SimpleTaskAgent` 简单任务工具注册改为 `ChatClient.tools(...)`，保留 A/B 类限定工具集合。
-- 已完成：`ReActAgent` 内置工具定义生成改为 `ToolCallbacks.from(builtInTools)`，删除 `MethodToolCallbackProvider` 样板代码。
-- 已完成：主 Agent 通过 `toolContext(...)` 传递 `userId/sessionId/mallToken/mallUsername/mallPassword`；`BuiltInTools.updateShoppingPreference` 直接读取 Spring AI `ToolContext`；已删除自研 `ToolExecutionContext`。
-- 已完成：`MallMcpClient` 改为 `McpSyncClient + WebClientStreamableHttpTransport`，不再手写 MCP initialize、JSON-RPC 请求和 SSE/text 解析。
-- 已完成：`MallMcpToolCallback` 改为基于 Spring AI `FunctionToolCallback` 构造 `mall_*` 工具，仍保留上下文注册、`sessionId` 注入和统一失败包装。
-- 已验证：`ReActAgentTest,SimpleTaskAgentTest,ShoppingIntentRouterTest,BuiltInToolsTest` 针对性测试通过；完整 `mvn -q test` 通过。
-
-### 本轮复查追加清理
-
-- 已删除：`ShoppingIntentRouter` 构造器中上一轮结构化输出替换后遗留的 `ObjectMapper` 参数。
-- 已删除：`MallTokenFilter` / `MallTokenContext`，商城 token 只通过 `ChatController -> ReActAgent.toolContext(...) -> MallMcpToolCallback` 显式传递。
-- 已精简：`BuiltInTools.updateShoppingPreference` 只读取 Spring AI `ToolContext`，不再从 `SecurityContextHolder` / `RequestContextHolder` 推断用户和会话。
-- 已删除：自研 `ToolDefinitionEntry` 和主 Agent prompt 里的工具 schema 手写渲染；工具名、描述和参数 schema 以 Spring AI `ToolCallback` 注册给模型的元数据为准。
-- 已验证：针对性测试 `ReActAgentTest,ShoppingIntentRouterTest,BuiltInToolsTest,SimpleTaskAgentTest,ChatControllerTest` 通过；完整 `mvn -q test` 通过。
+- 已修复：`PromptSecurityFilter` 在路由和高置信快车道之前执行，快车道不再绕过提示词注入过滤和敏感值掩码。
+- 已加固：`mall_create_order` 增加 Java 侧硬门禁，未通过二次确认门禁或缺少关键参数时不调用真实 MCP 工具。
+- 已精简：商城简单任务快车道复用 Spring AI MCP `ToolCallback`，删除 `MallMcpOperations` 手写调用层。
+- 已收敛：工具调用 info 日志只保留摘要，不输出完整工具入参和返回值。

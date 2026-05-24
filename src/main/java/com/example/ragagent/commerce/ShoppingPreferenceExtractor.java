@@ -13,8 +13,11 @@ import java.util.regex.Pattern;
 @Component
 public class ShoppingPreferenceExtractor {
 
-    private static final Pattern BUDGET_RANGE = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)");
-    private static final Pattern BUDGET_MAX = Pattern.compile("预算\\s*(\\d+)");
+    private static final Pattern BUDGET_RANGE_WITH_PREFIX = Pattern.compile("(?:预算|价格|价位)\\s*(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)");
+    private static final Pattern BUDGET_RANGE_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)\\s*(?:元|块)");
+    private static final Pattern BUDGET_SLOT_RANGE = Pattern.compile("(\\d+)\\s*(?:-|到|至|~|－|—)\\s*(\\d+)");
+    private static final Pattern BUDGET_MAX_WITH_PREFIX = Pattern.compile("(?:预算|价格|价位)\\D{0,6}?(\\d+)");
+    private static final Pattern BUDGET_MAX_WITH_SUFFIX = Pattern.compile("(\\d+)\\s*(?:元|块)(?:以内|以下)?");
     private static final String[] CATEGORIES = {
             "降噪耳机", "儿童积木", "运动鞋", "跑鞋", "积木", "耳机",
             "书包", "手机", "电脑", "外套", "裙子", "玩具"
@@ -24,20 +27,7 @@ public class ShoppingPreferenceExtractor {
                                                                 ShoppingIntentRoute route,
                                                                 Long turnNo) {
         String text = StringUtils.hasText(userMessage) ? userMessage.trim() : "";
-        Integer budgetMin = null;
-        Integer budgetMax = null;
-
-        Matcher rangeMatcher = BUDGET_RANGE.matcher(text);
-        if (rangeMatcher.find()) {
-            budgetMin = parsePositiveInt(rangeMatcher.group(1));
-            budgetMax = parsePositiveInt(rangeMatcher.group(2));
-        }
-        else {
-            Matcher maxMatcher = BUDGET_MAX.matcher(text);
-            if (maxMatcher.find()) {
-                budgetMax = parsePositiveInt(maxMatcher.group(1));
-            }
-        }
+        BudgetValues budget = extractBudgetFromText(text);
 
         String category = extractCategory(text);
         String brand = null;
@@ -45,23 +35,28 @@ public class ShoppingPreferenceExtractor {
         String color = null;
         String style = null;
         String usageScenario = null;
-        boolean hasRouteSlot = false;
+        boolean hasTextSlot = false;
+        boolean hasVisualSlot = false;
 
-        SlotValues textSlots = readSlots(route == null ? null : route.textSlots());
+        SlotValues textSlots = readSlots(route == null ? null : route.textSlots(), false);
         if (textSlots.hasAny()) {
             category = defaultIfBlank(textSlots.category(), category);
+            budget = budget.overrideWith(textSlots.budget());
             brand = defaultIfBlank(textSlots.brand(), brand);
             size = defaultIfBlank(textSlots.size(), size);
             color = defaultIfBlank(textSlots.color(), color);
             style = defaultIfBlank(textSlots.style(), style);
             usageScenario = defaultIfBlank(textSlots.usageScenario(), usageScenario);
-            hasRouteSlot = true;
+            hasTextSlot = true;
         }
 
-        SlotValues visualSlots = readSlots(route == null ? null : route.visualContext());
+        SlotValues visualSlots = readSlots(route == null ? null : route.visualContext(), true);
         if (visualSlots.hasAny()) {
             if (!StringUtils.hasText(textSlots.category())) {
                 category = defaultIfBlank(visualSlots.category(), category);
+            }
+            if (!textSlots.budget().hasAny()) {
+                budget = budget.overrideWith(visualSlots.budget());
             }
             if (!StringUtils.hasText(textSlots.brand())) {
                 brand = defaultIfBlank(visualSlots.brand(), brand);
@@ -78,34 +73,87 @@ public class ShoppingPreferenceExtractor {
             if (!StringUtils.hasText(textSlots.usageScenario())) {
                 usageScenario = defaultIfBlank(visualSlots.usageScenario(), usageScenario);
             }
-            hasRouteSlot = true;
+            hasVisualSlot = true;
         }
 
         Set<String> clearFields = extractClearFields(text);
         boolean hasAnyField = StringUtils.hasText(category)
-                || budgetMin != null
-                || budgetMax != null
+                || budget.hasAny()
                 || StringUtils.hasText(brand)
                 || StringUtils.hasText(size)
                 || StringUtils.hasText(color)
                 || StringUtils.hasText(style)
                 || StringUtils.hasText(usageScenario)
                 || !clearFields.isEmpty();
+        String source = resolveSource(hasTextSlot, hasVisualSlot);
+        double confidence = resolveConfidence(route, hasTextSlot || hasVisualSlot, hasAnyField);
 
         return new ShoppingStateService.ShoppingPreferencePatch(
                 category,
-                budgetMin,
-                budgetMax,
+                budget.min(),
+                budget.max(),
                 brand,
                 size,
                 color,
                 style,
                 usageScenario,
                 clearFields,
-                hasRouteSlot ? ShoppingPreferenceSource.ROUTER_SLOT.name() : ShoppingPreferenceSource.USER_EXPLICIT.name(),
-                hasAnyField ? 1.0 : 0.0,
+                source,
+                confidence,
                 turnNo
         );
+    }
+
+    private BudgetValues extractBudgetFromText(String text) {
+        if (!StringUtils.hasText(text)) {
+            return BudgetValues.empty();
+        }
+        BudgetValues range = matchBudgetRange(BUDGET_RANGE_WITH_PREFIX, text);
+        if (range.hasAny()) {
+            return range;
+        }
+        range = matchBudgetRange(BUDGET_RANGE_WITH_SUFFIX, text);
+        if (range.hasAny()) {
+            return range;
+        }
+        Integer max = matchBudgetMax(BUDGET_MAX_WITH_PREFIX, text);
+        if (max != null) {
+            return new BudgetValues(null, max);
+        }
+        max = matchBudgetMax(BUDGET_MAX_WITH_SUFFIX, text);
+        return max == null ? BudgetValues.empty() : new BudgetValues(null, max);
+    }
+
+    private BudgetValues extractBudgetFromSlot(Object raw) {
+        if (raw == null) {
+            return BudgetValues.empty();
+        }
+        if (raw instanceof Number number) {
+            return new BudgetValues(null, number.intValue());
+        }
+        String text = raw.toString().trim();
+        if (!StringUtils.hasText(text)) {
+            return BudgetValues.empty();
+        }
+        BudgetValues range = matchBudgetRange(BUDGET_SLOT_RANGE, text);
+        if (range.hasAny()) {
+            return range;
+        }
+        Integer max = matchBudgetMax(Pattern.compile("(\\d+)"), text);
+        return max == null ? BudgetValues.empty() : new BudgetValues(null, max);
+    }
+
+    private BudgetValues matchBudgetRange(Pattern pattern, String text) {
+        Matcher matcher = pattern.matcher(text);
+        if (!matcher.find()) {
+            return BudgetValues.empty();
+        }
+        return new BudgetValues(parsePositiveInt(matcher.group(1)), parsePositiveInt(matcher.group(2)));
+    }
+
+    private Integer matchBudgetMax(Pattern pattern, String text) {
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? parsePositiveInt(matcher.group(1)) : null;
     }
 
     private String extractCategory(String text) {
@@ -140,15 +188,16 @@ public class ShoppingPreferenceExtractor {
         return clearFields;
     }
 
-    private SlotValues readSlots(Map<String, Object> slots) {
+    private SlotValues readSlots(Map<String, Object> slots, boolean visualContext) {
         if (slots == null || slots.isEmpty()) {
             return SlotValues.empty();
         }
         return new SlotValues(
                 readSlot(slots, "category"),
-                readSlot(slots, "brand"),
+                visualContext ? readSlot(slots, "brand", "brand_logo") : readSlot(slots, "brand"),
+                extractBudgetFromSlot(slots.get("budget")),
                 readSlot(slots, "size"),
-                readSlot(slots, "color"),
+                visualContext ? readSlot(slots, "color", "main_color") : readSlot(slots, "color"),
                 readSlot(slots, "style"),
                 readSlot(slots, "usageScenario", "usage_scenario", "use_scene", "scene", "使用场景")
         );
@@ -177,20 +226,57 @@ public class ShoppingPreferenceExtractor {
         }
     }
 
+    private String resolveSource(boolean hasTextSlot, boolean hasVisualSlot) {
+        if (hasTextSlot) {
+            return ShoppingPreferenceSource.ROUTER_SLOT.name();
+        }
+        if (hasVisualSlot) {
+            return ShoppingPreferenceSource.VISUAL_CONTEXT.name();
+        }
+        return ShoppingPreferenceSource.USER_EXPLICIT.name();
+    }
+
+    private double resolveConfidence(ShoppingIntentRoute route, boolean hasRouteSignal, boolean hasAnyField) {
+        if (!hasAnyField) {
+            return 0.0;
+        }
+        if (hasRouteSignal && route != null) {
+            return route.confidence();
+        }
+        return 1.0;
+    }
+
+    private record BudgetValues(Integer min, Integer max) {
+
+        static BudgetValues empty() {
+            return new BudgetValues(null, null);
+        }
+
+        boolean hasAny() {
+            return min != null || max != null;
+        }
+
+        BudgetValues overrideWith(BudgetValues other) {
+            return other != null && other.hasAny() ? other : this;
+        }
+    }
+
     private record SlotValues(String category,
                               String brand,
+                              BudgetValues budget,
                               String size,
                               String color,
                               String style,
                               String usageScenario) {
 
         static SlotValues empty() {
-            return new SlotValues(null, null, null, null, null, null);
+            return new SlotValues(null, null, BudgetValues.empty(), null, null, null, null);
         }
 
         boolean hasAny() {
             return StringUtils.hasText(category)
                     || StringUtils.hasText(brand)
+                    || budget.hasAny()
                     || StringUtils.hasText(size)
                     || StringUtils.hasText(color)
                     || StringUtils.hasText(style)

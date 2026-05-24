@@ -67,4 +67,74 @@ class ShoppingPreferenceExtractorTest {
         assertTrue(patch.clearFields().contains("brand"));
         assertTrue(patch.clearFields().contains("budget"));
     }
+
+    @Test
+    void extractShouldNotTreatAgeRangeAsBudgetRange() {
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "5-7岁孩子，预算300",
+                null,
+                4L
+        );
+
+        assertEquals(null, patch.budgetMin());
+        assertEquals(300, patch.budgetMax());
+    }
+
+    @Test
+    void extractShouldReadBudgetFromRouteSlots() {
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "C_COMPLEX_REACT",
+                "COMPLEX_RECOMMENDATION",
+                Map.of(),
+                Map.of("budget", "300-500"),
+                true,
+                0.87,
+                "复杂推荐",
+                java.util.List.of("RECOMMENDATION"),
+                java.util.List.of(),
+                java.util.List.of(),
+                false,
+                "LOW"
+        );
+
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "帮我推荐生日礼物",
+                route,
+                5L
+        );
+
+        assertEquals(300, patch.budgetMin());
+        assertEquals(500, patch.budgetMax());
+        assertEquals(ShoppingPreferenceSource.ROUTER_SLOT.name(), patch.source());
+        assertEquals(0.87, patch.confidence());
+    }
+
+    @Test
+    void extractShouldReadVisualAliases() {
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "C_COMPLEX_REACT",
+                "COMPLEX_RECOMMENDATION",
+                Map.of("brand_logo", "Nike", "main_color", "黑色"),
+                Map.of(),
+                true,
+                0.76,
+                "复杂推荐",
+                java.util.List.of("RECOMMENDATION"),
+                java.util.List.of(),
+                java.util.List.of(),
+                false,
+                "LOW"
+        );
+
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "这张图里的同款",
+                route,
+                6L
+        );
+
+        assertEquals("Nike", patch.brand());
+        assertEquals("黑色", patch.color());
+        assertEquals(ShoppingPreferenceSource.VISUAL_CONTEXT.name(), patch.source());
+        assertEquals(0.76, patch.confidence());
+    }
 }

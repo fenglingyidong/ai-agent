@@ -1,6 +1,7 @@
 package com.example.ragagent.tools;
 
 import com.example.ragagent.commerce.ShoppingPreferenceState;
+import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingStateService;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class BuiltInTools {
@@ -84,7 +86,11 @@ public class BuiltInTools {
                         size,
                         color,
                         style,
-                        usageScenario
+                        usageScenario,
+                        Set.of(),
+                        ShoppingPreferenceSource.MODEL_TOOL.name(),
+                        1.0,
+                        null
                 )
         );
         return renderPreference(state);

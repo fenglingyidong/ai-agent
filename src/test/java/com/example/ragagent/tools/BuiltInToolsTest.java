@@ -1,8 +1,10 @@
 package com.example.ragagent.tools;
 
 import com.example.ragagent.commerce.ShoppingPreferenceState;
+import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingStateService;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
@@ -11,6 +13,7 @@ import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -61,10 +64,16 @@ class BuiltInToolsTest {
         assertTrue(result.contains("品类：玩具"));
         assertTrue(result.contains("预算：100-200"));
         assertTrue(result.contains("品牌：启蒙"));
+        ArgumentCaptor<ShoppingStateService.ShoppingPreferencePatch> patchCaptor =
+                ArgumentCaptor.forClass(ShoppingStateService.ShoppingPreferencePatch.class);
         verify(shoppingStateService).mergePreference(
                 eq("demo-user"),
                 eq("front-session"),
-                any(ShoppingStateService.ShoppingPreferencePatch.class)
+                patchCaptor.capture()
         );
+        assertEquals(ShoppingPreferenceSource.MODEL_TOOL.name(), patchCaptor.getValue().source());
+        assertEquals(1.0, patchCaptor.getValue().confidence());
+        assertEquals(null, patchCaptor.getValue().turnNo());
+        assertTrue(patchCaptor.getValue().clearFields().isEmpty());
     }
 }

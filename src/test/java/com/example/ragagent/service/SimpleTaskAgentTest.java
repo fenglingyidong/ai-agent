@@ -1,11 +1,17 @@
 package com.example.ragagent.service;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.classic.spi.IThrowableProxy;
+import ch.qos.logback.core.read.ListAppender;
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.tools.BuiltInTools;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
@@ -13,11 +19,14 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.execution.ToolExecutionException;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -55,6 +64,8 @@ class SimpleTaskAgentTest {
     @Test
     void shouldRunMallTaskWithOnlySimpleMallTools() {
         AgentMocks mocks = agentMocks("儿童积木套装 300片售价 149.00 元，库存充足。");
+        ArgumentCaptor<String> systemPromptCaptor = ArgumentCaptor.forClass(String.class);
+        when(mocks.requestSpec.system(systemPromptCaptor.capture())).thenReturn(mocks.requestSpec);
         MallMcpClient mallMcpClient = mallMcpClientWithTools(
                 "mall_search_products",
                 "mall_get_product_detail",
@@ -88,6 +99,7 @@ class SimpleTaskAgentTest {
                 "mall_view_cart",
                 "mall_prepare_order"
         ), Set.copyOf(names));
+        assertTrue(systemPromptCaptor.getValue().contains("ok=false"));
         verify(mocks.requestSpec).toolContext(Map.of("sessionId", "session-1"));
     }
 
@@ -100,6 +112,46 @@ class SimpleTaskAgentTest {
 
         assertThrows(SimpleTaskAgent.FastLaneFallbackException.class,
                 () -> tools.searchProductKnowledge("未知商品"));
+    }
+
+    @Test
+    void shouldReturnGenericMcpFailureWhenMallClientIsUnavailable() {
+        AgentMocks mocks = agentMocks("不会返回");
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, null);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "VIEW_CART",
+                "B_SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of(),
+                false,
+                0.9,
+                "查购物车"
+        );
+
+        FastLaneResult result = agent.tryRun(route, "查看我的购物车", "session-1", 0.7);
+
+        assertTrue(result.handled());
+        assertEquals("商城 MCP 调用失败：请稍后重试", collect(result.stream()));
+    }
+
+    @Test
+    void shouldReturnGenericMcpFailureWhenMallToolsAreMissing() {
+        AgentMocks mocks = agentMocks("不会返回");
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools());
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "VIEW_CART",
+                "B_SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of(),
+                false,
+                0.9,
+                "查购物车"
+        );
+
+        FastLaneResult result = agent.tryRun(route, "查看我的购物车", "session-1", 0.7);
+
+        assertTrue(result.handled());
+        assertEquals("商城 MCP 调用失败：请稍后重试", collect(result.stream()));
     }
 
     @Test
@@ -120,7 +172,7 @@ class SimpleTaskAgentTest {
         FastLaneResult result = agent.tryRun(route, "查看我的购物车", "session-1", 0.7);
 
         assertTrue(result.handled());
-        assertEquals("商城 MCP 调用失败：mall-mcp 服务未启动或不可访问", collect(result.stream()));
+        assertEquals("商城 MCP 调用失败：请稍后重试", collect(result.stream()));
     }
 
     @Test
@@ -145,7 +197,69 @@ class SimpleTaskAgentTest {
         FastLaneResult result = agent.tryRun(route, "查看我的购物车", "session-1", 0.7);
 
         assertTrue(result.handled());
-        assertTrue(collect(result.stream()).startsWith("商城 MCP 调用失败："));
+        assertEquals("商城 MCP 调用失败：请稍后重试", collect(result.stream()));
+    }
+
+    @Test
+    void shouldNotExposeMcpFailureDetailsToUserOrInfoLogs() {
+        try (CapturedLogs capturedLogs = new CapturedLogs()) {
+            AgentMocks mocks = agentMocks("不会返回");
+            when(mocks.requestSpec.call()).thenThrow(new SimpleTaskAgent.McpUnavailableException(
+                    "mall-mcp 服务未启动或不可访问 token=secret-token input={\"skuId\":3020}"));
+            SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
+            ShoppingIntentRoute route = new ShoppingIntentRoute(
+                    "VIEW_CART",
+                    "B_SIMPLE_SHOPPING_TOOL",
+                    Map.of(),
+                    Map.of(),
+                    false,
+                    0.9,
+                    "查购物车"
+            );
+
+            FastLaneResult result = agent.tryRun(route, "查看我的购物车", "session-1", 0.7);
+
+            assertTrue(result.handled());
+            assertEquals("商城 MCP 调用失败：请稍后重试", collect(result.stream()));
+            String logs = capturedLogs.formattedMessages();
+            assertTrue(logs.contains("errorType=McpUnavailableException"));
+            assertFalse(logs.contains("secret-token"));
+            assertFalse(logs.contains("\"skuId\":3020"));
+        }
+    }
+
+    @Test
+    void shouldKeepToolDiscoveryFailureCauseOnlyInDebugLogs() {
+        try (CapturedLogs capturedLogs = new CapturedLogs(Level.DEBUG)) {
+            AgentMocks mocks = agentMocks("不会返回");
+            MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+            McpSyncClient syncClient = mock(McpSyncClient.class);
+            when(mallMcpClient.syncClient()).thenReturn(syncClient);
+            when(syncClient.listTools()).thenThrow(new RuntimeException(
+                    "discovery failed token=secret-token input={\"skuId\":3020}"));
+            SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
+            ShoppingIntentRoute route = new ShoppingIntentRoute(
+                    "VIEW_CART",
+                    "B_SIMPLE_SHOPPING_TOOL",
+                    Map.of(),
+                    Map.of(),
+                    false,
+                    0.9,
+                    "查购物车"
+            );
+
+            FastLaneResult result = agent.tryRun(route, "查看我的购物车", "session-1", 0.7);
+
+            assertTrue(result.handled());
+            assertEquals("商城 MCP 调用失败：请稍后重试", collect(result.stream()));
+            String logs = capturedLogs.formattedMessages();
+            assertTrue(logs.contains("errorType=McpUnavailableException"));
+            assertFalse(logs.contains("secret-token"));
+            assertFalse(logs.contains("\"skuId\":3020"));
+            String debugThrowableMessages = capturedLogs.debugThrowableMessages();
+            assertTrue(debugThrowableMessages.contains(
+                    "java.lang.RuntimeException: discovery failed token=secret-token input={\"skuId\":3020}"));
+        }
     }
 
     private AgentMocks agentMocks(String content) {
@@ -214,5 +328,56 @@ class SimpleTaskAgentTest {
     }
 
     private record AgentMocks(ChatClient chatClient, ChatClient.ChatClientRequestSpec requestSpec) {
+    }
+
+    private static final class CapturedLogs implements AutoCloseable {
+
+        private final Logger logger = (Logger) LoggerFactory.getLogger(SimpleTaskAgent.class);
+        private final Level originalLevel = logger.getLevel();
+        private final boolean originalAdditive = logger.isAdditive();
+        private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
+
+        private CapturedLogs() {
+            this(Level.INFO);
+        }
+
+        private CapturedLogs(Level level) {
+            logger.setLevel(level);
+            logger.setAdditive(false);
+            appender.start();
+            logger.addAppender(appender);
+        }
+
+        private String formattedMessages() {
+            return appender.list.stream()
+                    .filter(event -> event.getLevel().isGreaterOrEqual(Level.INFO))
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .collect(Collectors.joining("\n"));
+        }
+
+        private String debugThrowableMessages() {
+            return appender.list.stream()
+                    .filter(event -> event.getLevel().equals(Level.DEBUG))
+                    .flatMap(event -> throwableMessages(event.getThrowableProxy()).stream())
+                    .collect(Collectors.joining("\n"));
+        }
+
+        private List<String> throwableMessages(IThrowableProxy throwableProxy) {
+            List<String> messages = new ArrayList<>();
+            IThrowableProxy current = throwableProxy;
+            while (current != null) {
+                messages.add(current.getClassName() + ": " + current.getMessage());
+                current = current.getCause();
+            }
+            return messages;
+        }
+
+        @Override
+        public void close() {
+            logger.detachAppender(appender);
+            logger.setLevel(originalLevel);
+            logger.setAdditive(originalAdditive);
+            appender.stop();
+        }
     }
 }

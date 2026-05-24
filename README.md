@@ -27,7 +27,7 @@
 - 前端已改为导购工作台，包含聊天区、商品卡片、图片上传、对比视图和购物车抽屉；前端不直接管理商城 Token。
 - 前端不再直连商城 REST；商品查询、加购、查购物车和普通订单动作都通过 `/api/react` 进入 Agent，再由 `mall_*` MCP 工具调用 `mall-mcp`。
 - `ReActAgent` 已收敛为单一构造函数和单一对外 `runStream(...)` 入口；Controller 显式传入用户、会话、模型、媒体和商城上下文。
-- Spring AI 框架 API 已进一步收敛：路由输出用 `ChatClient.entity(ShoppingIntentRoute.class)` 解析，简单任务工具用 `ChatClient.tools(...)` 注册，主 Agent 内置工具定义用 `ToolCallbacks.from(...)` 生成，工具名/描述/schema 由 `ToolCallback` 元数据交给模型，工具上下文用 `toolContext(...)` 透传，商城 MCP 协议调用改为 `McpSyncClient`，主 Agent 的 `mall_*` 工具注册交给 `SyncMcpToolCallbackProvider`。
+- Spring AI 框架 API 已进一步收敛：路由输出用 `ChatClient.entity(ShoppingIntentRoute.class)` 解析，知识库快车道用 `ChatClient.tools(...)` 注册内置检索工具，商城快车道用 `ChatClient.toolCallbacks(...)` 注册限定 MCP 工具回调，主 Agent 内置工具定义用 `ToolCallbacks.from(...)` 生成，工具名/描述/schema 由 `ToolCallback` 元数据交给模型，工具上下文用 `toolContext(...)` 透传，商城 MCP 协议调用改为 `McpSyncClient`，主 Agent 的 `mall_*` 工具注册交给 `SyncMcpToolCallbackProvider`。
 - 安全过滤已前置到路由和快车道之前：进入 `ShoppingIntentRouter`、`SimpleTaskAgent` 和主 Agent 的文本都会先经过 `PromptSecurityFilter` 过滤提示词注入片段并掩码敏感值。
 - `mall_create_order` 增加 Java 侧硬门禁：只有路由明确为 `CREATE_ORDER` 且工具参数包含有效 `confirmationId` 与 `userConfirmed=true` 时才会放行。
 - 商城快车道已复用 Spring AI MCP `ToolCallback`，不再维护单独的手写工具调用层；`sessionId` 由薄包装 `MallSessionToolCallback` 注入。
@@ -146,7 +146,7 @@ RAGAgent
 它对所有 `POST /api/react` 对话请求生效，并把请求分为三类：
 
 - `A_FAQ_SIMPLE_QUERY`：FAQ、商品知识库事实、简单解释类问题，进入 `SimpleTaskAgent` 知识库快车道；快车道只暴露 `searchProductKnowledge` 工具，不进入主 ReAct。
-- `B_SIMPLE_SHOPPING_TOOL`：查价格、查库存、查商品详情、查购物车、明确加购和确认订单摘要等单步商城任务，进入 `SimpleTaskAgent` 商城快车道；快车道只暴露 `queryRealtimeProduct`、`addToCart`、`viewCart`、`prepareOrder`，工具内部调用 `mall-mcp`，不进入主 ReAct。
+- `B_SIMPLE_SHOPPING_TOOL`：查价格、查库存、查商品详情、查购物车、明确加购和确认订单摘要等单步商城任务，进入 `SimpleTaskAgent` 商城快车道；快车道通过 `ChatClient.toolCallbacks(...)` 只暴露 `mall_search_products`、`mall_get_product_detail`、`mall_add_to_cart`、`mall_view_cart`、`mall_prepare_order`，并由 `MallSessionToolCallback` 注入可信 `sessionId`，工具内部调用 `mall-mcp`，不进入主 ReAct。
 - `C_COMPLEX_REACT`：复杂推荐、商品对比、多步规划、图片不确定和最终创建订单，进入默认 Qwen 主模型 ReAct 链路。
 
 它对请求内容的处理方式：
@@ -160,7 +160,7 @@ RAGAgent
 分发规则：
 
 - A 类高置信请求先走 `SimpleTaskAgent` 知识库快车道；RAG 检索为空或异常时降级主模型。
-- B 类高置信请求先注册 `mall-mcp` 上下文；注册失败直接返回商城 MCP 调用失败。随后由 `SimpleTaskAgent` 调用简单任务小模型，并通过 Spring AI `ChatClient.tools(...)` 只暴露限定的商城快车道工具；工具内部调用 `mall-mcp`。MCP 不可用直接返回失败，槽位不足、多候选或小模型异常时降级主模型。
+- B 类高置信请求先注册 `mall-mcp` 上下文；注册失败直接返回商城 MCP 调用失败。随后由 `SimpleTaskAgent` 调用简单任务小模型，并通过 Spring AI `ChatClient.toolCallbacks(...)` 只暴露限定的商城 MCP 工具回调；工具内部调用 `mall-mcp`。MCP 不可用直接返回失败，槽位不足、多候选或小模型异常时降级主模型。
 - C 类、低置信、解析失败、槽位不足、多商品候选、最终创建订单或快车道降级时，进入 `ReActAgent` 主模型链路。
 
 当高置信图文请求需要主 Agent 处理时，`ShoppingRouteExecutor` 会把 `visual_context` 转成纯文本上下文注入主 Agent，默认不再透传原图；当路由低置信时才把原图完整透传给主 Agent 兜底。
@@ -608,7 +608,7 @@ POST /internal/mcp/mall/context
 X-Mcp-Context-Secret: <secret>
 ```
 
-把当前 `sessionId`、`X-Mall-Authorization`、Redis 中缓存的商城 token，或 Basic 登录信息注册给 `mall-mcp`。主 Agent 的工具定义和调用委托给 Spring AI MCP 的 `SyncMcpToolCallbackProvider` / `SyncMcpToolCallback`，底层仍由 `McpSyncClient` 走 Streamable HTTP MCP endpoint `/mcp`；RAGAgent 不再改写工具参数和返回值，`toolContext` 只保留 `userId/sessionId`。如果本轮需要商城工具但工具发现失败，会直接返回“商城 MCP 调用失败”。
+把当前 `sessionId`、`X-Mall-Authorization`、Redis 中缓存的商城 token，或 Basic 登录信息注册给 `mall-mcp`。主 Agent 的工具定义和调用委托给 Spring AI MCP 的 `SyncMcpToolCallbackProvider` / `SyncMcpToolCallback`，底层仍由 `McpSyncClient` 走 Streamable HTTP MCP endpoint `/mcp`；RAGAgent 只通过 `MallSessionToolCallback` 用可信 `toolContext.sessionId` 注入或覆盖商城工具参数中的 `sessionId`，不再改写其他工具参数和返回值。如果本轮需要商城工具但工具发现失败，会直接返回“商城 MCP 调用失败”。
 
 图文低置信请求默认不会强行注册商城工具；只有文本里明确出现实时价格、库存、相似款、加购、购物车或订单等实时商城意图时，才会注册 `mall_*` 工具。这样普通“看图给搭配/场景建议”不会因为商城 MCP 不可用而失败。
 

@@ -28,6 +28,7 @@ public class SimpleTaskAgent {
 
     private static final Logger log = LoggerFactory.getLogger(SimpleTaskAgent.class);
     private static final String EMPTY_KNOWLEDGE_MESSAGE = "商品知识库中没有检索到相关内容。";
+    private static final String MALL_MCP_FAILURE_MESSAGE = "商城 MCP 调用失败：请稍后重试";
     private static final Set<String> SIMPLE_MALL_INTENTS = Set.of(
             "PRICE_STOCK_QUERY",
             "QUERY_ATTRIBUTE",
@@ -58,7 +59,7 @@ public class SimpleTaskAgent {
             明确加购物车时调用 mall_add_to_cart；查看购物车时调用 mall_view_cart；确认订单摘要时调用 mall_prepare_order。
             不允许创建订单、付款或编造 confirmationId；不得调用 mall_create_order，遇到确认下单应交给复杂任务。
             价格、库存、购物车和订单摘要只能来自工具结果。
-            如果工具返回“商城 MCP 调用失败”，必须原样说明调用失败。
+            如果工具返回“商城 MCP 调用失败”或 ok=false，必须原样说明调用失败。
             输出纯文本中文回复，不要暴露工具名、JSON 或内部路由字段。
             """;
 
@@ -141,17 +142,17 @@ public class SimpleTaskAgent {
             return FastLaneResult.fallbackToCore("简单商城任务缺少 sessionId");
         }
         if (mallMcpToolCallback == null) {
-            return FastLaneResult.handled("商城 MCP 调用失败：mall-mcp client unavailable");
+            return mallMcpFailure("MallMcpClientUnavailable");
         }
         List<ToolCallback> callbacks;
         try {
             callbacks = simpleMallToolCallbacks();
         }
         catch (McpUnavailableException ex) {
-            return FastLaneResult.handled("商城 MCP 调用失败：" + safeMessage(ex));
+            return mallMcpFailure(ex);
         }
         if (callbacks.isEmpty()) {
-            return FastLaneResult.handled("商城 MCP 调用失败：未发现 mall_* MCP 工具");
+            return mallMcpFailure("MallMcpToolUnavailable");
         }
         return callSimpleModelWithToolCallbacks(
                 route,
@@ -169,7 +170,7 @@ public class SimpleTaskAgent {
                     .toList();
         }
         catch (RuntimeException ex) {
-            throw new McpUnavailableException(safeMessage(ex));
+            throw new McpUnavailableException("mall-mcp 服务未启动或不可访问", ex);
         }
     }
 
@@ -221,8 +222,7 @@ public class SimpleTaskAgent {
             return FastLaneResult.handled(content.trim());
         }
         catch (McpUnavailableException ex) {
-            log.warn("简单商城任务 MCP 不可用：{}", ex.getMessage());
-            return FastLaneResult.handled("商城 MCP 调用失败：" + safeMessage(ex));
+            return mallMcpFailure(ex);
         }
         catch (FastLaneFallbackException ex) {
             log.info("简单任务小模型降级主 Agent：{}", ex.getMessage());
@@ -230,8 +230,7 @@ public class SimpleTaskAgent {
         }
         catch (RuntimeException ex) {
             if (isMcpUnavailable(ex)) {
-                log.warn("简单商城任务 MCP 不可用：{}", ex.getMessage());
-                return FastLaneResult.handled("商城 MCP 调用失败：" + safeMessage(ex));
+                return mallMcpFailure(ex);
             }
             log.warn("简单任务小模型失败，降级主 Agent：{}", ex.getMessage());
             log.debug("简单任务小模型异常堆栈", ex);
@@ -306,6 +305,41 @@ public class SimpleTaskAgent {
         return definition == null || !StringUtils.hasText(definition.name()) ? null : definition.name();
     }
 
+    private FastLaneResult mallMcpFailure(Throwable ex) {
+        logMcpUnavailable(ex);
+        return FastLaneResult.handled(MALL_MCP_FAILURE_MESSAGE);
+    }
+
+    private FastLaneResult mallMcpFailure(String errorType) {
+        log.warn("简单商城任务 MCP 不可用：errorType={}, toolName={}",
+                StringUtils.hasText(errorType) ? errorType : "<unknown>",
+                "<unknown>");
+        return FastLaneResult.handled(MALL_MCP_FAILURE_MESSAGE);
+    }
+
+    private void logMcpUnavailable(Throwable ex) {
+        log.warn("简单商城任务 MCP 不可用：errorType={}, toolName={}", errorType(ex), mallToolName(ex));
+        log.debug("简单商城任务 MCP 异常堆栈", ex);
+    }
+
+    private String errorType(Throwable ex) {
+        return ex == null ? "<unknown>" : ex.getClass().getSimpleName();
+    }
+
+    private String mallToolName(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof ToolExecutionException toolExecutionException) {
+                String toolName = toolName(toolExecutionException.getToolDefinition());
+                if (MallMcpToolCallback.isMallTool(toolName)) {
+                    return toolName;
+                }
+            }
+            current = current.getCause();
+        }
+        return "<unknown>";
+    }
+
     private String safeMessage(Throwable ex) {
         if (ex == null || !StringUtils.hasText(ex.getMessage())) {
             return "unknown error";
@@ -357,6 +391,10 @@ public class SimpleTaskAgent {
     static class McpUnavailableException extends RuntimeException {
         McpUnavailableException(String message) {
             super(StringUtils.hasText(message) ? message : "mall-mcp 服务未启动或不可访问");
+        }
+
+        McpUnavailableException(String message, Throwable cause) {
+            super(StringUtils.hasText(message) ? message : "mall-mcp 服务未启动或不可访问", cause);
         }
     }
 

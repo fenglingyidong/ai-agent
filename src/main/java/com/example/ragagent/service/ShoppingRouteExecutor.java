@@ -1,5 +1,9 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.commerce.ShoppingPreferenceExtractor;
+import com.example.ragagent.commerce.ShoppingPreferencePromptRenderer;
+import com.example.ragagent.commerce.ShoppingPreferenceState;
+import com.example.ragagent.commerce.ShoppingStateService;
 import com.example.ragagent.mall.MallMcpContextClient;
 import org.springframework.ai.content.Media;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +41,15 @@ public class ShoppingRouteExecutor {
     @Autowired(required = false)
     private ShoppingTaskPolicyRegistry taskPolicyRegistry;
 
+    @Autowired(required = false)
+    private ShoppingStateService shoppingStateService;
+
+    @Autowired(required = false)
+    private ShoppingPreferenceExtractor shoppingPreferenceExtractor;
+
+    @Autowired(required = false)
+    private ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer;
+
     public ShoppingRouteExecutor() {
     }
 
@@ -61,6 +74,22 @@ public class ShoppingRouteExecutor {
         this.mallMcpContextClient = mallMcpContextClient;
         this.simpleTaskAgent = simpleTaskAgent;
         this.taskPolicyRegistry = taskPolicyRegistry;
+    }
+
+    public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
+                                 MallMcpContextClient mallMcpContextClient,
+                                 SimpleTaskAgent simpleTaskAgent,
+                                 ShoppingTaskPolicyRegistry taskPolicyRegistry,
+                                 ShoppingStateService shoppingStateService,
+                                 ShoppingPreferenceExtractor shoppingPreferenceExtractor,
+                                 ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer) {
+        this.intentRouter = intentRouter;
+        this.mallMcpContextClient = mallMcpContextClient;
+        this.simpleTaskAgent = simpleTaskAgent;
+        this.taskPolicyRegistry = taskPolicyRegistry;
+        this.shoppingStateService = shoppingStateService;
+        this.shoppingPreferenceExtractor = shoppingPreferenceExtractor;
+        this.shoppingPreferencePromptRenderer = shoppingPreferencePromptRenderer;
     }
 
     RoutedAgentRequest routeBeforeCore(String userId,
@@ -89,7 +118,9 @@ public class ShoppingRouteExecutor {
             return new RoutedAgentRequest(appendMultimodalInstruction(normalizedMessage, safeMedia.size()), safeMedia, null);
         }
 
-        ShoppingIntentRoute route = intentRouter.route(normalizedMessage, safeMedia);
+        String preferenceContextBeforeRoute = renderPreferenceContext(loadPreference(userId, sessionId));
+        ShoppingIntentRoute route = intentRouter.route(normalizedMessage, safeMedia, preferenceContextBeforeRoute);
+        String preferenceContextAfterRoute = updateAndRenderPreferenceContext(userId, sessionId, normalizedMessage, route);
         List<ShoppingTaskPolicy> taskPolicies = resolveTaskPolicies(route);
         boolean mallToolsAllowedByPolicy = allowsMallToolsByPolicy(taskPolicies);
         boolean simpleTaskAllowed = shouldRunSimpleTask(route)
@@ -141,13 +172,54 @@ public class ShoppingRouteExecutor {
             }
         }
         return new RoutedAgentRequest(
-                buildCoreAgentMessage(normalizedMessage, route, safeMedia.size(), fastLaneFallbackReason, taskPolicies),
+                buildCoreAgentMessage(
+                        normalizedMessage,
+                        route,
+                        safeMedia.size(),
+                        fastLaneFallbackReason,
+                        taskPolicies,
+                        preferenceContextAfterRoute
+                ),
                 resolveCoreMedia(route, safeMedia),
                 null,
                 mallToolsAllowedByPolicy && allowMallToolsForCore(route, normalizedMessage, safeMedia.size()),
                 taskPolicies,
                 isOrderCreationAllowed(route)
         );
+    }
+
+    private ShoppingPreferenceState loadPreference(String userId, String sessionId) {
+        if (shoppingStateService == null) {
+            return new ShoppingPreferenceState();
+        }
+        ShoppingPreferenceState state = shoppingStateService.loadPreference(userId, sessionId);
+        return state == null ? new ShoppingPreferenceState() : state;
+    }
+
+    private String updateAndRenderPreferenceContext(String userId,
+                                                    String sessionId,
+                                                    String normalizedMessage,
+                                                    ShoppingIntentRoute route) {
+        if (shoppingStateService != null && shoppingPreferenceExtractor != null) {
+            ShoppingStateService.ShoppingPreferencePatch patch =
+                    shoppingPreferenceExtractor.extract(normalizedMessage, route, null);
+            if (hasPositiveConfidence(patch)) {
+                shoppingStateService.mergePreference(userId, sessionId, patch);
+            }
+        }
+        return renderPreferenceContext(loadPreference(userId, sessionId));
+    }
+
+    private boolean hasPositiveConfidence(ShoppingStateService.ShoppingPreferencePatch patch) {
+        return patch != null && patch.confidence() != null && patch.confidence() > 0.0;
+    }
+
+    private String renderPreferenceContext(ShoppingPreferenceState state) {
+        if (shoppingPreferencePromptRenderer == null) {
+            return "";
+        }
+        String rendered = shoppingPreferencePromptRenderer.render(state);
+        return StringUtils.hasText(rendered) ? rendered : "";
     }
 
     private boolean isOrderCreationAllowed(ShoppingIntentRoute route) {
@@ -279,8 +351,18 @@ public class ShoppingRouteExecutor {
                                          int mediaCount,
                                          String fastLaneFallbackReason,
                                          List<ShoppingTaskPolicy> taskPolicies) {
+        return buildCoreAgentMessage(message, route, mediaCount, fastLaneFallbackReason, taskPolicies, "");
+    }
+
+    private String buildCoreAgentMessage(String message,
+                                         ShoppingIntentRoute route,
+                                         int mediaCount,
+                                         String fastLaneFallbackReason,
+                                         List<ShoppingTaskPolicy> taskPolicies,
+                                         String preferenceContext) {
+        String coreMessage;
         if (route != null && route.isHighConfidence(confidenceThreshold())) {
-            return """
+            coreMessage = """
                     观察到的任务类型：%s
                     观察到的用户意图：%s
                     路由置信度：%.2f
@@ -308,7 +390,13 @@ public class ShoppingRouteExecutor {
                     message
             ).trim();
         }
-        return appendMultimodalInstruction(message, mediaCount);
+        else {
+            coreMessage = appendMultimodalInstruction(message, mediaCount);
+        }
+        if (!StringUtils.hasText(preferenceContext)) {
+            return coreMessage;
+        }
+        return preferenceContext.trim() + System.lineSeparator() + System.lineSeparator() + coreMessage;
     }
 
     private List<Media> resolveCoreMedia(ShoppingIntentRoute route, List<Media> media) {

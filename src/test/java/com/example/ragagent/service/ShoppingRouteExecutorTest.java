@@ -7,6 +7,8 @@ import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.content.Media;
 import org.springframework.core.io.ByteArrayResource;
@@ -15,6 +17,7 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -532,61 +535,15 @@ class ShoppingRouteExecutorTest {
         assertTrue(preferenceContextCaptor.getValue().contains("品类：跑鞋"));
     }
 
-    @Test
-    void routeBeforeCoreShouldIgnoreNullOrZeroConfidencePatch() {
+    @ParameterizedTest
+    @MethodSource("ignoredPreferencePatches")
+    void routeBeforeCoreShouldIgnoreMissingOrZeroConfidencePreferencePatch(
+            ShoppingStateService.ShoppingPreferencePatch patch) {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
         ShoppingPreferenceExtractor shoppingPreferenceExtractor = mock(ShoppingPreferenceExtractor.class);
         ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
         ShoppingIntentRoute route = ShoppingIntentRoute.fallback("测试兜底");
-        when(shoppingStateService.loadPreference("user-1", "session-1"))
-                .thenReturn(new ShoppingPreferenceState());
-        when(intentRouter.route("随便看看", List.of(), "")).thenReturn(route);
-        when(shoppingPreferenceExtractor.extract("随便看看", route, null)).thenReturn(null);
-        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
-                intentRouter,
-                null,
-                null,
-                null,
-                shoppingStateService,
-                shoppingPreferenceExtractor,
-                shoppingPreferencePromptRenderer
-        );
-
-        executor.routeBeforeCore(
-                "user-1",
-                "session-1",
-                "随便看看",
-                List.of(),
-                "",
-                "",
-                ""
-        );
-
-        verify(shoppingStateService, never()).mergePreference(eq("user-1"), eq("session-1"), any());
-    }
-
-    @Test
-    void routeBeforeCoreShouldIgnoreZeroConfidencePatch() {
-        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
-        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
-        ShoppingPreferenceExtractor shoppingPreferenceExtractor = mock(ShoppingPreferenceExtractor.class);
-        ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
-        ShoppingIntentRoute route = ShoppingIntentRoute.fallback("测试兜底");
-        ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
-                "跑鞋",
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                ShoppingPreferenceSource.ROUTER_SLOT.name(),
-                0.0,
-                null
-        );
         when(shoppingStateService.loadPreference("user-1", "session-1"))
                 .thenReturn(new ShoppingPreferenceState());
         when(intentRouter.route("随便看看", List.of(), "")).thenReturn(route);
@@ -612,6 +569,26 @@ class ShoppingRouteExecutorTest {
         );
 
         verify(shoppingStateService, never()).mergePreference(eq("user-1"), eq("session-1"), any());
+    }
+
+    private static Stream<ShoppingStateService.ShoppingPreferencePatch> ignoredPreferencePatches() {
+        return Stream.of(
+                null,
+                new ShoppingStateService.ShoppingPreferencePatch(
+                        "跑鞋",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        ShoppingPreferenceSource.ROUTER_SLOT.name(),
+                        0.0,
+                        null
+                )
+        );
     }
 
     @Test

@@ -138,14 +138,7 @@ Content-Type: application/json
 
 ### 商城 MCP 工具
 
-商城商品、购物车和普通订单通过独立 `mall-mcp` 服务暴露：
-
-- MCP endpoint：`http://localhost:8120/mcp`
-- 上下文接口：`http://localhost:8120/internal/mcp/mall/context`
-
-可用工具：`mall_search_products`、`mall_get_product_detail`、`mall_add_to_cart`、`mall_view_cart`、`mall_prepare_order`、`mall_create_order`。
-
-`mall_create_order` 有 Java 侧硬门禁：路由类型必须为 `CREATE_ORDER` 且参数包含有效 `confirmationId` 与 `userConfirmed=true` 才放行。
+商城商品、购物车和订单经独立 `mall-mcp` 服务暴露，MCP endpoint 为 `http://localhost:8120/mcp`。工具清单、上下文接口、`mall_create_order` 硬门禁等细节见 [docs/architecture.md#mcp-边界](docs/architecture.md#mcp-边界)。
 
 其他接口：`GET /api/models/chat`、`POST /api/rag/documents/import`。
 

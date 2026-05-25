@@ -3,6 +3,9 @@ package com.example.ragagent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
@@ -59,37 +62,15 @@ class MallSessionToolCallbackTest {
         assertEquals("session-1", delegatedInput.path("sessionId").asText());
     }
 
-    @Test
-    void shouldInjectSessionIdWhenInputIsNull() throws Exception {
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"   "})
+    void shouldInjectSessionIdWhenInputIsMissingOrBlank(String input) throws Exception {
         ToolCallback delegate = delegateReturning("ok");
         MallSessionToolCallback callback = new MallSessionToolCallback(delegate);
         ToolContext toolContext = new ToolContext(Map.of("sessionId", " session-1 "));
 
-        callback.call(null, toolContext);
-
-        JsonNode delegatedInput = delegatedInput(delegate);
-        assertEquals("session-1", delegatedInput.path("sessionId").asText());
-    }
-
-    @Test
-    void shouldInjectSessionIdWhenInputIsEmpty() throws Exception {
-        ToolCallback delegate = delegateReturning("ok");
-        MallSessionToolCallback callback = new MallSessionToolCallback(delegate);
-        ToolContext toolContext = new ToolContext(Map.of("sessionId", " session-1 "));
-
-        callback.call("", toolContext);
-
-        JsonNode delegatedInput = delegatedInput(delegate);
-        assertEquals("session-1", delegatedInput.path("sessionId").asText());
-    }
-
-    @Test
-    void shouldInjectSessionIdWhenInputIsBlank() throws Exception {
-        ToolCallback delegate = delegateReturning("ok");
-        MallSessionToolCallback callback = new MallSessionToolCallback(delegate);
-        ToolContext toolContext = new ToolContext(Map.of("sessionId", " session-1 "));
-
-        callback.call("   ", toolContext);
+        callback.call(input, toolContext);
 
         JsonNode delegatedInput = delegatedInput(delegate);
         assertEquals("session-1", delegatedInput.path("sessionId").asText());

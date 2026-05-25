@@ -153,30 +153,8 @@ Content-Type: application/json
 
 | 文档 | 说明 |
 | --- | --- |
+| [docs/architecture.md](docs/architecture.md) | 系统架构、核心模块、存储设计、记忆层、MCP 边界、RAG 检索、安全策略 |
 | [TESTING.md](TESTING.md) | 自动化与手工测试命令 |
-
-深度技术文档（架构细节、存储设计、运行配置）将后续整理到 `docs/` 目录。
-
-### 存储与记忆速览
-
-- **Redis：** 父文档正文（`rag:parent:`）、短期记忆窗口（`memory:short:`）、导购偏好（`shopping:preference:`）、商城 token 缓存（`mall:auth:`）。
-- **MySQL：** `conversation_sessions` + `conversation_turns`，保存用户提问和助手最终可见回答的原文流水。
-- **Milvus：** `product_index`（商品知识库子块，Dense + Sparse-BM25）、`memory_index`（长期摘要）。
-
-### 目录结构
-
-```text
-RAGAgent
-├─ src/main/java/com/example/ragagent
-│  ├─ config / controller / commerce
-│  ├─ memory / rag / security
-│  ├─ service        Agent、意图路由与模型注册
-│  └─ tools          内置工具
-├─ src/main/resources/application.yml
-├─ src/test/java/com/example/ragagent
-├─ frontend          独立静态前端
-└─ pom.xml
-```
 
 ## 测试概览
 

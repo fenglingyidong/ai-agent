@@ -26,11 +26,11 @@ flowchart LR
 
 ## 项目亮点
 
-- 三段式意图路由：小模型 JSON 路由将请求分为 FAQ 快车道（A）、单步商城快车道（B）、复杂 ReAct 主链路（C），降低主模型调用频率。
-- 商品 RAG：父子分块 + Milvus Dense + Sparse-BM25 混合召回，RRF 融合后截断噪声上下文。
-- 工具安全边界：`PromptSecurityFilter` 前置注入过滤与敏感信息脱敏；`mall_create_order` 设有 Java 侧硬门禁，需用户显式确认后才放行。
-- 分层记忆：Redis 短期窗口 + Milvus 长期摘要，短期偏好状态通过 `updateShoppingPreference` 工具维护。
-- MCP 商城工具：`mall_*` 系列工具通过独立 `mall-mcp` 服务接入，不直连商城 REST。
+- **分层路由架构**：在 ReAct 主链路前增加 `ShoppingIntentRouter`，用小模型 JSON 路由把请求拆成 FAQ 快车道、单步商城工具快车道和复杂 ReAct 三类，降低简单任务对主模型和工具编排的依赖。
+- **商品事实约束**：商品推荐、价格、库存、SKU 等事实信息优先来自 RAG 检索或 `mall_*` MCP 工具，避免把关键交易信息交给模型自由生成。
+- **多层记忆设计**：Redis 承接短期对话窗口和导购偏好，MySQL 记录原文会话流水，Milvus 保存长期摘要向量，把“即时上下文、可追溯日志、长期记忆”拆成不同存储职责。
+- **MCP 商城边界**：商城商品、购物车和订单能力通过独立 `mall-mcp` 服务暴露，Agent 侧只消费 MCP 工具，不直连商城 REST，便于隔离业务系统和 Agent 编排层。
+- **安全工具编排**：`PromptSecurityFilter` 前置处理注入与敏感值脱敏，`mall_create_order` 在 Java 侧设置确认门禁，确保高风险工具调用不只依赖模型自觉。
 
 ### 技术栈
 

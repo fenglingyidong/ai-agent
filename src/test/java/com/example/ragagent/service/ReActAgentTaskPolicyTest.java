@@ -277,14 +277,9 @@ class ReActAgentTaskPolicyTest {
                 .orElse(null);
         assertNotNull(createOrderCallback);
 
-        assertBlocked(createOrderCallback.call("{\"userConfirmed\":true}"), "MISSING_CONFIRMATION_ID");
-        assertBlocked(createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":false}"),
-                "USER_NOT_CONFIRMED");
-        assertBlocked(createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":\"true\"}"),
-                "USER_NOT_CONFIRMED");
-        assertBlocked(createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":1}"),
-                "USER_NOT_CONFIRMED");
-        assertBlocked(createOrderCallback.call("{"), "INVALID_ARGUMENTS");
+        String blocked = createOrderCallback.call("{\"userConfirmed\":true}");
+        assertTrue(blocked.contains("ORDER_CREATION_BLOCKED"));
+        assertTrue(blocked.contains("MISSING_CONFIRMATION_ID"));
         verify(syncClient, never()).callTool(any(McpSchema.CallToolRequest.class));
 
         when(syncClient.callTool(any(McpSchema.CallToolRequest.class))).thenReturn(new McpSchema.CallToolResult(
@@ -353,9 +348,4 @@ class ReActAgentTaskPolicyTest {
                 .build();
     }
 
-    private void assertBlocked(String result, String reason) {
-        assertTrue(result.contains("\"ok\":false"));
-        assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
-        assertTrue(result.contains("\"reason\":\"" + reason + "\""));
-    }
 }

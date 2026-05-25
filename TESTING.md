@@ -15,23 +15,18 @@
 
 本地测试默认依赖以下服务：
 
-- `rag-agent` 后端：`http://localhost:18082`
-- Redis Stack：`localhost:6379`
-- 商城网关或商城服务入口：`http://localhost:8100`
+- `rag-agent` 后端：`http://localhost:18082`，唯一对话入口 `POST /api/react`
+- 普通 Redis 7.x：`localhost:6379`（无需 Redis Stack）
+- Milvus 2.5+：`localhost:19530`
+- MySQL：`localhost:3307`，rag-agent 自身的会话流水库
+- `mall-mcp` 服务：`http://localhost:8120/mcp`，商城业务遵循当前仓库里的 `mall-mysql` 约定
 - DashScope 兼容 OpenAI 接口：需要有效 `DASHSCOPE_API_KEY`
 
-启动 Redis Stack：
+完整的环境变量、端口、Docker 依赖和健康检查命令见 [docs/runtime.md](docs/runtime.md)。最简启动：
 
 ```powershell
-docker compose up -d redis-stack
-Test-NetConnection -ComputerName localhost -Port 6379
-```
-
-启动后端前建议设置：
-
-```powershell
+docker compose up -d redis etcd minio milvus
 $env:DASHSCOPE_API_KEY="你的 DashScope Key"
-$env:MALL_BASE_URL="http://localhost:8100"
 mvn spring-boot:run
 ```
 

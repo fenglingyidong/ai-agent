@@ -46,48 +46,15 @@ flowchart LR
 
 ## 快速启动
 
-**前置依赖：** Docker Desktop、JDK 17、Maven 3.x
-
 ```powershell
-# 1. 启动基础设施
 docker compose up -d redis etcd minio milvus
-
-# 2. 配置环境变量并启动后端
 $env:DASHSCOPE_API_KEY="<your-key>"
 mvn spring-boot:run
-
-# 3. 启动前端（另开终端）
-cd frontend
-node server.js 4173
-# 访问 http://localhost:4173
 ```
 
-可选监控：`docker compose up -d prometheus grafana`（Grafana 默认 `admin/admin`）。
+前端在另一个终端启动 `cd frontend; node server.js 4173`，访问 `http://localhost:4173`。后端默认端口 `18082`。
 
-### MySQL 连接
-
-```powershell
-$env:MYSQL_URL="jdbc:mysql://localhost:3307/rag_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true"
-$env:MYSQL_USERNAME="root"
-$env:MYSQL_PASSWORD="root"
-```
-
-### 主要环境变量
-
-```powershell
-$env:DASHSCOPE_API_KEY="<your-key>"
-$env:REDIS_HOST="localhost"
-$env:REDIS_PORT="6379"
-$env:MILVUS_HOST="localhost"
-$env:MILVUS_PORT="19530"
-$env:SERVER_PORT="18082"
-$env:SPRING_MVC_ASYNC_REQUEST_TIMEOUT="180s"
-$env:SHOPPING_PREFERENCE_TTL="7d"
-```
-
-RAG 召回参数（均有默认值）：`RAG_DENSE_CHILD_TOP_K=24`、`RAG_BM25_CHILD_TOP_K=8`、`RAG_MAX_PARENT_RESULTS=6`。
-
-购物意图路由模型默认 `qwen3-vl-8b-instruct`（置信度阈值 `0.7`），主模型默认 `qwen`（`qwen-plus-2025-07-28`）。完整配置见 `src/main/resources/application.yml`。
+完整前置依赖、环境变量、Docker 依赖和健康检查见 [docs/runtime.md](docs/runtime.md)。
 
 ## 核心入口
 
@@ -144,10 +111,9 @@ Content-Type: application/json
 
 ## 文档索引
 
-| 文档 | 说明 |
-| --- | --- |
-| [docs/architecture.md](docs/architecture.md) | 系统架构、核心模块、存储设计、记忆层、MCP 边界、RAG 检索、安全策略 |
-| [TESTING.md](TESTING.md) | 自动化与手工测试命令 |
+- [架构说明](docs/architecture.md)
+- [运行说明](docs/runtime.md)
+- [测试说明](TESTING.md)
 
 ## 测试概览
 

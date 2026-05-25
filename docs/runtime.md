@@ -27,7 +27,7 @@ $env:DASHSCOPE_API_KEY="<your-key>"
 | `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | 普通 Redis 7.x，无需 Redis Stack |
 | `REDIS_PASSWORD` | 空 | Redis 密码 |
 | `MILVUS_HOST` / `MILVUS_PORT` | `localhost` / `19530` | Milvus 2.5+ |
-| `MYSQL_URL` | `jdbc:mysql://localhost:3307/rag_agent?...&createDatabaseIfNotExist=true` | rag-agent 自身的会话流水库 |
+| `MYSQL_URL` | `jdbc:mysql://localhost:3307/rag_agent?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true` | rag-agent 自身的会话流水库 |
 | `MYSQL_USERNAME` / `MYSQL_PASSWORD` | `root` / `root` | 同上 |
 | `MALL_BASE_URL` | `http://localhost:8100` | 商城网关地址（仅 token 透传用） |
 | `MALL_MCP_BASE_URL` | `http://localhost:8120` | `mall-mcp` 服务地址 |

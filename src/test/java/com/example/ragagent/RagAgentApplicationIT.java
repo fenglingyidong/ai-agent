@@ -15,7 +15,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
         "spring.datasource.password=",
         "spring.sql.init.mode=never"
 })
-class RagAgentApplicationTests {
+class RagAgentApplicationIT {
 
     @MockitoBean(name = "milvusServiceClient")
     private MilvusServiceClient milvusServiceClient;

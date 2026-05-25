@@ -2,6 +2,8 @@ package com.example.ragagent.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.content.Media;
@@ -188,8 +190,9 @@ class ShoppingIntentRouterTest {
         assertTrue(userPrompt.contains("再推荐几双"));
     }
 
-    @Test
-    void routeShouldIncludePreferenceContextWhenMediaProvided() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void routeShouldAttachMediaToUserPromptWithOptionalPreferenceContext(boolean withPreferenceContext) {
         RouterMocks mocks = routerMocks("""
                 {
                   "intent": "QUERY_ATTRIBUTE",
@@ -202,8 +205,11 @@ class ShoppingIntentRouterTest {
                 """);
         ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
         Media media = new Media(MediaType.IMAGE_PNG, new ByteArrayResource(new byte[]{1, 2, 3}));
+        String preferenceContext = withPreferenceContext
+                ? "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内"
+                : "";
 
-        router.route("再推荐几双", List.of(media), "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内");
+        router.route("再推荐几双", List.of(media), preferenceContext);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Consumer<ChatClient.PromptUserSpec>> userCaptor = ArgumentCaptor.forClass(Consumer.class);
@@ -215,10 +221,15 @@ class ShoppingIntentRouterTest {
         ArgumentCaptor<String> textCaptor = ArgumentCaptor.forClass(String.class);
         verify(userSpec).text(textCaptor.capture());
         String userPrompt = textCaptor.getValue();
-        assertTrue(userPrompt.contains("当前会话短期导购偏好"));
-        assertTrue(userPrompt.contains("品类：跑鞋"));
         assertTrue(userPrompt.contains("用户本轮输入"));
         assertTrue(userPrompt.contains("再推荐几双"));
+        if (withPreferenceContext) {
+            assertTrue(userPrompt.contains("当前会话短期导购偏好"));
+            assertTrue(userPrompt.contains("品类：跑鞋"));
+        }
+        else {
+            assertTrue(!userPrompt.contains("当前会话短期导购偏好"));
+        }
         verify(userSpec).media(media);
     }
 
@@ -265,33 +276,6 @@ class ShoppingIntentRouterTest {
         assertEquals("A_FAQ_SIMPLE_QUERY", route.normalizedTaskType());
         assertEquals("PRODUCT_KNOWLEDGE_QUERY", route.normalizedIntent());
         assertEquals(false, route.routeToCore());
-    }
-
-    @Test
-    void routeShouldAttachMediaToUserPrompt() {
-        RouterMocks mocks = routerMocks("""
-                {
-                  "intent": "QUERY_ATTRIBUTE",
-                  "visual_context": {"category": "运动鞋"},
-                  "text_slots": {"target_attribute": "颜色"},
-                  "route_to_core": false,
-                  "confidence": 0.9,
-                  "reason": "查颜色"
-                }
-                """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
-        Media media = new Media(MediaType.IMAGE_PNG, new ByteArrayResource(new byte[]{1, 2, 3}));
-
-        router.route("这双鞋还有别的颜色吗", List.of(media));
-
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<Consumer<ChatClient.PromptUserSpec>> userCaptor = ArgumentCaptor.forClass(Consumer.class);
-        verify(mocks.requestSpec).user(userCaptor.capture());
-        ChatClient.PromptUserSpec userSpec = mock(ChatClient.PromptUserSpec.class);
-        when(userSpec.text(anyString())).thenReturn(userSpec);
-        userCaptor.getValue().accept(userSpec);
-
-        verify(userSpec).media(media);
     }
 
     private RouterMocks routerMocks(String content) {

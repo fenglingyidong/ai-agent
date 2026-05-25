@@ -46,13 +46,15 @@ flowchart LR
 
 ## 快速启动
 
+后端启动前需准备一个可访问的 MySQL：默认 `localhost:3307/rag_agent`，账号 `root/root`；非默认环境可设置 `MYSQL_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。
+
 ```powershell
 docker compose up -d redis etcd minio milvus
 $env:DASHSCOPE_API_KEY="<your-key>"
 mvn spring-boot:run
 ```
 
-前端在另一个终端启动 `cd frontend; node server.js 4173`，访问 `http://localhost:4173`。后端默认端口 `18082`。
+前端在另一个终端启动 `cd frontend; node server.js 4173`，访问 `http://localhost:4173`。后端默认端口 `18082`，本仓库的 `docker-compose.yml` 不包含 MySQL。
 
 完整前置依赖、环境变量、Docker 依赖和健康检查见 [docs/runtime.md](docs/runtime.md)。
 

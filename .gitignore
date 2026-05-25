@@ -1,2 +1,9 @@
 target/
 dureader_preprocessed/
+.worktrees/
+.claude/
+.codex/
+CLAUDE.md
+docs/pics/
+docs/superpowers/plans/
+plan.md

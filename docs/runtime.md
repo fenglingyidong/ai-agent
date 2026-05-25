@@ -1,13 +1,14 @@
 # 运行说明
 
-本文档描述如何在本地把 `rag-agent` 跑起来。架构与模块职责见 [docs/architecture.md](architecture.md)。
+本文档描述如何在本地把 `rag-agent` 跑起来。架构与模块职责见 [架构说明](architecture.md)。
 
 ## 前置依赖
 
 - JDK 17
 - Maven 3.x
 - Docker Desktop（用于启动 Redis、Milvus 及监控）
-- 独立的 `mall-mcp` 服务（MCP endpoint `http://localhost:8120/mcp`），以及一个可访问的 MySQL 实例供商城使用
+- 可访问的 MySQL 实例：`rag-agent` 默认连接 `localhost:3307/rag_agent` 存储会话流水
+- 独立的 `mall-mcp` 服务（MCP endpoint `http://localhost:8120/mcp`），商城侧 `mall-mysql` 由 `mall-mcp` 项目维护
 - 有效的 `DASHSCOPE_API_KEY`（DashScope 兼容 OpenAI 协议）
 
 ## 环境变量
@@ -41,6 +42,8 @@ $env:DASHSCOPE_API_KEY="<your-key>"
 RAG 召回参数：`RAG_DENSE_CHILD_TOP_K=24`、`RAG_BM25_CHILD_TOP_K=8`、`RAG_MAX_PARENT_RESULTS=6`。完整配置以 `src/main/resources/application.yml` 为准。
 
 ## 本地启动
+
+后端启动前需确认 MySQL 可用：默认 `localhost:3307/rag_agent`，账号 `root/root`；非默认环境可设置 `MYSQL_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。
 
 ```powershell
 # 1. 启动基础设施（普通 Redis + Milvus 套件）
@@ -77,7 +80,7 @@ node server.js 4173
 docker compose up -d prometheus grafana
 ```
 
-`mall-mcp` 服务和商城的 `mall-mysql` 数据库不在本仓库 compose 文件中，请按 `mall-mcp` 项目自身的运行说明启动。
+`rag-agent` 自身的 MySQL、`mall-mcp` 服务和商城侧 `mall-mysql` 数据库不在本仓库 compose 文件中；`mall-mcp` 与商城库请按 `mall-mcp` 项目自身的运行说明启动。
 
 ## 常见问题
 

@@ -24,6 +24,8 @@
 
 完整的环境变量、端口、Docker 依赖和健康检查命令见 [docs/runtime.md](docs/runtime.md)。最简启动：
 
+后端启动前需准备 `localhost:3307/rag_agent`；非默认环境可设置 `MYSQL_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。
+
 ```powershell
 docker compose up -d redis etcd minio milvus
 $env:DASHSCOPE_API_KEY="你的 DashScope Key"

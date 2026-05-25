@@ -3,6 +3,8 @@ package com.example.ragagent.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
@@ -51,40 +53,17 @@ class OrderCreationGuardedToolCallbackTest {
         verify(delegate, never()).call(any(String.class), any(ToolContext.class));
     }
 
-    @Test
-    void shouldBlockWhenUserConfirmedIsFalse() {
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "{\"confirmationId\":\"confirm-1\",\"userConfirmed\":false}",
+            "{\"confirmationId\":\"confirm-1\",\"userConfirmed\":\"true\"}",
+            "{\"confirmationId\":\"confirm-1\",\"userConfirmed\":1}"
+    })
+    void shouldBlockWhenUserConfirmedIsNotBooleanTrue(String input) {
         ToolCallback delegate = delegate();
         OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);
 
-        String result = callback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":false}");
-
-        assertTrue(result.contains("\"ok\":false"));
-        assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
-        assertTrue(result.contains("\"reason\":\"USER_NOT_CONFIRMED\""));
-        verify(delegate, never()).call(any(String.class));
-        verify(delegate, never()).call(any(String.class), any(ToolContext.class));
-    }
-
-    @Test
-    void shouldBlockWhenUserConfirmedIsStringTrue() {
-        ToolCallback delegate = delegate();
-        OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);
-
-        String result = callback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":\"true\"}");
-
-        assertTrue(result.contains("\"ok\":false"));
-        assertTrue(result.contains("ORDER_CREATION_BLOCKED"));
-        assertTrue(result.contains("\"reason\":\"USER_NOT_CONFIRMED\""));
-        verify(delegate, never()).call(any(String.class));
-        verify(delegate, never()).call(any(String.class), any(ToolContext.class));
-    }
-
-    @Test
-    void shouldBlockWhenUserConfirmedIsNumberOne() {
-        ToolCallback delegate = delegate();
-        OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);
-
-        String result = callback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":1}");
+        String result = callback.call(input);
 
         assertTrue(result.contains("\"ok\":false"));
         assertTrue(result.contains("ORDER_CREATION_BLOCKED"));

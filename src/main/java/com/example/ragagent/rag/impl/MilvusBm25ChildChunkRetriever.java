@@ -4,8 +4,11 @@ import com.example.ragagent.config.AppVectorProperties;
 import com.example.ragagent.config.MilvusVectorStoreConfiguration;
 import com.example.ragagent.config.RagRetrievalProperties;
 import com.example.ragagent.rag.RagDocumentConstants;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonPrimitive;
 import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.common.IndexParam;
 import io.milvus.v2.service.vector.request.SearchReq;
@@ -13,6 +16,7 @@ import io.milvus.v2.service.vector.request.data.EmbeddedText;
 import io.milvus.v2.service.vector.response.SearchResp;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.milvus.MilvusVectorStore;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -31,10 +35,11 @@ public class MilvusBm25ChildChunkRetriever {
     private final RagRetrievalProperties retrievalProperties;
     private final ObjectMapper objectMapper;
 
-    public MilvusBm25ChildChunkRetriever(MilvusClientV2 milvusClientV2,
-                                         AppVectorProperties vectorProperties,
-                                         RagRetrievalProperties retrievalProperties,
-                                         ObjectMapper objectMapper) {
+    public MilvusBm25ChildChunkRetriever(
+            @Qualifier(MilvusVectorStoreConfiguration.BM25_MILVUS_CLIENT) MilvusClientV2 milvusClientV2,
+            AppVectorProperties vectorProperties,
+            RagRetrievalProperties retrievalProperties,
+            ObjectMapper objectMapper) {
         this.milvusClientV2 = milvusClientV2;
         this.vectorProperties = vectorProperties;
         this.retrievalProperties = retrievalProperties;
@@ -91,7 +96,38 @@ public class MilvusBm25ChildChunkRetriever {
         if (value == null) {
             return new LinkedHashMap<>();
         }
+        if (value instanceof Map<?, ?> map) {
+            return new LinkedHashMap<>(objectMapper.convertValue(map, METADATA_TYPE));
+        }
+        if (value instanceof JsonElement jsonElement) {
+            return readMetadataFromJsonElement(jsonElement);
+        }
+        if (value instanceof String text) {
+            return readMetadataFromJson(text);
+        }
         return new LinkedHashMap<>(objectMapper.convertValue(value, METADATA_TYPE));
+    }
+
+    private Map<String, Object> readMetadataFromJsonElement(JsonElement jsonElement) {
+        if (jsonElement == null || jsonElement.isJsonNull()) {
+            return new LinkedHashMap<>();
+        }
+        if (jsonElement instanceof JsonPrimitive primitive && primitive.isString()) {
+            return readMetadataFromJson(primitive.getAsString());
+        }
+        return readMetadataFromJson(jsonElement.toString());
+    }
+
+    private Map<String, Object> readMetadataFromJson(String text) {
+        if (!StringUtils.hasText(text)) {
+            return new LinkedHashMap<>();
+        }
+        try {
+            return new LinkedHashMap<>(objectMapper.readValue(text, METADATA_TYPE));
+        }
+        catch (JsonProcessingException ex) {
+            return new LinkedHashMap<>();
+        }
     }
 
     private boolean isChildDocument(Document document) {

@@ -29,6 +29,21 @@ public class RagRetrievalProperties {
     private int bm25ChildTopK = 8;
 
     @Min(1)
+    private int bm25RpcDeadlineMs = 2_000;
+
+    @Min(1)
+    private int bm25FutureTimeoutMs = 2_500;
+
+    @Min(1)
+    private int parallelExecutorCoreSize = 4;
+
+    @Min(1)
+    private int parallelExecutorMaxSize = 8;
+
+    @Min(1)
+    private int parallelExecutorQueueCapacity = 32;
+
+    @Min(1)
     private int rrfK = 60;
 
     @Min(1)
@@ -47,5 +62,15 @@ public class RagRetrievalProperties {
     @AssertTrue(message = "maxChildResultsToConsider must be greater than or equal to minChildResultsToKeep")
     public boolean isChildResultWindowValid() {
         return maxChildResultsToConsider >= minChildResultsToKeep;
+    }
+
+    @AssertTrue(message = "bm25FutureTimeoutMs must be greater than or equal to bm25RpcDeadlineMs")
+    public boolean isBm25TimeoutWindowValid() {
+        return bm25FutureTimeoutMs >= bm25RpcDeadlineMs;
+    }
+
+    @AssertTrue(message = "parallelExecutorMaxSize must be greater than or equal to parallelExecutorCoreSize")
+    public boolean isParallelExecutorSizeValid() {
+        return parallelExecutorMaxSize >= parallelExecutorCoreSize;
     }
 }

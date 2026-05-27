@@ -29,6 +29,7 @@ import reactor.core.publisher.SignalType;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
@@ -515,6 +516,7 @@ public class ReActAgent {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put(TOOL_CONTEXT_USER_ID, StringUtils.hasText(userId) ? userId.trim() : "");
         context.put(TOOL_CONTEXT_SESSION_ID, StringUtils.hasText(sessionId) ? sessionId.trim() : "");
+        context.put(BuiltInTools.TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE, new ConcurrentHashMap<String, String>());
         return context;
     }
 

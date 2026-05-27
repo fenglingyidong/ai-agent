@@ -109,6 +109,11 @@ app:
       dense-similarity-threshold: ${RAG_DENSE_SIMILARITY_THRESHOLD:0.2}
       dense-fallback-top-k: ${RAG_DENSE_FALLBACK_TOP_K:32}
       bm25-child-top-k: ${RAG_BM25_CHILD_TOP_K:8}
+      bm25-rpc-deadline-ms: ${RAG_BM25_RPC_DEADLINE_MS:2000}
+      bm25-future-timeout-ms: ${RAG_BM25_FUTURE_TIMEOUT_MS:2500}
+      parallel-executor-core-size: ${RAG_RETRIEVAL_EXECUTOR_CORE_SIZE:4}
+      parallel-executor-max-size: ${RAG_RETRIEVAL_EXECUTOR_MAX_SIZE:8}
+      parallel-executor-queue-capacity: ${RAG_RETRIEVAL_EXECUTOR_QUEUE_CAPACITY:32}
       rrf-k: ${RAG_RRF_K:60}
       min-child-results-to-keep: ${RAG_MIN_CHILD_RESULTS_TO_KEEP:4}
       max-child-results-to-consider: ${RAG_MAX_CHILD_RESULTS_TO_CONSIDER:12}

@@ -11,9 +11,17 @@ import org.springframework.ai.rag.Query;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -37,7 +45,12 @@ class ParentChildHybridDocumentRetrieverTest {
         when(denseRetriever.loadParentDocuments(org.mockito.ArgumentMatchers.anyList())).thenReturn(parentDocuments);
 
         ParentChildHybridDocumentRetriever retriever =
-                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever, new RagRetrievalProperties());
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        Runnable::run
+                );
 
         List<Document> documents = retriever.retrieve(new Query("guide"));
 
@@ -64,7 +77,12 @@ class ParentChildHybridDocumentRetrieverTest {
         when(denseRetriever.loadParentDocuments(List.of(child1))).thenReturn(parentDocuments);
 
         ParentChildHybridDocumentRetriever retriever =
-                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever, new RagRetrievalProperties());
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        Runnable::run
+                );
 
         List<Document> documents = retriever.retrieve(new Query("guide"));
 
@@ -103,7 +121,12 @@ class ParentChildHybridDocumentRetrieverTest {
         when(denseRetriever.loadParentDocuments(org.mockito.ArgumentMatchers.anyList())).thenReturn(List.of());
 
         ParentChildHybridDocumentRetriever retriever =
-                new ParentChildHybridDocumentRetriever(denseRetriever, bm25Retriever, new RagRetrievalProperties());
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        Runnable::run
+                );
 
         retriever.retrieve(new Query("guide"));
 
@@ -113,6 +136,160 @@ class ParentChildHybridDocumentRetrieverTest {
         List<Document> truncatedChildDocuments = childDocumentsCaptor.getValue();
         assertEquals(List.of("child-1", "child-2", "child-3", "child-4", "child-5", "child-6"),
                 truncatedChildDocuments.stream().map(Document::getId).toList());
+    }
+
+    @Test
+    void retrieveShouldStartDenseAndBm25InParallel() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        CountDownLatch bm25Started = new CountDownLatch(1);
+        Document denseChild = childDocument("child-1", "parent-1");
+        Document bm25Child = childDocument("child-2", "parent-2");
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenAnswer(invocation -> {
+            assertTrue(bm25Started.await(500, TimeUnit.MILLISECONDS));
+            return List.of(denseChild);
+        });
+        when(bm25Retriever.retrieve("guide")).thenAnswer(invocation -> {
+            bm25Started.countDown();
+            return List.of(bm25Child);
+        });
+        when(denseRetriever.loadParentDocuments(org.mockito.ArgumentMatchers.anyList()))
+                .thenReturn(List.of(Document.builder().id("parent-1").text("Parent 1").build()));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            ParentChildHybridDocumentRetriever retriever =
+                    new ParentChildHybridDocumentRetriever(
+                            denseRetriever,
+                            bm25Retriever,
+                            new RagRetrievalProperties(),
+                            executor
+                    );
+
+            retriever.retrieve(new Query("guide"));
+        }
+        finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void retrieveShouldReturnDenseWhenBm25DoesNotFinishBeforeTimeout() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        Document denseChild = childDocument("child-1", "parent-1");
+        List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
+        RagRetrievalProperties properties = new RagRetrievalProperties();
+        properties.setBm25FutureTimeoutMs(50);
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
+        when(bm25Retriever.retrieve("guide")).thenAnswer(invocation -> {
+            Thread.sleep(1_000);
+            return List.of(childDocument("child-2", "parent-2"));
+        });
+        when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(parentDocuments);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            ParentChildHybridDocumentRetriever retriever =
+                    new ParentChildHybridDocumentRetriever(
+                            denseRetriever,
+                            bm25Retriever,
+                            properties,
+                            executor
+                    );
+
+            long startedAt = System.nanoTime();
+            List<Document> documents = retriever.retrieve(new Query("guide"));
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+
+            assertEquals(parentDocuments, documents);
+            assertTrue(elapsedMs < 500);
+        }
+        finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void retrieveShouldSkipQueuedBm25TaskAfterTimeout() throws InterruptedException {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        CountDownLatch blockerStarted = new CountDownLatch(1);
+        CountDownLatch releaseBlocker = new CountDownLatch(1);
+        Document denseChild = childDocument("child-1", "parent-1");
+        List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
+        RagRetrievalProperties properties = new RagRetrievalProperties();
+        properties.setBm25FutureTimeoutMs(50);
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
+        when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(parentDocuments);
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(() -> {
+                blockerStarted.countDown();
+                try {
+                    releaseBlocker.await(1, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertTrue(blockerStarted.await(500, TimeUnit.MILLISECONDS));
+
+            ParentChildHybridDocumentRetriever retriever =
+                    new ParentChildHybridDocumentRetriever(
+                            denseRetriever,
+                            bm25Retriever,
+                            properties,
+                            executor
+                    );
+
+            List<Document> documents = retriever.retrieve(new Query("guide"));
+
+            assertEquals(parentDocuments, documents);
+
+            releaseBlocker.countDown();
+            executor.shutdown();
+            assertTrue(executor.awaitTermination(1, TimeUnit.SECONDS));
+            verify(bm25Retriever, never()).retrieve("guide");
+        }
+        finally {
+            releaseBlocker.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void retrieveShouldKeepDenseOffRejectedBm25Executor() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        Document denseChild = childDocument("child-1", "parent-1");
+        List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
+        AtomicInteger executorSubmissions = new AtomicInteger();
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
+        when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(parentDocuments);
+
+        ParentChildHybridDocumentRetriever retriever =
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        command -> {
+                            executorSubmissions.incrementAndGet();
+                            throw new RejectedExecutionException("queue full");
+                        }
+                );
+
+        List<Document> documents = retriever.retrieve(new Query("guide"));
+
+        assertEquals(parentDocuments, documents);
+        assertEquals(1, executorSubmissions.get());
+        verify(denseRetriever).retrieveChildDocuments("guide");
+        verify(denseRetriever).loadParentDocuments(List.of(denseChild));
     }
 
     private Document childDocument(String childId, String parentId) {

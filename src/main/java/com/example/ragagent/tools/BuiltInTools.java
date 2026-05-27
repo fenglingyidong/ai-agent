@@ -15,12 +15,14 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
 
 @Component
 public class BuiltInTools {
 
     private static final String TOOL_CONTEXT_USER_ID = "userId";
     private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
+    public static final String TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE = "searchProductKnowledgeCache";
     private static final String DEFAULT_USER_ID = "anonymous";
     private static final String DEFAULT_SESSION_ID = "default";
 
@@ -38,8 +40,22 @@ public class BuiltInTools {
         this.shoppingStateService = shoppingStateService;
     }
 
+    public String searchProductKnowledge(String query) {
+        return searchProductKnowledge(query, null);
+    }
+
     @Tool(description = "检索商品知识库、商品详情、规格参数、评价摘要和导购话术。适合回答已入库的商品事实、选品建议和对比依据；实时价格、库存、购物车和订单必须使用 mall_* MCP 工具。")
-    public String searchProductKnowledge(@ToolParam(description = "用户商品需求或需要核验的商品事实") String query) {
+    public String searchProductKnowledge(@ToolParam(description = "用户商品需求或需要核验的商品事实") String query,
+                                         ToolContext toolContext) {
+        String normalizedQuery = normalizeQuery(query);
+        ConcurrentMap<String, String> cache = searchProductKnowledgeCache(toolContext);
+        if (cache == null) {
+            return renderProductKnowledge(normalizedQuery);
+        }
+        return cache.computeIfAbsent(normalizedQuery, this::renderProductKnowledge);
+    }
+
+    private String renderProductKnowledge(String query) {
         List<Document> documents = documentRetriever.retrieve(new Query(query));
         if (documents == null || documents.isEmpty()) {
             return "商品知识库中没有检索到相关内容。";
@@ -63,6 +79,22 @@ public class BuiltInTools {
             builder.append(System.lineSeparator()).append(document.getText());
         }
         return builder.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private ConcurrentMap<String, String> searchProductKnowledgeCache(ToolContext toolContext) {
+        if (toolContext == null || toolContext.getContext() == null) {
+            return null;
+        }
+        Object value = toolContext.getContext().get(TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE);
+        if (value instanceof ConcurrentMap<?, ?> cache) {
+            return (ConcurrentMap<String, String>) cache;
+        }
+        return null;
+    }
+
+    private String normalizeQuery(String query) {
+        return query == null ? "" : query.trim().replace("\r\n", "\n").replace('\r', '\n');
     }
 
     @Tool(description = "更新用户短期导购偏好状态，包括品类、预算、品牌、尺码、颜色、风格和使用场景。不要把 token、密码、手机号等敏感信息写入偏好状态。")

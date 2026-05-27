@@ -12,12 +12,14 @@ import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,10 +38,33 @@ class BuiltInToolsTest {
 
         String result = tools.searchProductKnowledge("儿童积木");
 
+        assertTrue(result.startsWith("[商品知识 1]"));
         assertTrue(result.contains("[商品知识 1]"));
         assertTrue(result.contains("标题: 儿童积木"));
         assertTrue(result.contains("SKU: 3020"));
         assertTrue(result.contains("儿童积木套装 300片"));
+    }
+
+    @Test
+    void searchProductKnowledgeShouldReuseSameRoundQueryCache() {
+        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
+        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
+        BuiltInTools tools = new BuiltInTools(documentRetriever, shoppingStateService);
+        ToolContext toolContext = new ToolContext(Map.of(
+                BuiltInTools.TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE,
+                new ConcurrentHashMap<String, String>()
+        ));
+        Document document = Document.builder()
+                .text("儿童积木套装 300片。")
+                .metadata(Map.of("title", "儿童积木", "skuId", "3020"))
+                .build();
+        when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
+
+        String first = tools.searchProductKnowledge(" 儿童积木 ", toolContext);
+        String second = tools.searchProductKnowledge("儿童积木", toolContext);
+
+        assertEquals(first, second);
+        verify(documentRetriever, times(1)).retrieve(any(Query.class));
     }
 
     @Test

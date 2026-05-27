@@ -26,4 +26,22 @@ class RagRetrievalPropertiesTest {
 
         assertFalse(validator.validate(properties).isEmpty());
     }
+
+    @Test
+    void shouldRejectBm25FutureTimeoutWhenSmallerThanRpcDeadline() {
+        RagRetrievalProperties properties = new RagRetrievalProperties();
+        properties.setBm25RpcDeadlineMs(2_000);
+        properties.setBm25FutureTimeoutMs(1_000);
+
+        assertFalse(validator.validate(properties).isEmpty());
+    }
+
+    @Test
+    void shouldRejectParallelExecutorWhenMaximumIsSmallerThanCoreSize() {
+        RagRetrievalProperties properties = new RagRetrievalProperties();
+        properties.setParallelExecutorCoreSize(8);
+        properties.setParallelExecutorMaxSize(4);
+
+        assertFalse(validator.validate(properties).isEmpty());
+    }
 }

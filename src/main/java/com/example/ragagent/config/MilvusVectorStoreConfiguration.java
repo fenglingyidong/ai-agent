@@ -24,6 +24,7 @@ import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
@@ -35,6 +36,7 @@ public class MilvusVectorStoreConfiguration {
 
     public static final String PRODUCT_VECTOR_STORE = "productVectorStore";
     public static final String MEMORY_VECTOR_STORE = "memoryVectorStore";
+    public static final String BM25_MILVUS_CLIENT = "bm25MilvusClientV2";
 
     public static final String SPARSE_VECTOR_FIELD = "sparse_vector";
     private static final String PRODUCT_BM25_FUNCTION = "product_bm25_function";
@@ -64,14 +66,25 @@ public class MilvusVectorStoreConfiguration {
     }
 
     @Bean(destroyMethod = "close")
+    @Primary
     public MilvusClientV2 milvusClientV2(AppVectorProperties properties) {
+        return buildMilvusClient(properties, 30_000);
+    }
+
+    @Bean(name = BM25_MILVUS_CLIENT, destroyMethod = "close")
+    public MilvusClientV2 bm25MilvusClientV2(AppVectorProperties properties,
+                                             RagRetrievalProperties retrievalProperties) {
+        return buildMilvusClient(properties, retrievalProperties.getBm25RpcDeadlineMs());
+    }
+
+    private MilvusClientV2 buildMilvusClient(AppVectorProperties properties, int rpcDeadlineMs) {
         AppVectorProperties.Milvus milvus = properties.getMilvus();
         ConnectConfig.ConnectConfigBuilder<?, ?> builder = ConnectConfig.builder()
                 .uri(resolveMilvusUri(milvus))
                 .dbName(milvus.getDatabaseName())
                 .secure(milvus.isSecure())
                 .connectTimeoutMs(10_000)
-                .rpcDeadlineMs(30_000);
+                .rpcDeadlineMs(rpcDeadlineMs);
         if (StringUtils.hasText(milvus.getToken())) {
             builder.token(milvus.getToken().trim());
         }

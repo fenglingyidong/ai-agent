@@ -82,9 +82,16 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
     }
 
     private CompletableFuture<List<Document>> retrieveBm25ChildDocumentsAsync(String query) {
+        long deadlineNanos = System.nanoTime()
+                + TimeUnit.MILLISECONDS.toNanos(properties.getBm25FutureTimeoutMs());
         try {
             return CompletableFuture
-                    .supplyAsync(() -> retrieveBm25ChildDocuments(query), retrievalExecutor)
+                    .<List<Document>>supplyAsync(() -> {
+                        if (System.nanoTime() >= deadlineNanos) {
+                            return List.of();
+                        }
+                        return retrieveBm25ChildDocuments(query);
+                    }, retrievalExecutor)
                     .completeOnTimeout(List.of(), properties.getBm25FutureTimeoutMs(), TimeUnit.MILLISECONDS)
                     .exceptionally(ex -> {
                         log.warn("BM25 child chunk retrieval failed asynchronously, falling back to dense-only retrieval", ex);

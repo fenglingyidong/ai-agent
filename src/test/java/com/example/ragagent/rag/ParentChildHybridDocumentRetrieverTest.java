@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -207,6 +208,56 @@ class ParentChildHybridDocumentRetrieverTest {
             assertTrue(elapsedMs < 500);
         }
         finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void retrieveShouldSkipQueuedBm25TaskAfterTimeout() throws InterruptedException {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        CountDownLatch blockerStarted = new CountDownLatch(1);
+        CountDownLatch releaseBlocker = new CountDownLatch(1);
+        Document denseChild = childDocument("child-1", "parent-1");
+        List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
+        RagRetrievalProperties properties = new RagRetrievalProperties();
+        properties.setBm25FutureTimeoutMs(50);
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
+        when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(parentDocuments);
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            executor.submit(() -> {
+                blockerStarted.countDown();
+                try {
+                    releaseBlocker.await(1, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertTrue(blockerStarted.await(500, TimeUnit.MILLISECONDS));
+
+            ParentChildHybridDocumentRetriever retriever =
+                    new ParentChildHybridDocumentRetriever(
+                            denseRetriever,
+                            bm25Retriever,
+                            properties,
+                            executor
+                    );
+
+            List<Document> documents = retriever.retrieve(new Query("guide"));
+
+            assertEquals(parentDocuments, documents);
+
+            releaseBlocker.countDown();
+            executor.shutdown();
+            assertTrue(executor.awaitTermination(1, TimeUnit.SECONDS));
+            verify(bm25Retriever, never()).retrieve("guide");
+        }
+        finally {
+            releaseBlocker.countDown();
             executor.shutdownNow();
         }
     }

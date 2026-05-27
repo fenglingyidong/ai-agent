@@ -51,10 +51,9 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
             return List.of();
         }
 
-        CompletableFuture<List<Document>> denseFuture = retrieveDenseChildDocumentsAsync(normalizedQuery);
         CompletableFuture<List<Document>> bm25Future = retrieveBm25ChildDocumentsAsync(normalizedQuery);
 
-        List<Document> denseChildDocuments = denseFuture.join();
+        List<Document> denseChildDocuments = safeDocuments(denseRetriever.retrieveChildDocuments(normalizedQuery));
         List<Document> bm25ChildDocuments = bm25Future.join();
         List<RankedChildDocument> rankedChildDocuments =
                 rankWithReciprocalRankFusion(denseChildDocuments, bm25ChildDocuments);
@@ -79,19 +78,6 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
         catch (RuntimeException ex) {
             log.warn("BM25 child chunk retrieval failed, falling back to dense-only retrieval", ex);
             return List.of();
-        }
-    }
-
-    private CompletableFuture<List<Document>> retrieveDenseChildDocumentsAsync(String query) {
-        try {
-            return CompletableFuture.supplyAsync(
-                    () -> safeDocuments(denseRetriever.retrieveChildDocuments(query)),
-                    retrievalExecutor
-            );
-        }
-        catch (RuntimeException ex) {
-            log.warn("Dense child chunk retrieval task rejected, running inline", ex);
-            return CompletableFuture.completedFuture(safeDocuments(denseRetriever.retrieveChildDocuments(query)));
         }
     }
 

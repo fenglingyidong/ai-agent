@@ -14,7 +14,9 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -207,6 +209,36 @@ class ParentChildHybridDocumentRetrieverTest {
         finally {
             executor.shutdownNow();
         }
+    }
+
+    @Test
+    void retrieveShouldKeepDenseOffRejectedBm25Executor() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        Document denseChild = childDocument("child-1", "parent-1");
+        List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
+        AtomicInteger executorSubmissions = new AtomicInteger();
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
+        when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(parentDocuments);
+
+        ParentChildHybridDocumentRetriever retriever =
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        command -> {
+                            executorSubmissions.incrementAndGet();
+                            throw new RejectedExecutionException("queue full");
+                        }
+                );
+
+        List<Document> documents = retriever.retrieve(new Query("guide"));
+
+        assertEquals(parentDocuments, documents);
+        assertEquals(1, executorSubmissions.get());
+        verify(denseRetriever).retrieveChildDocuments("guide");
+        verify(denseRetriever).loadParentDocuments(List.of(denseChild));
     }
 
     private Document childDocument(String childId, String parentId) {

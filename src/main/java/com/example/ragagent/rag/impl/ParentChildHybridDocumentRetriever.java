@@ -1,8 +1,10 @@
 package com.example.ragagent.rag.impl;
 
+import com.example.ragagent.config.RagRetrievalConfiguration;
 import com.example.ragagent.config.RagRetrievalProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
@@ -13,6 +15,9 @@ import org.springframework.util.StringUtils;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 @Component
 @Primary
@@ -23,13 +28,17 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
     private final ParentChildDocumentRetriever denseRetriever;
     private final MilvusBm25ChildChunkRetriever bm25Retriever;
     private final RagRetrievalProperties properties;
+    private final Executor retrievalExecutor;
 
     public ParentChildHybridDocumentRetriever(ParentChildDocumentRetriever denseRetriever,
                                               MilvusBm25ChildChunkRetriever bm25Retriever,
-                                              RagRetrievalProperties properties) {
+                                              RagRetrievalProperties properties,
+                                              @Qualifier(RagRetrievalConfiguration.RAG_RETRIEVAL_EXECUTOR)
+                                              Executor retrievalExecutor) {
         this.denseRetriever = denseRetriever;
         this.bm25Retriever = bm25Retriever;
         this.properties = properties;
+        this.retrievalExecutor = retrievalExecutor;
     }
 
     /**
@@ -42,8 +51,11 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
             return List.of();
         }
 
-        List<Document> denseChildDocuments = denseRetriever.retrieveChildDocuments(normalizedQuery);
-        List<Document> bm25ChildDocuments = retrieveBm25ChildDocuments(normalizedQuery);
+        CompletableFuture<List<Document>> denseFuture = retrieveDenseChildDocumentsAsync(normalizedQuery);
+        CompletableFuture<List<Document>> bm25Future = retrieveBm25ChildDocumentsAsync(normalizedQuery);
+
+        List<Document> denseChildDocuments = denseFuture.join();
+        List<Document> bm25ChildDocuments = bm25Future.join();
         List<RankedChildDocument> rankedChildDocuments =
                 rankWithReciprocalRankFusion(denseChildDocuments, bm25ChildDocuments);
         List<Document> fusedChildDocuments = truncateByLargestNormalizedGap(rankedChildDocuments).stream()
@@ -68,6 +80,39 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
             log.warn("BM25 child chunk retrieval failed, falling back to dense-only retrieval", ex);
             return List.of();
         }
+    }
+
+    private CompletableFuture<List<Document>> retrieveDenseChildDocumentsAsync(String query) {
+        try {
+            return CompletableFuture.supplyAsync(
+                    () -> safeDocuments(denseRetriever.retrieveChildDocuments(query)),
+                    retrievalExecutor
+            );
+        }
+        catch (RuntimeException ex) {
+            log.warn("Dense child chunk retrieval task rejected, running inline", ex);
+            return CompletableFuture.completedFuture(safeDocuments(denseRetriever.retrieveChildDocuments(query)));
+        }
+    }
+
+    private CompletableFuture<List<Document>> retrieveBm25ChildDocumentsAsync(String query) {
+        try {
+            return CompletableFuture
+                    .supplyAsync(() -> retrieveBm25ChildDocuments(query), retrievalExecutor)
+                    .completeOnTimeout(List.of(), properties.getBm25FutureTimeoutMs(), TimeUnit.MILLISECONDS)
+                    .exceptionally(ex -> {
+                        log.warn("BM25 child chunk retrieval failed asynchronously, falling back to dense-only retrieval", ex);
+                        return List.of();
+                    });
+        }
+        catch (RuntimeException ex) {
+            log.warn("BM25 child chunk retrieval task rejected, falling back to dense-only retrieval", ex);
+            return CompletableFuture.completedFuture(List.of());
+        }
+    }
+
+    private List<Document> safeDocuments(List<Document> documents) {
+        return documents == null ? List.of() : documents;
     }
 
     /**

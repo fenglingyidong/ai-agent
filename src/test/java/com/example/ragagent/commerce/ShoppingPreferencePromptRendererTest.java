@@ -2,6 +2,10 @@ package com.example.ragagent.commerce;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,7 +21,7 @@ class ShoppingPreferencePromptRendererTest {
 
     @Test
     void renderShouldReturnEmptyWhenStateIsNull() {
-        assertEquals("", renderer.render(null));
+        assertEquals("", renderer.render((ShoppingPreferenceState) null));
     }
 
     @Test
@@ -138,5 +142,56 @@ class ShoppingPreferencePromptRendererTest {
         String prompt = renderer.render(state);
 
         assertFalse(prompt.contains("预算："));
+    }
+
+    @Test
+    void renderShouldIncludeRecentPreferenceChangesFromSnapshot() {
+        ShoppingPreferenceState state = new ShoppingPreferenceState();
+        state.setBrand("OPPO");
+        state.setBudgetMax(500);
+        ShoppingPreferenceSnapshot snapshot = new ShoppingPreferenceSnapshot(
+                state,
+                List.of(
+                        Map.of("brand", "华为"),
+                        Map.of("brand", "OPPO"),
+                        Map.of("budgetMax", 500)
+                )
+        );
+
+        String prompt = renderer.render(snapshot);
+
+        assertTrue(prompt.contains("- 品牌：OPPO"));
+        assertTrue(prompt.contains("- 预算：500元以内"));
+        assertTrue(prompt.contains("最近偏好变化："));
+        assertTrue(prompt.contains("- 品牌最近调整为：华为 -> OPPO"));
+        assertTrue(prompt.contains("- 预算最近调整为：500元以内"));
+    }
+
+    @Test
+    void renderShouldDescribeClearedRecentPreference() {
+        ShoppingPreferenceState state = new ShoppingPreferenceState();
+        state.setCategory("跑鞋");
+        Map<String, Object> clearedBrand = new LinkedHashMap<>();
+        clearedBrand.put("brand", null);
+        ShoppingPreferenceSnapshot snapshot = new ShoppingPreferenceSnapshot(state, List.of(clearedBrand));
+
+        String prompt = renderer.render(snapshot);
+
+        assertTrue(prompt.contains("- 品类：跑鞋"));
+        assertTrue(prompt.contains("- 最近取消了品牌限制"));
+    }
+
+    @Test
+    void renderShouldKeepRemainingBudgetLimitWhenRecentChangeClearsOnlyOneBound() {
+        ShoppingPreferenceState state = new ShoppingPreferenceState();
+        state.setBudgetMin(300);
+        Map<String, Object> clearedBudgetMax = new LinkedHashMap<>();
+        clearedBudgetMax.put("budgetMax", null);
+        ShoppingPreferenceSnapshot snapshot = new ShoppingPreferenceSnapshot(state, List.of(clearedBudgetMax));
+
+        String prompt = renderer.render(snapshot);
+
+        assertTrue(prompt.contains("- 预算最近调整为：300元以上"));
+        assertFalse(prompt.contains("- 最近取消了预算限制"));
     }
 }

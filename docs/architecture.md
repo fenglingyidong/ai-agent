@@ -39,7 +39,7 @@ flowchart LR
 
 ## 存储设计
 
-- **Redis**：父文档正文（`rag:parent:`）、短期记忆窗口（`memory:short:`）、导购偏好（`shopping:preference:`，默认 TTL 由 `SHOPPING_PREFERENCE_TTL` 控制）、商城 token 缓存（`mall:auth:`）。
+- **Redis**：父文档正文（`rag:parent:`）、短期记忆窗口（`memory:short:`）、导购偏好当前状态 Hash（`shopping:preference:v2:state:`）、最近 5 次偏好增量 List（`shopping:preference:v2:changes:`）、商城 token 缓存（`mall:auth:`）。两类偏好 key 的默认 TTL 均由 `SHOPPING_PREFERENCE_TTL` 控制。
 - **MySQL**：`conversation_sessions` 和 `conversation_turns` 两张表，由 `ConversationLogService` 维护，保存用户提问和助手最终可见回答的原文流水。
 - **Milvus**：`product_index` 存放商品子块（Dense embedding + Sparse-BM25 字段），`memory_index` 存放长期摘要向量；父块本体回查 Redis。
 
@@ -47,7 +47,7 @@ flowchart LR
 
 - **短期记忆**：`MessageChatMemoryAdvisor` 基于 Redis 窗口缓存最近若干轮对话，按 `userId` + `sessionId` 隔离。
 - **长期摘要**：`LongTermMemoryAdvisor` 在 `before(...)` 阶段调用 `LongTermMemoryService`，根据当前用户问题在 `memory_index` 检索摘要，命中后通过 `augmentSystemMessage` 注入到 system 上下文。摘要的写入由后台任务在对话累积到阈值后触发。
-- **短期偏好状态**：`ShoppingStateService` 持有 `ShoppingPreferenceState`（品类、预算、品牌、尺码、颜色、风格、使用场景），由 `BuiltInTools.updateShoppingPreference` 工具维护，并被 `SimpleTaskAgent` 在 system prompt 中复用。每轮 `/api/react` 请求都会先加载当前偏好并把摘要注入路由小模型、简单任务快车道和主 Agent；用户显式修改偏好以本轮表达为准，类目切换时会清理品牌、尺码、颜色、风格、使用场景等强相关旧字段。
+- **短期偏好状态**：`ShoppingStateService` 用 Redis Hash 保存当前 `ShoppingPreferenceState`（品类、预算、品牌、尺码、颜色、风格、使用场景），用 Redis List 保存最近 5 次按轮次聚合的增量 JSON。每次实际字段变化后，服务执行 `HSET` / `HDEL`、`RPUSH`、`LTRIM -5 -1`，并刷新两类 key 的 TTL。偏好可由路由后的自动抽取或 `BuiltInTools.updateShoppingPreference` 工具维护。每轮 `/api/react` 请求都会把当前偏好和最近变化摘要注入路由小模型、简单任务快车道和主 Agent；当前 Hash 是事实源，最近变化只作为上下文线索。用户显式修改偏好以本轮表达为准，类目切换时会清理品牌、尺码、颜色、风格、使用场景等强相关旧字段。
 
 ## MCP 边界
 

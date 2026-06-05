@@ -1,6 +1,7 @@
 package com.example.ragagent.commerce;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -16,15 +17,41 @@ import org.springframework.util.StringUtils;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
+/**
+ * 管理当前会话的短期导购偏好。
+ *
+ * <p>Redis Hash 保存当前完整状态，Redis List 保存最近若干次增量变化。
+ * Hash 是读取偏好的事实源，List 只用于向 Agent 提供近期变化线索。</p>
+ */
 @Service
 @Validated
 public class ShoppingStateService {
 
     private static final Logger log = LoggerFactory.getLogger(ShoppingStateService.class);
 
-    private static final String PREFERENCE_PREFIX = "shopping:preference:";
+    // v2 使用新前缀，与旧版整段 JSON String 存储隔离，避免灰度期间误读旧结构。
+    private static final String STATE_PREFIX = "shopping:preference:v2:state:";
+    private static final String CHANGES_PREFIX = "shopping:preference:v2:changes:";
+    private static final int RECENT_CHANGE_LIMIT = 5;
+    private static final TypeReference<Map<String, Object>> DELTA_MAP_TYPE = new TypeReference<>() {
+    };
+    private static final List<String> PREFERENCE_FIELDS = List.of(
+            "category",
+            "budgetMin",
+            "budgetMax",
+            "brand",
+            "size",
+            "color",
+            "style",
+            "usageScenario"
+    );
 
     @Autowired
     private StringRedisTemplate redisTemplate;
@@ -38,42 +65,91 @@ public class ShoppingStateService {
     @Autowired
     private ShoppingPreferenceMergePolicy mergePolicy;
 
+    /**
+     * 从 Redis Hash 读取当前完整偏好，不依赖变更日志回放。
+     */
     public ShoppingPreferenceState loadPreference(String userId, String sessionId) {
-        String key = preferenceKey(userId, sessionId);
-        String raw = redisTemplate.opsForValue().get(key);
-        if (!StringUtils.hasText(raw)) {
+        Map<Object, Object> entries = redisTemplate.opsForHash().entries(stateKey(userId, sessionId));
+        if (entries == null || entries.isEmpty()) {
             return new ShoppingPreferenceState();
         }
-        try {
-            ShoppingPreferenceState state = objectMapper.readValue(raw, ShoppingPreferenceState.class);
-            return state == null ? new ShoppingPreferenceState() : state;
-        }
-        catch (JsonProcessingException ex) {
-            log.warn("Failed to deserialize shopping preference state. key={}, reason={}", key, ex.getOriginalMessage());
-            return new ShoppingPreferenceState();
-        }
+        return fromHash(entries);
     }
 
-    // 单实例内串行化 Redis 读-改-写，降低自动偏好写入时的字段丢失风险；Redis TTL/持久化策略保持不变。
+    /**
+     * 读取供 Agent 上下文使用的偏好快照：当前完整状态加最近增量变化。
+     */
+    public ShoppingPreferenceSnapshot loadPreferenceSnapshot(String userId, String sessionId) {
+        ShoppingPreferenceState state = loadPreference(userId, sessionId);
+        List<String> rawChanges = redisTemplate.opsForList().range(changesKey(userId, sessionId), 0, -1);
+        if (rawChanges == null || rawChanges.isEmpty()) {
+            return new ShoppingPreferenceSnapshot(state, List.of());
+        }
+        List<Map<String, Object>> changes = new ArrayList<>();
+        for (String rawChange : rawChanges) {
+            // 单条历史日志损坏不应阻断当前偏好的读取。
+            if (!StringUtils.hasText(rawChange)) {
+                continue;
+            }
+            try {
+                Map<String, Object> change = objectMapper.readValue(rawChange, DELTA_MAP_TYPE);
+                if (change != null && !change.isEmpty()) {
+                    changes.add(change);
+                }
+            }
+            catch (JsonProcessingException ex) {
+                log.warn("Failed to deserialize shopping preference delta. reason={}", ex.getOriginalMessage());
+            }
+        }
+        return new ShoppingPreferenceSnapshot(state, changes);
+    }
+
+    // 单实例内串行化 Redis 读-改-写，降低自动偏好写入时的字段丢失风险。
     public synchronized ShoppingPreferenceState mergePreference(String userId,
                                                                 String sessionId,
                                                                 @NotNull @Valid ShoppingPreferencePatch patch) {
         if (patch == null) {
             throw new IllegalArgumentException("patch must not be null");
         }
-        ShoppingPreferenceState state = mergePolicy.merge(loadPreference(userId, sessionId), patch);
+        ShoppingPreferenceState before = loadPreference(userId, sessionId);
+        ShoppingPreferenceState state = mergePolicy.merge(copyOf(before), patch);
         validateBudgetRange(state);
-        savePreference(userId, sessionId, state);
+        savePreference(userId, sessionId, before, state);
         return state;
     }
 
-    private void savePreference(String userId, String sessionId, ShoppingPreferenceState state) {
+    private void savePreference(String userId,
+                                String sessionId,
+                                ShoppingPreferenceState before,
+                                ShoppingPreferenceState state) {
+        Map<String, Object> delta = buildDelta(before, state);
+        if (delta.isEmpty()) {
+            return;
+        }
+
+        // 先完成序列化，再写 Redis，避免序列化异常留下仅更新 Hash 的半成品状态。
+        String deltaJson;
         try {
-            redisTemplate.opsForValue().set(preferenceKey(userId, sessionId), objectMapper.writeValueAsString(state), preferenceTtl);
+            deltaJson = objectMapper.writeValueAsString(delta);
         }
         catch (JsonProcessingException ex) {
-            throw new IllegalStateException("Failed to serialize shopping preference state", ex);
+            throw new IllegalStateException("Failed to serialize shopping preference delta", ex);
         }
+
+        String stateKey = stateKey(userId, sessionId);
+        String changesKey = changesKey(userId, sessionId);
+        Map<String, String> updates = hashUpdates(delta, state);
+        List<String> clearedFields = clearedFields(delta);
+        if (!updates.isEmpty()) {
+            redisTemplate.opsForHash().putAll(stateKey, updates);
+        }
+        if (!clearedFields.isEmpty()) {
+            redisTemplate.opsForHash().delete(stateKey, clearedFields.toArray());
+        }
+        redisTemplate.opsForList().rightPush(changesKey, deltaJson);
+        redisTemplate.opsForList().trim(changesKey, -RECENT_CHANGE_LIMIT, -1);
+        redisTemplate.expire(stateKey, preferenceTtl);
+        redisTemplate.expire(changesKey, preferenceTtl);
     }
 
     private void validateBudgetRange(ShoppingPreferenceState state) {
@@ -83,14 +159,170 @@ public class ShoppingStateService {
         }
     }
 
-    private String preferenceKey(String userId, String sessionId) {
-        return PREFERENCE_PREFIX + normalize(userId) + ":" + normalize(sessionId);
+    private ShoppingPreferenceState fromHash(Map<Object, Object> entries) {
+        ShoppingPreferenceState state = new ShoppingPreferenceState();
+        state.setCategory(readString(entries, "category"));
+        state.setBudgetMin(readInteger(entries, "budgetMin"));
+        state.setBudgetMax(readInteger(entries, "budgetMax"));
+        state.setBrand(readString(entries, "brand"));
+        state.setSize(readString(entries, "size"));
+        state.setColor(readString(entries, "color"));
+        state.setStyle(readString(entries, "style"));
+        state.setUsageScenario(readString(entries, "usageScenario"));
+        state.setSource(readString(entries, "source"));
+        state.setConfidence(readDouble(entries, "confidence"));
+        state.setUpdatedAtEpochMillis(readLong(entries, "updatedAtEpochMillis"));
+        state.setUpdatedTurnNo(readLong(entries, "updatedTurnNo"));
+        return state;
+    }
+
+    private Map<String, Object> buildDelta(ShoppingPreferenceState before, ShoppingPreferenceState state) {
+        Map<String, Object> delta = new LinkedHashMap<>();
+        // 变更日志只记录可参与推荐的偏好槽位，不重复记录来源、置信度等元数据。
+        for (String field : PREFERENCE_FIELDS) {
+            Object oldValue = readField(before, field);
+            Object newValue = readField(state, field);
+            if (!Objects.equals(oldValue, newValue)) {
+                delta.put(field, newValue);
+            }
+        }
+        return delta;
+    }
+
+    private Map<String, String> hashUpdates(Map<String, Object> delta, ShoppingPreferenceState state) {
+        Map<String, String> updates = new LinkedHashMap<>();
+        delta.forEach((field, value) -> {
+            if (value != null) {
+                updates.put(field, value.toString());
+            }
+        });
+        // 只有实际偏好变化时才同步刷新本次状态的审计元数据。
+        putIfPresent(updates, "source", state.getSource());
+        putIfPresent(updates, "confidence", state.getConfidence());
+        putIfPresent(updates, "updatedAtEpochMillis", state.getUpdatedAtEpochMillis());
+        putIfPresent(updates, "updatedTurnNo", state.getUpdatedTurnNo());
+        return updates;
+    }
+
+    private List<String> clearedFields(Map<String, Object> delta) {
+        List<String> clearedFields = new ArrayList<>();
+        delta.forEach((field, value) -> {
+            if (value == null) {
+                clearedFields.add(field);
+            }
+        });
+        return clearedFields;
+    }
+
+    private ShoppingPreferenceState copyOf(ShoppingPreferenceState source) {
+        ShoppingPreferenceState copy = new ShoppingPreferenceState();
+        if (source == null) {
+            return copy;
+        }
+        copy.setCategory(source.getCategory());
+        copy.setBudgetMin(source.getBudgetMin());
+        copy.setBudgetMax(source.getBudgetMax());
+        copy.setBrand(source.getBrand());
+        copy.setSize(source.getSize());
+        copy.setColor(source.getColor());
+        copy.setStyle(source.getStyle());
+        copy.setUsageScenario(source.getUsageScenario());
+        copy.setSource(source.getSource());
+        copy.setConfidence(source.getConfidence());
+        copy.setUpdatedAtEpochMillis(source.getUpdatedAtEpochMillis());
+        copy.setUpdatedTurnNo(source.getUpdatedTurnNo());
+        return copy;
+    }
+
+    private Object readField(ShoppingPreferenceState state, String field) {
+        if (state == null) {
+            return null;
+        }
+        return switch (field) {
+            case "category" -> state.getCategory();
+            case "budgetMin" -> state.getBudgetMin();
+            case "budgetMax" -> state.getBudgetMax();
+            case "brand" -> state.getBrand();
+            case "size" -> state.getSize();
+            case "color" -> state.getColor();
+            case "style" -> state.getStyle();
+            case "usageScenario" -> state.getUsageScenario();
+            default -> null;
+        };
+    }
+
+    private void putIfPresent(Map<String, String> updates, String field, Object value) {
+        if (value != null) {
+            updates.put(field, value.toString());
+        }
+    }
+
+    private String readString(Map<Object, Object> entries, String field) {
+        Object value = entries.get(field);
+        if (value == null) {
+            return null;
+        }
+        String text = value.toString().trim();
+        return StringUtils.hasText(text) ? text : null;
+    }
+
+    private Integer readInteger(Map<Object, Object> entries, String field) {
+        String text = readString(entries, field);
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(text);
+        }
+        catch (NumberFormatException ex) {
+            log.warn("Failed to parse shopping preference integer field. field={}, value={}", field, text);
+            return null;
+        }
+    }
+
+    private Long readLong(Map<Object, Object> entries, String field) {
+        String text = readString(entries, field);
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        try {
+            return Long.valueOf(text);
+        }
+        catch (NumberFormatException ex) {
+            log.warn("Failed to parse shopping preference long field. field={}, value={}", field, text);
+            return null;
+        }
+    }
+
+    private Double readDouble(Map<Object, Object> entries, String field) {
+        String text = readString(entries, field);
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        try {
+            return Double.valueOf(text);
+        }
+        catch (NumberFormatException ex) {
+            log.warn("Failed to parse shopping preference double field. field={}, value={}", field, text);
+            return null;
+        }
+    }
+
+    private String stateKey(String userId, String sessionId) {
+        return STATE_PREFIX + normalize(userId) + ":" + normalize(sessionId);
+    }
+
+    private String changesKey(String userId, String sessionId) {
+        return CHANGES_PREFIX + normalize(userId) + ":" + normalize(sessionId);
     }
 
     private String normalize(String value) {
         return StringUtils.hasText(value) ? value.trim() : "default";
     }
 
+    /**
+     * 单轮偏好补丁。非空槽位表示更新，clearFields 表示显式删除已有槽位。
+     */
     public record ShoppingPreferencePatch(
             @Size(max = 64)
             String category,

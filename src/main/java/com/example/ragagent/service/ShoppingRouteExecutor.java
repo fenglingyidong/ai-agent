@@ -3,6 +3,7 @@ package com.example.ragagent.service;
 import com.example.ragagent.commerce.ShoppingPreferenceExtractor;
 import com.example.ragagent.commerce.ShoppingPreferencePromptRenderer;
 import com.example.ragagent.commerce.ShoppingPreferenceSource;
+import com.example.ragagent.commerce.ShoppingPreferenceSnapshot;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
 import com.example.ragagent.mall.MallMcpContextClient;
@@ -119,8 +120,10 @@ public class ShoppingRouteExecutor {
             return new RoutedAgentRequest(appendMultimodalInstruction(normalizedMessage, safeMedia.size()), safeMedia, null);
         }
 
-        String preferenceContextBeforeRoute = renderPreferenceContext(loadPreference(userId, sessionId));
+        // 路由前先注入已有偏好，让小模型能结合当前状态和近期变化识别本轮意图。
+        String preferenceContextBeforeRoute = renderPreferenceContext(loadPreferenceSnapshot(userId, sessionId));
         ShoppingIntentRoute route = intentRouter.route(normalizedMessage, safeMedia, preferenceContextBeforeRoute);
+        // 路由结果可能带来新的偏好槽位，合并后重新渲染给快车道或主 Agent 使用。
         String preferenceContextAfterRoute = updateAndRenderPreferenceContext(userId, sessionId, normalizedMessage, route);
         List<ShoppingTaskPolicy> taskPolicies = resolveTaskPolicies(route);
         boolean mallToolsAllowedByPolicy = allowsMallToolsByPolicy(taskPolicies);
@@ -190,12 +193,17 @@ public class ShoppingRouteExecutor {
         );
     }
 
-    private ShoppingPreferenceState loadPreference(String userId, String sessionId) {
+    /**
+     * 加载短期偏好快照。相关组件未启用时返回空快照，保持路由链路可降级运行。
+     */
+    private ShoppingPreferenceSnapshot loadPreferenceSnapshot(String userId, String sessionId) {
         if (shoppingStateService == null) {
-            return new ShoppingPreferenceState();
+            return new ShoppingPreferenceSnapshot(new ShoppingPreferenceState(), List.of());
         }
-        ShoppingPreferenceState state = shoppingStateService.loadPreference(userId, sessionId);
-        return state == null ? new ShoppingPreferenceState() : state;
+        ShoppingPreferenceSnapshot snapshot = shoppingStateService.loadPreferenceSnapshot(userId, sessionId);
+        return snapshot == null
+                ? new ShoppingPreferenceSnapshot(new ShoppingPreferenceState(), List.of())
+                : snapshot;
     }
 
     private String updateAndRenderPreferenceContext(String userId,
@@ -216,7 +224,7 @@ public class ShoppingRouteExecutor {
                 }
             }
         }
-        return renderPreferenceContext(loadPreference(userId, sessionId));
+        return renderPreferenceContext(loadPreferenceSnapshot(userId, sessionId));
     }
 
     private boolean shouldMergePreferencePatch(ShoppingStateService.ShoppingPreferencePatch patch) {
@@ -242,11 +250,11 @@ public class ShoppingRouteExecutor {
         return patch != null && patch.confidence() != null && patch.confidence() > 0.0;
     }
 
-    private String renderPreferenceContext(ShoppingPreferenceState state) {
+    private String renderPreferenceContext(ShoppingPreferenceSnapshot snapshot) {
         if (shoppingPreferencePromptRenderer == null) {
             return "";
         }
-        String rendered = shoppingPreferencePromptRenderer.render(state);
+        String rendered = shoppingPreferencePromptRenderer.render(snapshot);
         return StringUtils.hasText(rendered) ? rendered : "";
     }
 

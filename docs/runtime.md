@@ -33,7 +33,7 @@ $env:DASHSCOPE_API_KEY="<your-key>"
 | `MALL_BASE_URL` | `http://localhost:8100` | 商城网关地址（仅 token 透传用） |
 | `MALL_MCP_BASE_URL` | `http://localhost:8120` | `mall-mcp` 服务地址 |
 | `MCP_CONTEXT_SECRET` | `mall-mcp-dev-secret` | rag-agent ↔ mall-mcp 上下文接口共享密钥 |
-| `SHOPPING_PREFERENCE_TTL` | `7d` | 短期偏好状态 TTL |
+| `SHOPPING_PREFERENCE_TTL` | `7d` | 短期偏好 Hash 当前状态和 List 最近变化的滑动 TTL |
 | `MEMORY_SHORT_TERM_TTL` | `30d` | 短期记忆窗口 TTL |
 | `INTENT_ROUTER_CONFIDENCE_THRESHOLD` | `0.7` | 快车道路由置信度阈值 |
 | `QWEN_VL_ROUTER_MODEL` | `qwen3-vl-8b-instruct` | 意图路由模型 |

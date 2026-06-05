@@ -4,6 +4,7 @@ import com.example.ragagent.mall.MallMcpContextClient;
 import com.example.ragagent.commerce.ShoppingPreferenceExtractor;
 import com.example.ragagent.commerce.ShoppingPreferencePromptRenderer;
 import com.example.ragagent.commerce.ShoppingPreferenceSource;
+import com.example.ragagent.commerce.ShoppingPreferenceSnapshot;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
 import org.junit.jupiter.api.Test;
@@ -373,7 +374,7 @@ class ShoppingRouteExecutorTest {
         ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
                 null, null, null, null, null, null, null, null
         );
-        when(shoppingStateService.loadPreference("user-1", "session-1")).thenReturn(state);
+        when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1")).thenReturn(snapshot(state));
         when(shoppingPreferenceExtractor.extract("再推荐几双", route, null)).thenReturn(patch);
         when(intentRouter.route(eq("再推荐几双"), eq(List.of()), contains("品类：跑鞋"))).thenReturn(route);
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
@@ -397,6 +398,49 @@ class ShoppingRouteExecutorTest {
         );
 
         verify(intentRouter).route(eq("再推荐几双"), eq(List.of()), contains("预算：500元以内"));
+    }
+
+    @Test
+    void routeBeforeCoreShouldPassRecentPreferenceChangesToIntentRouter() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
+        ShoppingPreferenceExtractor shoppingPreferenceExtractor = mock(ShoppingPreferenceExtractor.class);
+        ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
+        ShoppingPreferenceState state = new ShoppingPreferenceState();
+        state.setBrand("OPPO");
+        ShoppingPreferenceSnapshot snapshot = new ShoppingPreferenceSnapshot(
+                state,
+                List.of(Map.of("brand", "华为"), Map.of("brand", "OPPO"))
+        );
+        ShoppingIntentRoute route = ShoppingIntentRoute.fallback("测试兜底");
+        ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
+                null, null, null, null, null, null, null, null
+        );
+        when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1")).thenReturn(snapshot);
+        when(shoppingPreferenceExtractor.extract("继续推荐", route, null)).thenReturn(patch);
+        when(intentRouter.route(eq("继续推荐"), eq(List.of()), contains("品牌最近调整为：华为 -> OPPO")))
+                .thenReturn(route);
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                null,
+                null,
+                shoppingStateService,
+                shoppingPreferenceExtractor,
+                shoppingPreferencePromptRenderer
+        );
+
+        executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                "继续推荐",
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        verify(intentRouter).route(eq("继续推荐"), eq(List.of()), contains("品牌最近调整为：华为 -> OPPO"));
     }
 
     @Test
@@ -433,9 +477,9 @@ class ShoppingRouteExecutorTest {
                 0.9,
                 null
         );
-        when(shoppingStateService.loadPreference("user-1", "session-1"))
-                .thenReturn(oldState)
-                .thenReturn(updatedState);
+        when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1"))
+                .thenReturn(snapshot(oldState))
+                .thenReturn(snapshot(updatedState));
         when(intentRouter.route(eq("再推荐几双"), eq(List.of()), contains("品类：跑鞋"))).thenReturn(route);
         when(shoppingPreferenceExtractor.extract("再推荐几双", route, null)).thenReturn(patch);
         when(shoppingStateService.mergePreference("user-1", "session-1", patch)).thenReturn(updatedState);
@@ -498,9 +542,9 @@ class ShoppingRouteExecutorTest {
                 null
         );
         ArgumentCaptor<String> preferenceContextCaptor = ArgumentCaptor.forClass(String.class);
-        when(shoppingStateService.loadPreference("user-1", "session-1"))
-                .thenReturn(oldState)
-                .thenReturn(updatedState);
+        when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1"))
+                .thenReturn(snapshot(oldState))
+                .thenReturn(snapshot(updatedState));
         when(intentRouter.route("再推荐几双", List.of(), "")).thenReturn(route);
         when(shoppingPreferenceExtractor.extract("再推荐几双", route, null)).thenReturn(patch);
         when(shoppingStateService.mergePreference("user-1", "session-1", patch)).thenReturn(updatedState);
@@ -544,8 +588,8 @@ class ShoppingRouteExecutorTest {
         ShoppingPreferenceExtractor shoppingPreferenceExtractor = mock(ShoppingPreferenceExtractor.class);
         ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
         ShoppingIntentRoute route = ShoppingIntentRoute.fallback("测试兜底");
-        when(shoppingStateService.loadPreference("user-1", "session-1"))
-                .thenReturn(new ShoppingPreferenceState());
+        when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1"))
+                .thenReturn(snapshot(new ShoppingPreferenceState()));
         when(intentRouter.route("随便看看", List.of(), "")).thenReturn(route);
         when(shoppingPreferenceExtractor.extract("随便看看", route, null)).thenReturn(patch);
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
@@ -608,8 +652,8 @@ class ShoppingRouteExecutorTest {
         );
         ArgumentCaptor<ShoppingStateService.ShoppingPreferencePatch> patchCaptor =
                 ArgumentCaptor.forClass(ShoppingStateService.ShoppingPreferencePatch.class);
-        when(shoppingStateService.loadPreference("user-1", "session-1"))
-                .thenReturn(new ShoppingPreferenceState());
+        when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1"))
+                .thenReturn(snapshot(new ShoppingPreferenceState()));
         when(intentRouter.route("预算500以内，随便看看", List.of(), "")).thenReturn(route);
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
                 intentRouter,
@@ -690,5 +734,9 @@ class ShoppingRouteExecutorTest {
     private String collect(Flux<String> stream) {
         List<String> chunks = stream.collectList().block();
         return chunks == null ? "" : String.join("", chunks);
+    }
+
+    private ShoppingPreferenceSnapshot snapshot(ShoppingPreferenceState state) {
+        return new ShoppingPreferenceSnapshot(state, List.of());
     }
 }

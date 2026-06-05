@@ -28,7 +28,7 @@ flowchart LR
 
 - **分层路由架构**：在 ReAct 主链路前增加 `ShoppingIntentRouter`，用小模型 JSON 路由把请求拆成 FAQ 快车道、单步商城工具快车道和复杂 ReAct 三类，降低简单任务对主模型和工具编排的依赖。
 - **商品事实约束**：商品推荐、价格、库存、SKU 等事实信息优先来自 RAG 检索或 `mall_*` MCP 工具，避免把关键交易信息交给模型自由生成。
-- **多层记忆设计**：Redis 承接短期对话窗口和导购偏好，MySQL 记录原文会话流水，Milvus 保存长期摘要向量，把“即时上下文、可追溯日志、长期记忆”拆成不同存储职责。
+- **多层记忆设计**：Redis 承接短期对话窗口和导购偏好，偏好使用 Hash 保存当前状态、List 保存最近 5 次增量变化；MySQL 记录原文会话流水，Milvus 保存长期摘要向量，把“即时上下文、可追溯日志、长期记忆”拆成不同存储职责。
 - **MCP 商城边界**：商城商品、购物车和订单能力通过独立 `mall-mcp` 服务暴露，Agent 侧只消费 MCP 工具，不直连商城 REST，便于隔离业务系统和 Agent 编排层。
 - **安全工具编排**：`PromptSecurityFilter` 前置处理注入与敏感值脱敏，`mall_create_order` 在 Java 侧设置确认门禁，确保高风险工具调用不只依赖模型自觉。
 
@@ -124,6 +124,7 @@ Content-Type: application/json
 | `ReActAgentTest` | 工具注册、模型切换、脱敏恢复、路由回退 |
 | `ShoppingIntentRouterTest` | JSON 路由解析、图文 media 透传 |
 | `ShoppingRouteExecutorTest` / `SimpleTaskAgentTest` | 快车道短路、限定工具、MCP 不可用失败 |
+| `ShoppingStateServiceTest` / `ShoppingPreferencePromptRendererTest` | 偏好 Hash/List 存储、TTL、最近变化渲染 |
 | `PromptSecurityFilterTest` | 注入过滤与敏感值恢复 |
 | `ParentChildHybridDocumentRetrieverTest` | Dense + BM25 融合与截断 |
 | `LongTermMemoryAdvisorTest` / `RedisChatMemoryRepositoryTest` | 短期窗口淘汰、长期摘要触发 |

@@ -4,6 +4,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.example.ragagent.observability.RagTracing;
+import io.opentelemetry.api.trace.Span;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ToolContext;
@@ -11,6 +13,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -20,9 +23,43 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class LoggingToolCallbackTest {
+
+    @Test
+    void callShouldReturnDelegateResultWithoutChangingToolPayload() {
+        ToolCallback delegate = mock(ToolCallback.class);
+        ToolDefinition definition = ToolDefinition.builder()
+                .name("searchProductKnowledge")
+                .description("检索商品知识")
+                .inputSchema("{}")
+                .build();
+        when(delegate.getToolDefinition()).thenReturn(definition);
+        when(delegate.call("敏感输入")).thenReturn("敏感输出");
+
+        LoggingToolCallback callback = new LoggingToolCallback(delegate, "user-1", "session-1", new RagTracing());
+
+        String result = callback.call("敏感输入");
+
+        assertEquals("敏感输出", result);
+        verify(delegate).call("敏感输入");
+    }
+
+    @Test
+    void callShouldUseUnknownToolSpanNameWhenToolDefinitionIsMissing() {
+        ToolCallback delegate = mock(ToolCallback.class);
+        when(delegate.getToolDefinition()).thenReturn(null);
+        when(delegate.call("敏感输入")).thenReturn("敏感输出");
+        RecordingTracing tracing = new RecordingTracing();
+        LoggingToolCallback callback = new LoggingToolCallback(delegate, "user-1", "session-1", tracing);
+
+        String result = callback.call("敏感输入");
+
+        assertEquals("敏感输出", result);
+        assertEquals("tool.unknown", tracing.spanName());
+    }
 
     @Test
     void shouldLogToolCallSummaryWithoutFullInputOrOutput() {
@@ -79,6 +116,23 @@ class LoggingToolCallbackTest {
         }
     }
 
+    @Test
+    void callShouldNotRecordToolExceptionInSpanWhenDelegateThrows() {
+        RuntimeException exception = new RuntimeException("failed input={\"skuId\":3020,\"token\":\"secret-token\"}");
+        ToolCallback delegate = delegateThrowing(exception);
+        RecordingTracing tracing = new RecordingTracing();
+        LoggingToolCallback callback = new LoggingToolCallback(delegate, "user-1", "session-1", tracing);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> callback.call("{\"skuId\":3020,\"token\":\"secret-token\"}", new ToolContext(Map.of())));
+
+        assertEquals(exception, thrown);
+        assertEquals(0, tracing.recordErrorCount());
+        assertEquals("RuntimeException", tracing.stringAttribute("tool.error.type"));
+        assertEquals("RuntimeException", tracing.stringAttribute("error.type"));
+        assertEquals("error", tracing.stringAttribute("tool.status"));
+    }
+
     private ToolCallback delegateReturning(String output) {
         ToolCallback delegate = mock(ToolCallback.class);
         ToolDefinition definition = mock(ToolDefinition.class);
@@ -125,6 +179,51 @@ class LoggingToolCallbackTest {
             logger.setLevel(originalLevel);
             logger.setAdditive(originalAdditive);
             appender.stop();
+        }
+    }
+
+    private static final class RecordingTracing extends RagTracing {
+
+        private String spanName;
+        private int recordErrorCount;
+        private final Map<String, String> stringAttributes = new java.util.LinkedHashMap<>();
+
+        @Override
+        public <T> T inSpan(String spanName, Callable<T> callable) {
+            this.spanName = spanName;
+            try {
+                return callable.call();
+            }
+            catch (RuntimeException ex) {
+                recordError(null, ex);
+                throw ex;
+            }
+            catch (Exception ex) {
+                recordError(null, ex);
+                throw new IllegalStateException(ex);
+            }
+        }
+
+        @Override
+        public void setAttribute(Span span, String key, String value) {
+            stringAttributes.put(key, value);
+        }
+
+        @Override
+        public void recordError(Span span, Throwable ex) {
+            recordErrorCount++;
+        }
+
+        private String spanName() {
+            return spanName;
+        }
+
+        private int recordErrorCount() {
+            return recordErrorCount;
+        }
+
+        private String stringAttribute(String key) {
+            return stringAttributes.get(key);
         }
     }
 }

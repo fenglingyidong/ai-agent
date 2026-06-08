@@ -1,9 +1,12 @@
 package com.example.ragagent.rag;
 
 import com.example.ragagent.config.RagRetrievalProperties;
+import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.rag.impl.MilvusBm25ChildChunkRetriever;
 import com.example.ragagent.rag.impl.ParentChildDocumentRetriever;
 import com.example.ragagent.rag.impl.ParentChildHybridDocumentRetriever;
+import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.document.Document;
@@ -11,11 +14,14 @@ import org.springframework.ai.rag.Query;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -49,7 +55,8 @@ class ParentChildHybridDocumentRetrieverTest {
                         denseRetriever,
                         bm25Retriever,
                         new RagRetrievalProperties(),
-                        Runnable::run
+                        Runnable::run,
+                        new RagTracing()
                 );
 
         List<Document> documents = retriever.retrieve(new Query("guide"));
@@ -81,7 +88,8 @@ class ParentChildHybridDocumentRetrieverTest {
                         denseRetriever,
                         bm25Retriever,
                         new RagRetrievalProperties(),
-                        Runnable::run
+                        Runnable::run,
+                        new RagTracing()
                 );
 
         List<Document> documents = retriever.retrieve(new Query("guide"));
@@ -125,7 +133,8 @@ class ParentChildHybridDocumentRetrieverTest {
                         denseRetriever,
                         bm25Retriever,
                         new RagRetrievalProperties(),
-                        Runnable::run
+                        Runnable::run,
+                        new RagTracing()
                 );
 
         retriever.retrieve(new Query("guide"));
@@ -164,7 +173,8 @@ class ParentChildHybridDocumentRetrieverTest {
                             denseRetriever,
                             bm25Retriever,
                             new RagRetrievalProperties(),
-                            executor
+                            executor,
+                            new RagTracing()
                     );
 
             retriever.retrieve(new Query("guide"));
@@ -175,18 +185,25 @@ class ParentChildHybridDocumentRetrieverTest {
     }
 
     @Test
-    void retrieveShouldReturnDenseWhenBm25DoesNotFinishBeforeTimeout() {
+    void retrieveShouldReturnDenseWhenBm25DoesNotFinishBeforeTimeout() throws InterruptedException {
         ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
         MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        CountDownLatch bm25Finished = new CountDownLatch(1);
         Document denseChild = childDocument("child-1", "parent-1");
         List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
         RagRetrievalProperties properties = new RagRetrievalProperties();
         properties.setBm25FutureTimeoutMs(50);
+        RecordingRagTracing tracing = new RecordingRagTracing();
 
         when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
         when(bm25Retriever.retrieve("guide")).thenAnswer(invocation -> {
-            Thread.sleep(1_000);
-            return List.of(childDocument("child-2", "parent-2"));
+            try {
+                Thread.sleep(200);
+                return List.of(childDocument("child-2", "parent-2"));
+            }
+            finally {
+                bm25Finished.countDown();
+            }
         });
         when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(parentDocuments);
 
@@ -197,7 +214,8 @@ class ParentChildHybridDocumentRetrieverTest {
                             denseRetriever,
                             bm25Retriever,
                             properties,
-                            executor
+                            executor,
+                            tracing
                     );
 
             long startedAt = System.nanoTime();
@@ -206,6 +224,13 @@ class ParentChildHybridDocumentRetrieverTest {
 
             assertEquals(parentDocuments, documents);
             assertTrue(elapsedMs < 500);
+            assertTrue(tracing.hasSpanAttribute("rag.bm25.retrieve", "rag.bm25.degraded", true));
+            assertTrue(tracing.hasSpanAttribute("rag.bm25.retrieve", "rag.status", "timeout"));
+            assertTrue(tracing.hasSpanAttribute("rag.bm25.retrieve", "rag.result.child_count", 0L));
+            assertTrue(bm25Finished.await(1, TimeUnit.SECONDS));
+            assertEquals(1, tracing.countSpanStarts("rag.bm25.retrieve"));
+            assertEquals(0, tracing.countSpanAttribute("rag.bm25.retrieve", "rag.status", "ok"));
+            assertEquals(1, tracing.countSpanAttribute("rag.bm25.retrieve", "rag.status", "timeout"));
         }
         finally {
             executor.shutdownNow();
@@ -244,7 +269,8 @@ class ParentChildHybridDocumentRetrieverTest {
                             denseRetriever,
                             bm25Retriever,
                             properties,
-                            executor
+                            executor,
+                            new RagTracing()
                     );
 
             List<Document> documents = retriever.retrieve(new Query("guide"));
@@ -269,6 +295,7 @@ class ParentChildHybridDocumentRetrieverTest {
         Document denseChild = childDocument("child-1", "parent-1");
         List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
         AtomicInteger executorSubmissions = new AtomicInteger();
+        RecordingRagTracing tracing = new RecordingRagTracing();
 
         when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
         when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(parentDocuments);
@@ -281,7 +308,8 @@ class ParentChildHybridDocumentRetrieverTest {
                         command -> {
                             executorSubmissions.incrementAndGet();
                             throw new RejectedExecutionException("queue full");
-                        }
+                        },
+                        tracing
                 );
 
         List<Document> documents = retriever.retrieve(new Query("guide"));
@@ -290,6 +318,10 @@ class ParentChildHybridDocumentRetrieverTest {
         assertEquals(1, executorSubmissions.get());
         verify(denseRetriever).retrieveChildDocuments("guide");
         verify(denseRetriever).loadParentDocuments(List.of(denseChild));
+        assertTrue(tracing.hasSpanAttribute("rag.bm25.retrieve", "rag.bm25.degraded", true));
+        assertTrue(tracing.hasSpanAttribute("rag.bm25.retrieve", "rag.status", "error"));
+        assertTrue(tracing.hasSpanAttribute("rag.bm25.retrieve", "rag.result.child_count", 0L));
+        assertEquals(1, tracing.countSpanAttribute("rag.bm25.retrieve", "rag.bm25.degraded", true));
     }
 
     private Document childDocument(String childId, String parentId) {
@@ -301,5 +333,116 @@ class ParentChildHybridDocumentRetrieverTest {
                         "parentId", parentId
                 ))
                 .build();
+    }
+
+    private static class RecordingRagTracing extends RagTracing {
+
+        private final ThreadLocal<String> currentSpanName = new ThreadLocal<>();
+        private final ConcurrentLinkedQueue<SpanAttribute> attributes = new ConcurrentLinkedQueue<>();
+        private final ConcurrentLinkedQueue<String> spanStarts = new ConcurrentLinkedQueue<>();
+        private final ConcurrentHashMap<Span, String> spanNames = new ConcurrentHashMap<>();
+
+        @Override
+        public <T> T inSpan(String spanName, Callable<T> callable) {
+            spanStarts.add(spanName);
+            String previousSpanName = currentSpanName.get();
+            currentSpanName.set(spanName);
+            try {
+                return callable.call();
+            }
+            catch (RuntimeException ex) {
+                throw ex;
+            }
+            catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+            finally {
+                if (previousSpanName == null) {
+                    currentSpanName.remove();
+                }
+                else {
+                    currentSpanName.set(previousSpanName);
+                }
+            }
+        }
+
+        @Override
+        public Span currentSpan() {
+            return Span.getInvalid();
+        }
+
+        @Override
+        public Span startSpan(String spanName) {
+            spanStarts.add(spanName);
+            Span span = mock(Span.class);
+            spanNames.put(span, spanName);
+            return span;
+        }
+
+        @Override
+        public Scope makeCurrent(Span span) {
+            String previousSpanName = currentSpanName.get();
+            currentSpanName.set(spanNames.get(span));
+            return () -> {
+                if (previousSpanName == null) {
+                    currentSpanName.remove();
+                }
+                else {
+                    currentSpanName.set(previousSpanName);
+                }
+            };
+        }
+
+        @Override
+        public void endSpan(Span span) {
+        }
+
+        @Override
+        public void setAttribute(Span span, String key, String value) {
+            attributes.add(new SpanAttribute(spanName(span), key, value));
+        }
+
+        @Override
+        public void setAttribute(Span span, String key, long value) {
+            attributes.add(new SpanAttribute(spanName(span), key, value));
+        }
+
+        @Override
+        public void setAttribute(Span span, String key, boolean value) {
+            attributes.add(new SpanAttribute(spanName(span), key, value));
+        }
+
+        boolean hasSpanAttribute(String spanName, String key, Object value) {
+            return attributes.stream()
+                    .anyMatch(attribute -> spanName.equals(attribute.spanName())
+                            && key.equals(attribute.key())
+                            && value.equals(attribute.value()));
+        }
+
+        long countSpanAttribute(String spanName, String key, Object value) {
+            return attributes.stream()
+                    .filter(attribute -> spanName.equals(attribute.spanName())
+                            && key.equals(attribute.key())
+                            && value.equals(attribute.value()))
+                    .count();
+        }
+
+        long countSpanStarts(String spanName) {
+            return spanStarts.stream()
+                    .filter(spanName::equals)
+                    .count();
+        }
+
+        private String spanName(Span span) {
+            String explicitName = spanNames.get(span);
+            if (explicitName != null) {
+                return explicitName;
+            }
+            String currentName = currentSpanName.get();
+            return currentName;
+        }
+    }
+
+    private record SpanAttribute(String spanName, String key, Object value) {
     }
 }

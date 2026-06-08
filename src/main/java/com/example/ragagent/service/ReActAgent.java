@@ -5,8 +5,10 @@ import com.example.ragagent.conversation.ConversationTurnRecord;
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
+import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.tools.BuiltInTools;
+import io.opentelemetry.api.trace.Span;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -73,6 +75,34 @@ public class ReActAgent {
     private final MallMcpToolCallback mallMcpToolCallback;
     private final ChatClient reactChatClient;
     private final List<ToolCallback> builtInToolCallbacks;
+    private final RagTracing tracing;
+
+    public ReActAgent(ChatClient.Builder builder,
+                      BuiltInTools builtInTools,
+                      LongTermMemoryAdvisor longTermMemoryAdvisor,
+                      MessageChatMemoryAdvisor messageChatMemoryAdvisor,
+                      ConversationMemoryService conversationMemoryService,
+                      PromptSecurityFilter promptSecurityFilter,
+                      ChatModelRegistry chatModelRegistry,
+                      ShoppingRouteExecutor shoppingRouteExecutor,
+                      List<ToolCallbackProvider> externalToolCallbackProviders,
+                      MallMcpClient mallMcpClient,
+                      ConversationLogService conversationLogService) {
+        this(
+                builder,
+                builtInTools,
+                longTermMemoryAdvisor,
+                messageChatMemoryAdvisor,
+                conversationMemoryService,
+                promptSecurityFilter,
+                chatModelRegistry,
+                shoppingRouteExecutor,
+                externalToolCallbackProviders,
+                mallMcpClient,
+                conversationLogService,
+                new RagTracing()
+        );
+    }
 
     @Autowired
     public ReActAgent(ChatClient.Builder builder,
@@ -85,7 +115,8 @@ public class ReActAgent {
                       ShoppingRouteExecutor shoppingRouteExecutor,
                       List<ToolCallbackProvider> externalToolCallbackProviders,
                       MallMcpClient mallMcpClient,
-                      ConversationLogService conversationLogService) {
+                      ConversationLogService conversationLogService,
+                      RagTracing tracing) {
         this.builtInTools = builtInTools;
         this.longTermMemoryAdvisor = longTermMemoryAdvisor;
         this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
@@ -102,6 +133,7 @@ public class ReActAgent {
                 : new MallMcpToolCallback(mallMcpClient);
         this.reactChatClient = builder.clone().build();
         this.builtInToolCallbacks = loadBuiltInToolCallbacks();
+        this.tracing = tracing == null ? new RagTracing() : tracing;
     }
 
     public ReActAgent(ChatClient.Builder builder,
@@ -125,7 +157,8 @@ public class ReActAgent {
                 shoppingRouteExecutor,
                 externalToolCallbackProviders,
                 null,
-                conversationLogService
+                conversationLogService,
+                new RagTracing()
         );
     }
 
@@ -139,6 +172,7 @@ public class ReActAgent {
                                   String mallUsername,
                                   String mallPassword) {
         List<Media> safeMedia = media == null ? List.of() : media;
+        writeRequestTraceAttributes(userId, sessionId, modelId, webSearchEnabled, safeMedia.size());
         ConversationTurnRecord conversationTurn = conversationLogService.beginTurn(
                 userId,
                 sessionId,
@@ -158,6 +192,8 @@ public class ReActAgent {
                     mallUsername,
                     mallPassword
             );
+            tracing.setAttribute(tracing.currentSpan(), "app.route.short_circuit", routedRequest.shortCircuitStream() != null);
+            tracing.setAttribute(tracing.currentSpan(), "app.route.mall_tools_allowed", routedRequest.mallToolsAllowed());
             if (routedRequest.shortCircuitStream() != null) {
                 return rememberShortCircuitTurn(
                         userId,
@@ -190,6 +226,27 @@ public class ReActAgent {
             conversationLogService.failTurn(conversationTurn, "", ex);
             throw ex;
         }
+    }
+
+    private void writeRequestTraceAttributes(String userId,
+                                             String sessionId,
+                                             String modelId,
+                                             boolean webSearchEnabled,
+                                             int mediaCount) {
+        Span span = tracing.currentSpan();
+        tracing.setAttribute(span, "langfuse.trace.name", "POST /api/react");
+        tracing.setAttribute(span, "langfuse.user.id", StringUtils.hasText(userId) ? userId : "anonymous");
+        tracing.setAttribute(span, "langfuse.session.id", StringUtils.hasText(sessionId) ? sessionId : "default");
+        tracing.setAttribute(span, "app.user_id", StringUtils.hasText(userId) ? userId : "anonymous");
+        tracing.setAttribute(span, "app.session_id", StringUtils.hasText(sessionId) ? sessionId : "default");
+        tracing.setAttribute(span, "app.model_id", resolvedTraceModelId(modelId));
+        tracing.setAttribute(span, "app.web_search_enabled", webSearchEnabled);
+        tracing.setAttribute(span, "app.media_count", mediaCount);
+    }
+
+    private String resolvedTraceModelId(String modelId) {
+        String resolvedModelId = chatModelRegistry == null ? null : chatModelRegistry.resolveModelId(modelId);
+        return StringUtils.hasText(resolvedModelId) ? resolvedModelId : "default";
     }
 
     private Flux<String> rememberShortCircuitTurn(String userId,
@@ -729,7 +786,7 @@ public class ReActAgent {
             ToolCallback guardedCallback = MallTool.CREATE_ORDER.toolName().equals(toolName)
                     ? new OrderCreationGuardedToolCallback(callback, orderCreationAllowed)
                     : callback;
-            activeToolCallbacks.put(toolName, new LoggingToolCallback(guardedCallback, userId, sessionId));
+            activeToolCallbacks.put(toolName, new LoggingToolCallback(guardedCallback, userId, sessionId, tracing));
         }
     }
 

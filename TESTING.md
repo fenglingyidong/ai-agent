@@ -63,7 +63,30 @@ mvn -q test
 
 当前期望：全量测试通过。若失败，优先查看 `target/surefire-reports` 中对应测试类报告。
 
-## 4. 接口冒烟测试
+## 4. Langfuse RAG Tracing 回归
+
+运行单元测试：
+
+```powershell
+mvn -Dtest=LangfusePropertiesTest,RagTracingTest,ParentChildHybridDocumentRetrieverTest,LoggingToolCallbackTest test
+```
+
+运行核心回归：
+
+```powershell
+mvn test
+```
+
+人工验证：
+
+1. 按 [Langfuse 本地可观测环境](observability/langfuse/README.md) 启动 `observability/langfuse/docker-compose.yml`。
+2. 使用 OpenTelemetry Java Agent 启动应用。
+3. 导入至少 2 条商品知识。
+4. 调用 `/api/react`，问题触发 `searchProductKnowledge`。
+5. 在 Langfuse 中确认 `POST /api/react` trace 和全部 `rag.*` span，span 清单见 [验证 Trace](observability/langfuse/README.md#验证-trace)。
+6. 确认 `rag.result.parents` 只有 `rank`、`sourceId`、`title`。
+
+## 5. 接口冒烟测试
 
 以下命令中的 `alice:密码` 需要替换成商城用户表中可登录的账号密码。
 
@@ -93,7 +116,7 @@ curl -u alice:密码 -F "message=儿童积木套装 300片要多少钱" -F "sess
 curl -u alice:密码 -F "message=帮我找相似款，预算 500 以内" -F "image=@shoe.png" -F "sessionId=test-001" -F "modelId=qwen" http://localhost:18082/api/react
 ```
 
-## 5. 购物车闭环测试
+## 6. 购物车闭环测试
 
 购物车不再暴露独立 REST 接口，全部通过 Agent 入口验证：
 
@@ -121,7 +144,7 @@ curl -u alice:密码 -F "message=把购物车里 SKU 3020 的数量改成 2 件"
 curl -u alice:密码 -F "message=从购物车移除 SKU 3020" -F "sessionId=test-001" -F "modelId=qwen" http://localhost:18082/api/react
 ```
 
-## 6. 导购场景验收用例
+## 7. 导购场景验收用例
 
 优先验证这些自然语言问题：
 
@@ -141,7 +164,7 @@ curl -u alice:密码 -F "message=从购物车移除 SKU 3020" -F "sessionId=test
 - 商城服务不可用时应返回降级提示。
 - DashScope 连接中断时不应抛出空白响应，应返回中文降级提示。
 
-## 7. 前端手工测试
+## 8. 前端手工测试
 
 启动前端：
 

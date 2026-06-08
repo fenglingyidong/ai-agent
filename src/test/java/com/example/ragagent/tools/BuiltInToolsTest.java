@@ -38,7 +38,8 @@ class BuiltInToolsTest {
 
         String result = tools.searchProductKnowledge("儿童积木");
 
-        assertTrue(result.startsWith("[商品知识 1]"));
+        assertTrue(result.contains("回答约束"));
+        assertTrue(result.contains("没有明确字段时不要当作知识库事实"));
         assertTrue(result.contains("[商品知识 1]"));
         assertTrue(result.contains("标题: 儿童积木"));
         assertTrue(result.contains("SKU: 3020"));

@@ -11,6 +11,7 @@ import com.example.ragagent.tools.BuiltInTools;
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -54,9 +55,10 @@ class ReActAgentTest {
         MemoryTestSupport memory = memorySupport();
         List<List<Message>> messageSnapshots = new ArrayList<>();
         List<ToolCallback> registeredCallbacks = new ArrayList<>();
+        ArgumentCaptor<String> systemPromptCaptor = ArgumentCaptor.forClass(String.class);
 
         when(reactChatClient.prompt()).thenReturn(requestSpec);
-        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.system(systemPromptCaptor.capture())).thenReturn(requestSpec);
         when(requestSpec.toolCallbacks(org.mockito.ArgumentMatchers.<List<ToolCallback>>any())).thenAnswer(invocation -> {
             registeredCallbacks.clear();
             registeredCallbacks.addAll(invocation.getArgument(0));
@@ -87,6 +89,15 @@ class ReActAgentTest {
                 .map(callback -> callback.getToolDefinition().name())
                 .collect(Collectors.toSet());
         assertEquals(Set.of("searchProductKnowledge", "updateShoppingPreference"), toolNames);
+        String systemPrompt = systemPromptCaptor.getValue();
+        assertTrue(systemPrompt.contains("知识库原文事实"));
+        assertTrue(systemPrompt.contains("导购推断"));
+        assertTrue(systemPrompt.contains("知识库未明确"));
+        assertTrue(systemPrompt.contains("不得省略"));
+        assertTrue(systemPrompt.contains("推荐、选哪个、更合适、别太复杂"));
+        assertTrue(systemPrompt.contains("不要输出“我来查询”“让我搜索”"));
+        assertTrue(systemPrompt.contains("调用完成前不要输出任何可见文字"));
+        assertTrue(systemPrompt.contains("必须使用“知识库原文事实”“导购推断”两个小节"));
     }
 
     @Test

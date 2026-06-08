@@ -41,6 +41,8 @@ class SimpleTaskAgentTest {
     @Test
     void shouldRunKnowledgeTaskWithOnlyRagTool() {
         AgentMocks mocks = agentMocks("儿童积木套装适合 3 岁以上儿童，主打益智启蒙。");
+        ArgumentCaptor<String> systemPromptCaptor = ArgumentCaptor.forClass(String.class);
+        when(mocks.requestSpec.system(systemPromptCaptor.capture())).thenReturn(mocks.requestSpec);
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_KNOWLEDGE_QUERY",
@@ -59,6 +61,15 @@ class SimpleTaskAgentTest {
         List<ToolCallback> callbacks = capturedToolObjectCallbacks(mocks);
         assertEquals(1, callbacks.size());
         assertEquals("searchProductKnowledge", callbacks.get(0).getToolDefinition().name());
+        String systemPrompt = systemPromptCaptor.getValue();
+        assertTrue(systemPrompt.contains("知识库原文事实"));
+        assertTrue(systemPrompt.contains("导购推断"));
+        assertTrue(systemPrompt.contains("知识库未明确"));
+        assertTrue(systemPrompt.contains("不得省略"));
+        assertTrue(systemPrompt.contains("推荐、选哪个、更合适、别太复杂"));
+        assertTrue(systemPrompt.contains("不要输出“我来查询”“让我搜索”"));
+        assertTrue(systemPrompt.contains("调用完成前不要输出任何可见文字"));
+        assertTrue(systemPrompt.contains("必须使用“知识库原文事实”“导购推断”两个小节"));
     }
 
     @Test
@@ -132,6 +143,13 @@ class SimpleTaskAgentTest {
                 "mall_prepare_order"
         ), Set.copyOf(names));
         assertTrue(systemPromptCaptor.getValue().contains("ok=false"));
+        assertTrue(systemPromptCaptor.getValue().contains("导购推断"));
+        assertTrue(systemPromptCaptor.getValue().contains("工具结果没有明确写出"));
+        assertTrue(systemPromptCaptor.getValue().contains("不得省略"));
+        assertTrue(systemPromptCaptor.getValue().contains("推荐、选哪个、更合适、别太复杂"));
+        assertTrue(systemPromptCaptor.getValue().contains("不要输出“我来查询”“让我搜索”"));
+        assertTrue(systemPromptCaptor.getValue().contains("调用完成前不要输出任何可见文字"));
+        assertTrue(systemPromptCaptor.getValue().contains("必须使用“工具结果事实”“导购推断”两个小节"));
         verify(mocks.requestSpec).toolContext(Map.of("sessionId", "session-1"));
     }
 

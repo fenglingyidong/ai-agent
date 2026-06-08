@@ -11,6 +11,7 @@ import org.springframework.ai.transformer.splitter.TextSplitter;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -36,6 +37,7 @@ public class ParentChildDocumentIndexer {
     );
 
     private final VectorStore vectorStore;
+    private final ProductChildDocumentWriter childDocumentWriter;
     private final ParentDocumentStore parentDocumentStore;
     private final TextSplitter parentSplitter;
     private final Encoding childChunkEncoding;
@@ -44,9 +46,12 @@ public class ParentChildDocumentIndexer {
     /**
      * 创建索引器，用于切分父子文档并写入 Redis 与向量库。
      */
+    @Autowired
     public ParentChildDocumentIndexer(@Qualifier(MilvusVectorStoreConfiguration.PRODUCT_VECTOR_STORE) VectorStore vectorStore,
-                                      ParentDocumentStore parentDocumentStore) {
+                                      ParentDocumentStore parentDocumentStore,
+                                      ProductChildDocumentWriter childDocumentWriter) {
         this.vectorStore = vectorStore;
+        this.childDocumentWriter = childDocumentWriter;
         this.parentDocumentStore = parentDocumentStore;
         this.parentSplitter = TokenTextSplitter.builder()
                 .withChunkSize(350)
@@ -57,6 +62,11 @@ public class ParentChildDocumentIndexer {
                 .withPunctuationMarks(SPLIT_PUNCTUATION)
                 .build();
         this.childChunkEncoding = Encodings.newLazyEncodingRegistry().getEncoding(EncodingType.CL100K_BASE);
+    }
+
+    public ParentChildDocumentIndexer(VectorStore vectorStore,
+                                      ParentDocumentStore parentDocumentStore) {
+        this(vectorStore, parentDocumentStore, vectorStore::add);
     }
 
     /**
@@ -175,7 +185,7 @@ public class ParentChildDocumentIndexer {
                 documentHash,
                 sanitizedExtraMetadata
         );
-        vectorStore.add(childDocuments);
+        childDocumentWriter.add(childDocuments);
 
         List<String> childIds = childDocuments.stream()
                 .map(Document::getId)

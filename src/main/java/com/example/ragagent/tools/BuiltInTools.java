@@ -61,12 +61,12 @@ public class BuiltInTools {
             return "商品知识库中没有检索到相关内容。";
         }
 
-        StringBuilder builder = new StringBuilder();
+        StringBuilder builder = new StringBuilder("""
+                回答约束：以下内容来自商品知识库原文和元数据；商品名、SKU、品牌、类目、价格快照、库存快照、促销快照、评价摘要可作为知识库事实。年龄、适用人群、使用场景、购买建议等没有明确字段时不要当作知识库事实，需要标注为导购推断或说明知识库未明确。价格和库存是导入快照，不代表实时商城状态。
+                """.trim());
         for (int index = 0; index < documents.size(); index++) {
             Document document = documents.get(index);
-            if (index > 0) {
-                builder.append(System.lineSeparator()).append(System.lineSeparator());
-            }
+            builder.append(System.lineSeparator()).append(System.lineSeparator());
 
             builder.append("[商品知识 ").append(index + 1).append("]");
             appendMetadata(builder, document, "title", "标题");

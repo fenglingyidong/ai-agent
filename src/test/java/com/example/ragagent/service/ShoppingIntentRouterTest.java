@@ -166,6 +166,9 @@ class ShoppingIntentRouterTest {
         assertTrue(systemPrompt.contains("task_policies"));
         assertTrue(systemPrompt.contains("PRODUCT_SELECTION"));
         assertTrue(systemPrompt.contains("CART_CONFIRMATION"));
+        assertTrue(systemPrompt.contains("missing_slots 只列最关键 1-3 个"));
+        assertTrue(systemPrompt.contains("reason 不超过 20 个字"));
+        assertTrue(!systemPrompt.contains("\"target_attribute\": \"\""));
     }
 
     @Test

@@ -2,6 +2,8 @@ package com.example.ragagent.rag.impl;
 
 import com.example.ragagent.config.RagRetrievalConfiguration;
 import com.example.ragagent.config.RagRetrievalProperties;
+import com.example.ragagent.observability.RagTracing;
+import io.opentelemetry.api.trace.Span;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -16,8 +18,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 @Primary
@@ -29,16 +34,19 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
     private final MilvusBm25ChildChunkRetriever bm25Retriever;
     private final RagRetrievalProperties properties;
     private final Executor retrievalExecutor;
+    private final RagTracing tracing;
 
     public ParentChildHybridDocumentRetriever(ParentChildDocumentRetriever denseRetriever,
                                               MilvusBm25ChildChunkRetriever bm25Retriever,
                                               RagRetrievalProperties properties,
                                               @Qualifier(RagRetrievalConfiguration.RAG_RETRIEVAL_EXECUTOR)
-                                              Executor retrievalExecutor) {
+                                              Executor retrievalExecutor,
+                                              RagTracing tracing) {
         this.denseRetriever = denseRetriever;
         this.bm25Retriever = bm25Retriever;
         this.properties = properties;
         this.retrievalExecutor = retrievalExecutor;
+        this.tracing = tracing;
     }
 
     /**
@@ -51,9 +59,20 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
             return List.of();
         }
 
+        return tracing.inSpan("rag.hybrid.retrieve", () -> retrieveHybrid(normalizedQuery));
+    }
+
+    private List<Document> retrieveHybrid(String normalizedQuery) {
+        Span span = tracing.currentSpan();
+        tracing.setAttribute(span, "rag.query.length", normalizedQuery.length());
+        tracing.setAttribute(span, "rag.dense.top_k", properties.getDenseChildTopK());
+        tracing.setAttribute(span, "rag.bm25.top_k", properties.getBm25ChildTopK());
+        tracing.setAttribute(span, "rag.rrf.k", properties.getRrfK());
+        tracing.setAttribute(span, "rag.max_parent_results", properties.getMaxParentResults());
+
         CompletableFuture<List<Document>> bm25Future = retrieveBm25ChildDocumentsAsync(normalizedQuery);
 
-        List<Document> denseChildDocuments = safeDocuments(denseRetriever.retrieveChildDocuments(normalizedQuery));
+        List<Document> denseChildDocuments = retrieveDenseChildDocuments(normalizedQuery);
         List<Document> bm25ChildDocuments = bm25Future.join();
         List<RankedChildDocument> rankedChildDocuments =
                 rankWithReciprocalRankFusion(denseChildDocuments, bm25ChildDocuments);
@@ -61,47 +80,125 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
                 .map(RankedChildDocument::document)
                 .toList();
         if (fusedChildDocuments.isEmpty()) {
+            tracing.setAttribute(span, "rag.result.parent_count", 0);
             return List.of();
         }
 
-        return denseRetriever.loadParentDocuments(fusedChildDocuments);
+        List<Document> parentDocuments = loadParentDocuments(fusedChildDocuments);
+        tracing.setAttribute(span, "rag.result.parent_count", parentDocuments.size());
+        return parentDocuments;
+    }
+
+    private List<Document> retrieveDenseChildDocuments(String normalizedQuery) {
+        return tracing.inSpan("rag.dense.retrieve", () -> {
+            Span span = tracing.currentSpan();
+            tracing.setAttribute(span, "rag.dense.similarity_threshold", properties.getDenseSimilarityThreshold());
+            tracing.setAttribute(span, "rag.dense.fallback_top_k", properties.getDenseFallbackTopK());
+            try {
+                List<Document> documents = safeDocuments(denseRetriever.retrieveChildDocuments(normalizedQuery));
+                tracing.setAttribute(span, "rag.result.child_count", documents.size());
+                tracing.setAttribute(span, "rag.status", "ok");
+                return documents;
+            }
+            catch (RuntimeException ex) {
+                tracing.setAttribute(span, "rag.status", "error");
+                throw ex;
+            }
+        });
     }
 
     /**
      * BM25 路出现异常时降级为只使用 dense 结果，避免影响主流程。
      */
-    private List<Document> retrieveBm25ChildDocuments(String query) {
+    private List<Document> retrieveBm25ChildDocuments(String query, Span span, AtomicBoolean outcomeRecorded) {
         try {
             List<Document> documents = bm25Retriever.retrieve(query);
-            return documents == null ? List.of() : documents;
+            List<Document> safeDocuments = documents == null ? List.of() : documents;
+            if (outcomeRecorded.compareAndSet(false, true)) {
+                tracing.setAttribute(span, "rag.result.child_count", safeDocuments.size());
+                tracing.setAttribute(span, "rag.bm25.degraded", false);
+                tracing.setAttribute(span, "rag.status", "ok");
+            }
+            return safeDocuments;
         }
         catch (RuntimeException ex) {
             log.warn("BM25 child chunk retrieval failed, falling back to dense-only retrieval", ex);
+            recordBm25Outcome(span, "error", ex, outcomeRecorded);
             return List.of();
         }
     }
 
     private CompletableFuture<List<Document>> retrieveBm25ChildDocumentsAsync(String query) {
+        AtomicBoolean outcomeRecorded = new AtomicBoolean(false);
+        AtomicBoolean spanEnded = new AtomicBoolean(false);
+        Span bm25Span = tracing.startSpan("rag.bm25.retrieve");
+        tracing.setAttribute(bm25Span, "rag.bm25.future_timeout_ms", properties.getBm25FutureTimeoutMs());
+        tracing.setAttribute(bm25Span, "rag.bm25.rpc_deadline_ms", properties.getBm25RpcDeadlineMs());
         long deadlineNanos = System.nanoTime()
                 + TimeUnit.MILLISECONDS.toNanos(properties.getBm25FutureTimeoutMs());
         try {
             return CompletableFuture
                     .<List<Document>>supplyAsync(() -> {
-                        if (System.nanoTime() >= deadlineNanos) {
+                        try (var ignored = tracing.makeCurrent(bm25Span)) {
+                            if (System.nanoTime() >= deadlineNanos) {
+                                recordBm25Outcome(bm25Span, "timeout", null, outcomeRecorded);
+                                return List.of();
+                            }
+                            return retrieveBm25ChildDocuments(query, bm25Span, outcomeRecorded);
+                        }
+                    }, retrievalExecutor)
+                    .orTimeout(properties.getBm25FutureTimeoutMs(), TimeUnit.MILLISECONDS)
+                    .exceptionally(ex -> {
+                        try {
+                            Throwable cause = unwrapCompletionException(ex);
+                            String status = cause instanceof TimeoutException ? "timeout" : "error";
+                            if ("error".equals(status)) {
+                                log.warn("BM25 child chunk retrieval failed asynchronously, falling back to dense-only retrieval", cause);
+                            }
+                            recordBm25Outcome(bm25Span, status, cause, outcomeRecorded);
                             return List.of();
                         }
-                        return retrieveBm25ChildDocuments(query);
-                    }, retrievalExecutor)
-                    .completeOnTimeout(List.of(), properties.getBm25FutureTimeoutMs(), TimeUnit.MILLISECONDS)
-                    .exceptionally(ex -> {
-                        log.warn("BM25 child chunk retrieval failed asynchronously, falling back to dense-only retrieval", ex);
-                        return List.of();
+                        finally {
+                            endBm25Span(bm25Span, spanEnded);
+                        }
+                    })
+                    .whenComplete((documents, ex) -> {
+                        if (ex == null) {
+                            endBm25Span(bm25Span, spanEnded);
+                        }
                     });
         }
         catch (RuntimeException ex) {
             log.warn("BM25 child chunk retrieval task rejected, falling back to dense-only retrieval", ex);
+            recordBm25Outcome(bm25Span, "error", ex, outcomeRecorded);
+            endBm25Span(bm25Span, spanEnded);
             return CompletableFuture.completedFuture(List.of());
         }
+    }
+
+    private void recordBm25Outcome(Span span, String status, Throwable ex, AtomicBoolean outcomeRecorded) {
+        if (!outcomeRecorded.compareAndSet(false, true)) {
+            return;
+        }
+        tracing.setAttribute(span, "rag.result.child_count", 0);
+        tracing.setAttribute(span, "rag.bm25.degraded", true);
+        tracing.setAttribute(span, "rag.status", status);
+        if (ex != null && !"timeout".equals(status)) {
+            tracing.recordError(span, ex);
+        }
+    }
+
+    private void endBm25Span(Span span, AtomicBoolean spanEnded) {
+        if (spanEnded.compareAndSet(false, true)) {
+            tracing.endSpan(span);
+        }
+    }
+
+    private Throwable unwrapCompletionException(Throwable ex) {
+        if (ex instanceof CompletionException completionException && completionException.getCause() != null) {
+            return completionException.getCause();
+        }
+        return ex;
     }
 
     private List<Document> safeDocuments(List<Document> documents) {
@@ -113,13 +210,25 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
      */
     private List<RankedChildDocument> rankWithReciprocalRankFusion(List<Document> denseDocuments,
                                                                    List<Document> bm25Documents) {
-        Map<String, RankedChildDocument> rankedDocuments = new LinkedHashMap<>();
-        applyRrfScores(rankedDocuments, denseDocuments);
-        applyRrfScores(rankedDocuments, bm25Documents);
+        return tracing.inSpan("rag.rrf.rank", () -> {
+            Span span = tracing.currentSpan();
+            tracing.setAttribute(span, "rag.input.dense_child_count", safeDocuments(denseDocuments).size());
+            tracing.setAttribute(span, "rag.input.bm25_child_count", safeDocuments(bm25Documents).size());
 
-        return rankedDocuments.values().stream()
-                .sorted((left, right) -> Double.compare(right.score(), left.score()))
-                .toList();
+            Map<String, RankedChildDocument> rankedDocuments = new LinkedHashMap<>();
+            applyRrfScores(rankedDocuments, safeDocuments(denseDocuments));
+            applyRrfScores(rankedDocuments, safeDocuments(bm25Documents));
+
+            List<RankedChildDocument> ranked = rankedDocuments.values().stream()
+                    .sorted((left, right) -> Double.compare(right.score(), left.score()))
+                    .toList();
+            tracing.setAttribute(span, "rag.result.fused_child_count", ranked.size());
+            tracing.setAttribute(span, "rag.result.top_child_ids", String.join(",", tracing.topDocumentIds(
+                    ranked.stream().map(RankedChildDocument::document).toList(),
+                    10
+            )));
+            return ranked;
+        });
     }
 
     /**
@@ -151,6 +260,20 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
      * 复用已有文档对象，缺少文本或元数据时再用另一条召回结果补齐。
      */
     private List<RankedChildDocument> truncateByLargestNormalizedGap(List<RankedChildDocument> rankedDocuments) {
+        return tracing.inSpan("rag.dynamic_truncate", () -> {
+            Span span = tracing.currentSpan();
+            tracing.setAttribute(span, "rag.input.fused_child_count", rankedDocuments == null ? 0 : rankedDocuments.size());
+            tracing.setAttribute(span, "rag.truncate.min_child_results_to_keep", properties.getMinChildResultsToKeep());
+            tracing.setAttribute(span, "rag.truncate.max_child_results_to_consider", properties.getMaxChildResultsToConsider());
+            tracing.setAttribute(span, "rag.truncate.min_normalized_gap", properties.getMinNormalizedGapToTruncate());
+
+            List<RankedChildDocument> truncated = truncateRankedDocuments(rankedDocuments == null ? List.of() : rankedDocuments);
+            tracing.setAttribute(span, "rag.result.truncated_child_count", truncated.size());
+            return truncated;
+        });
+    }
+
+    private List<RankedChildDocument> truncateRankedDocuments(List<RankedChildDocument> rankedDocuments) {
         if (rankedDocuments.isEmpty()) {
             return List.of();
         }
@@ -177,6 +300,18 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
             cutIndexExclusive = upperBoundExclusive;
         }
         return List.copyOf(rankedDocuments.subList(0, cutIndexExclusive));
+    }
+
+    private List<Document> loadParentDocuments(List<Document> fusedChildDocuments) {
+        return tracing.inSpan("rag.parent.load", () -> {
+            Span span = tracing.currentSpan();
+            tracing.setAttribute(span, "rag.input.child_count", safeDocuments(fusedChildDocuments).size());
+            List<Document> parents = denseRetriever.loadParentDocuments(fusedChildDocuments);
+            List<Document> safeParents = safeDocuments(parents);
+            tracing.setAttribute(span, "rag.result.parent_count", safeParents.size());
+            tracing.setAttribute(span, "rag.result.parents", tracing.safeParentsJson(safeParents, 10));
+            return safeParents;
+        });
     }
 
     private Document mergeDocument(Document existing, Document candidate) {

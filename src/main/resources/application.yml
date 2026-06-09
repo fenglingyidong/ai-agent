@@ -80,6 +80,11 @@ mybatis-plus:
     banner: false
 
 app:
+  observability:
+    langfuse:
+      enabled: ${LANGFUSE_ENABLED:false}
+      base-url: ${LANGFUSE_BASE_URL:http://localhost:3001}
+      capture-prompt: ${LANGFUSE_CAPTURE_PROMPT:false}
   conversation-log:
     enabled: ${CONVERSATION_LOG_ENABLED:true}
     max-turns-per-session: ${CONVERSATION_LOG_MAX_TURNS_PER_SESSION:1000}

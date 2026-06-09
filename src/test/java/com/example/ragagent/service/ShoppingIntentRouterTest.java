@@ -1,6 +1,8 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.observability.RagTracing;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.opentelemetry.api.trace.Span;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -11,6 +13,8 @@ import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -257,6 +261,30 @@ class ShoppingIntentRouterTest {
     }
 
     @Test
+    void routeShouldCaptureRouterInputAndOutput() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "C_COMPLEX_REACT",
+                  "intent": "COMPLEX_RECOMMENDATION",
+                  "visual_context": {},
+                  "text_slots": {"category": "跑鞋"},
+                  "route_to_core": true,
+                  "confidence": 0.88,
+                  "reason": "需要综合推荐"
+                }
+                """);
+        RecordingTracing tracing = new RecordingTracing();
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient, tracing);
+
+        router.route("推荐跑鞋", List.of(), "当前会话短期导购偏好：\n- 预算：500 元以内");
+
+        assertTrue(tracing.text("llm.intent_router.input").contains("system:"));
+        assertTrue(tracing.text("llm.intent_router.input").contains("user:"));
+        assertTrue(tracing.text("llm.intent_router.input").contains("推荐跑鞋"));
+        assertTrue(tracing.text("llm.intent_router.output").contains("COMPLEX_RECOMMENDATION"));
+    }
+
+    @Test
     void routeShouldParseSimpleRagTaskType() {
         RouterMocks mocks = routerMocks("""
                 {
@@ -295,5 +323,24 @@ class ShoppingIntentRouterTest {
     }
 
     private record RouterMocks(ChatClient chatClient, ChatClient.ChatClientRequestSpec requestSpec) {
+    }
+
+    private static final class RecordingTracing extends RagTracing {
+
+        private final Map<String, String> captured = new LinkedHashMap<>();
+
+        @Override
+        public Span currentSpan() {
+            return Span.getInvalid();
+        }
+
+        @Override
+        public void capturePromptText(Span span, String key, String value) {
+            captured.put(key, value);
+        }
+
+        private String text(String key) {
+            return captured.getOrDefault(key, "");
+        }
     }
 }

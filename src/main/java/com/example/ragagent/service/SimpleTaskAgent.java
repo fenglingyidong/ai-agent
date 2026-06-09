@@ -2,6 +2,7 @@ package com.example.ragagent.service;
 
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.observability.RagTracing;
+import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.tools.BuiltInTools;
 import io.opentelemetry.api.trace.Span;
 import jakarta.annotation.PostConstruct;
@@ -46,35 +47,12 @@ public class SimpleTaskAgent {
             "mall_prepare_order"
     );
 
-    private static final String KNOWLEDGE_SYSTEM_PROMPT = """
-            你是电商导购的简单知识库问答助手。
-            必须先调用 searchProductKnowledge 工具，再根据工具结果简短回答。
-            不得编造工具结果之外的商品特点、价格、库存、优惠或订单信息。
-            回答时必须区分“知识库原文事实”和“导购推断”：商品名、SKU、品牌、类目、价格快照、库存快照、促销快照、评价摘要可作为事实；年龄、适用人群、使用场景、购买建议等如果工具结果没有明确写出，只能说“知识库未明确”，或标注为“导购推断：根据商品名、类目或评价推测……”。当用户问“适合、场景、人群、怎么样、推荐、选哪个、更合适、别太复杂”时，如果这部分不是工具明确字段，不得省略“导购推断”标签。
-            需要调用工具时，必须先调用工具，调用完成前不要输出任何可见文字；最终回答只给结论和依据，不要输出“我来查询”“让我搜索”“我尝试搜索”等工具调用过程语句。
-            如果最终回答涉及知识库事实和导购建议，必须使用“知识库原文事实”“导购推断”两个小节；没有推断时写“导购推断：无”。
-            工具没有结果或工具失败时，不要自行猜测。
-            输出纯文本中文回复，不要暴露工具名、JSON 或内部路由字段。
-            """;
-
-    private static final String MALL_SYSTEM_PROMPT = """
-            你是电商导购的简单商城任务助手。
-            必须使用提供的 mall_* MCP 工具完成任务，再根据工具结果简短回答。
-            搜索商品时调用 mall_search_products；查价格、库存、属性和详情时调用 mall_get_product_detail。
-            明确加购物车时调用 mall_add_to_cart；查看购物车时调用 mall_view_cart；确认订单摘要时调用 mall_prepare_order。
-            不允许创建订单、付款或编造 confirmationId；不得调用 mall_create_order，遇到确认下单应交给复杂任务。
-            价格、库存、购物车和订单摘要只能来自工具结果。
-            回答时必须区分“工具结果事实”和“导购推断”：商品名、SKU、品牌、类目、价格、库存、促销和评价等工具明确字段可作为事实；适用人群、使用场景、是否适合等如果工具结果没有明确写出，只能说“工具结果没有明确写出”，或标注为“导购推断：根据商品名、类目或评价推测……”。当用户问“适合、场景、人群、怎么样、推荐、选哪个、更合适、别太复杂”时，如果这部分不是工具明确字段，不得省略“导购推断”标签。
-            需要调用工具时，必须先调用工具，调用完成前不要输出任何可见文字；最终回答只给结论和依据，不要输出“我来查询”“让我搜索”“我尝试搜索”等工具调用过程语句。
-            如果最终回答涉及工具事实和导购建议，必须使用“工具结果事实”“导购推断”两个小节；没有推断时写“导购推断：无”。
-            如果工具返回“商城 MCP 调用失败”或 ok=false，必须原样说明调用失败。
-            输出纯文本中文回复，不要暴露工具名、JSON 或内部路由字段。
-            """;
-
     private final ChatClient.Builder builder;
     private final BuiltInTools builtInTools;
     private final MallMcpToolCallback mallMcpToolCallback;
     private final RagTracing tracing;
+    private final String knowledgeSystemPrompt;
+    private final String mallSystemPrompt;
 
     @Value("${app.ai.simple-task.enabled:true}")
     private boolean enabled = true;
@@ -92,10 +70,21 @@ public class SimpleTaskAgent {
                            BuiltInTools builtInTools,
                            MallMcpClient mallMcpClient,
                            RagTracing tracing) {
+        this(builder, builtInTools, mallMcpClient, tracing, new PromptTemplateStore());
+    }
+
+    public SimpleTaskAgent(ChatClient.Builder builder,
+                           BuiltInTools builtInTools,
+                           MallMcpClient mallMcpClient,
+                           RagTracing tracing,
+                           PromptTemplateStore promptTemplateStore) {
         this.builder = builder;
         this.builtInTools = builtInTools;
         this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
         this.tracing = tracing == null ? new RagTracing() : tracing;
+        PromptTemplateStore store = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
+        this.knowledgeSystemPrompt = store.text("simple-task.knowledge.system");
+        this.mallSystemPrompt = store.text("simple-task.mall.system");
     }
 
     public SimpleTaskAgent(ChatClient.Builder builder,
@@ -114,11 +103,22 @@ public class SimpleTaskAgent {
                     BuiltInTools builtInTools,
                     MallMcpClient mallMcpClient,
                     RagTracing tracing) {
+        this(simpleTaskChatClient, builtInTools, mallMcpClient, tracing, new PromptTemplateStore());
+    }
+
+    SimpleTaskAgent(ChatClient simpleTaskChatClient,
+                    BuiltInTools builtInTools,
+                    MallMcpClient mallMcpClient,
+                    RagTracing tracing,
+                    PromptTemplateStore promptTemplateStore) {
         this.builder = null;
         this.simpleTaskChatClient = simpleTaskChatClient;
         this.builtInTools = builtInTools;
         this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
         this.tracing = tracing == null ? new RagTracing() : tracing;
+        PromptTemplateStore store = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
+        this.knowledgeSystemPrompt = store.text("simple-task.knowledge.system");
+        this.mallSystemPrompt = store.text("simple-task.mall.system");
     }
 
     @PostConstruct
@@ -163,7 +163,7 @@ public class SimpleTaskAgent {
                 route,
                 userMessage,
                 preferenceContext,
-                KNOWLEDGE_SYSTEM_PROMPT,
+                knowledgeSystemPrompt,
                 new KnowledgeFastLaneTools(builtInTools)
         );
     }
@@ -195,7 +195,7 @@ public class SimpleTaskAgent {
                 route,
                 userMessage,
                 preferenceContext,
-                MALL_SYSTEM_PROMPT,
+                mallSystemPrompt,
                 callbacks,
                 Map.of("sessionId", sessionId)
         );

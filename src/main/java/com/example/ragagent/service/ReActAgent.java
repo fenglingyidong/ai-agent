@@ -6,6 +6,7 @@ import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.observability.RagTracing;
+import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.tools.BuiltInTools;
 import io.opentelemetry.api.trace.Span;
@@ -41,28 +42,6 @@ public class ReActAgent {
     private static final String TOOL_CONTEXT_USER_ID = "userId";
     private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
 
-    private static final String REACT_SYSTEM_PROMPT_TEMPLATE = """
-            你是多模态电商智能导购 Agent，负责帮助用户完成选品、对比、追问、推荐和加购。
-            你需要先在内部完成分步判断，并在需要时主动调用商品、库存、购物车、订单、偏好记忆或外部 MCP 工具。
-            不要向用户暴露内部推理过程、工具调用参数、JSON 结构或中间 Observation，只输出最终答案。
-
-            工具能力：
-            已注册工具的名称、描述和参数 schema 由 Spring AI tool calling 提供，以实际注册结果为准。
-
-            规则：
-            1. 当用户需求不完整时，优先追问预算、品类、品牌、尺码、颜色、使用场景和禁忌条件。
-            2. %s
-            3. 对不需要实时商城数据的泛化推荐、品类对比、预算建议，或用户明确要求“只用几句话回答”的场景，优先直接给结论；需要补充知识库事实时再调用 searchProductKnowledge，不要为了推荐而强制调用 mall_search_products。
-            4. 加购前需要明确 SKU 和数量；创建订单必须先 mall_prepare_order，再在用户明确二次确认后调用 mall_create_order。
-            5. 可以调用 updateShoppingPreference 维护本轮短期偏好，但不要把敏感信息写入偏好状态。
-            6. 如果 mall_* 工具返回 ok=false、MALL_ERROR 或“商城 MCP 调用失败”，直接告诉用户商城 MCP 调用失败，不要编造商品、价格、库存或订单结果。
-            7. %s
-            8. 使用 searchProductKnowledge 后，必须区分“知识库原文事实”和“导购推断”：商品名、SKU、品牌、类目、价格快照、库存快照、促销快照、评价摘要可作为事实；年龄、适用人群、使用场景、购买建议等如果工具结果没有明确写出，只能说“知识库未明确”，或标注为“导购推断：根据商品名、类目或评价推测……”。当用户问“适合、场景、人群、怎么样、推荐、选哪个、更合适、别太复杂”时，如果这部分不是工具明确字段，不得省略“导购推断”标签。
-            9. 需要调用工具时，必须先调用工具，调用完成前不要输出任何可见文字；最终回答只给结论和依据，不要输出“我来查询”“让我搜索”“我尝试搜索”等工具调用过程语句。
-            10. 如果最终回答涉及知识库事实和导购建议，必须使用“知识库原文事实”“导购推断”两个小节；没有推断时写“导购推断：无”。
-            11. 如果工具返回的信息不足，请明确说明不确定性，不要编造。
-            """;
-
     private final BuiltInTools builtInTools;
     private final LongTermMemoryAdvisor longTermMemoryAdvisor;
     private final MessageChatMemoryAdvisor messageChatMemoryAdvisor;
@@ -76,6 +55,7 @@ public class ReActAgent {
     private final ChatClient reactChatClient;
     private final List<ToolCallback> builtInToolCallbacks;
     private final RagTracing tracing;
+    private final PromptTemplateStore promptTemplateStore;
 
     public ReActAgent(ChatClient.Builder builder,
                       BuiltInTools builtInTools,
@@ -100,7 +80,8 @@ public class ReActAgent {
                 externalToolCallbackProviders,
                 mallMcpClient,
                 conversationLogService,
-                new RagTracing()
+                new RagTracing(),
+                new PromptTemplateStore()
         );
     }
 
@@ -116,7 +97,8 @@ public class ReActAgent {
                       List<ToolCallbackProvider> externalToolCallbackProviders,
                       MallMcpClient mallMcpClient,
                       ConversationLogService conversationLogService,
-                      RagTracing tracing) {
+                      RagTracing tracing,
+                      PromptTemplateStore promptTemplateStore) {
         this.builtInTools = builtInTools;
         this.longTermMemoryAdvisor = longTermMemoryAdvisor;
         this.messageChatMemoryAdvisor = messageChatMemoryAdvisor;
@@ -134,6 +116,36 @@ public class ReActAgent {
         this.reactChatClient = builder.clone().build();
         this.builtInToolCallbacks = loadBuiltInToolCallbacks();
         this.tracing = tracing == null ? new RagTracing() : tracing;
+        this.promptTemplateStore = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
+    }
+
+    public ReActAgent(ChatClient.Builder builder,
+                      BuiltInTools builtInTools,
+                      LongTermMemoryAdvisor longTermMemoryAdvisor,
+                      MessageChatMemoryAdvisor messageChatMemoryAdvisor,
+                      ConversationMemoryService conversationMemoryService,
+                      PromptSecurityFilter promptSecurityFilter,
+                      ChatModelRegistry chatModelRegistry,
+                      ShoppingRouteExecutor shoppingRouteExecutor,
+                      List<ToolCallbackProvider> externalToolCallbackProviders,
+                      MallMcpClient mallMcpClient,
+                      ConversationLogService conversationLogService,
+                      RagTracing tracing) {
+        this(
+                builder,
+                builtInTools,
+                longTermMemoryAdvisor,
+                messageChatMemoryAdvisor,
+                conversationMemoryService,
+                promptSecurityFilter,
+                chatModelRegistry,
+                shoppingRouteExecutor,
+                externalToolCallbackProviders,
+                mallMcpClient,
+                conversationLogService,
+                tracing,
+                new PromptTemplateStore()
+        );
     }
 
     public ReActAgent(ChatClient.Builder builder,
@@ -158,7 +170,8 @@ public class ReActAgent {
                 externalToolCallbackProviders,
                 null,
                 conversationLogService,
-                new RagTracing()
+                new RagTracing(),
+                new PromptTemplateStore()
         );
     }
 
@@ -814,11 +827,14 @@ public class ReActAgent {
         String networkRule = webSearchEnabled && hasExternalTools
                 ? "对于需要最新公开互联网信息的问题，优先使用联网搜索相关工具。"
                 : "当前未启用联网搜索工具，不要假设自己能够访问互联网。";
-        String basePrompt = REACT_SYSTEM_PROMPT_TEMPLATE.formatted(mallRule, networkRule);
         String policyPrompt = renderTaskPolicyPrompt(taskPolicies);
-        return StringUtils.hasText(policyPrompt)
-                ? basePrompt + System.lineSeparator() + System.lineSeparator() + policyPrompt
-                : basePrompt;
+        return promptTemplateStore.render("react.system", Map.of(
+                "mall_rule", mallRule,
+                "network_rule", networkRule,
+                "task_policy_prompt", StringUtils.hasText(policyPrompt)
+                        ? System.lineSeparator() + System.lineSeparator() + policyPrompt
+                        : ""
+        ));
     }
 
     private String reactInput(String systemPrompt, Message currentUserMessage, ActiveToolCallbacks activeTools) {

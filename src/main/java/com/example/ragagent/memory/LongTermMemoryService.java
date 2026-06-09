@@ -2,6 +2,7 @@ package com.example.ragagent.memory;
 
 import com.example.ragagent.config.HierarchicalMemoryProperties;
 import com.example.ragagent.config.MilvusVectorStoreConfiguration;
+import com.example.ragagent.prompt.PromptTemplateStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -30,47 +31,25 @@ public class LongTermMemoryService {
     private static final Logger log = LoggerFactory.getLogger(LongTermMemoryService.class);
     private static final String LONG_TERM_MEMORY_PLACEHOLDER = "long_term_memory";
     private static final String DEFAULT_USER_ID = "anonymous";
-    private static final String LONG_TERM_SYSTEM_PROMPT = """
-            当以下长期记忆与当前请求相关时，请使用它。
-            将其视为持久的用户上下文，例如偏好、约束、稳定事实，
-            以及此前对话中尚未完成的话题。
-            ---------------------
-            LONG_TERM_MEMORY:
-            {long_term_memory}
-            ---------------------
-            """;
-
-    private static final String SUMMARY_SYSTEM_PROMPT = """
-            你是一个对话记忆压缩器。
-            请将提供的聊天记录整理成一个紧凑摘要，便于未来对话继续使用。
-            只保留具有持续价值的信息，例如：
-            1. 长期目标或反复出现的意图
-            2. 已确认的偏好、约束和背景事实
-            3. 已经得出的重要结论
-            4. 之后还应继续推进的未完成话题
-
-            排除问候语、重复内容，以及对未来没有价值的临时细节。
-            输出格式：
-            Intent: ...
-            Key Facts:
-            - ...
-            Open Threads:
-            - ...
-            """;
 
     private final VectorStore vectorStore;
     private final HierarchicalMemoryProperties properties;
     private final Executor executor;
     private final ChatClient summarizerChatClient;
+    private final PromptTemplateStore promptTemplateStore;
+    private final String summarySystemPrompt;
 
     public LongTermMemoryService(@Qualifier(MilvusVectorStoreConfiguration.MEMORY_VECTOR_STORE) VectorStore vectorStore,
                                  ChatClient.Builder chatClientBuilder,
                                  HierarchicalMemoryProperties properties,
-                                 @Qualifier("hierarchicalMemoryExecutor") Executor executor) {
+                                 @Qualifier("hierarchicalMemoryExecutor") Executor executor,
+                                 PromptTemplateStore promptTemplateStore) {
         this.vectorStore = vectorStore;
         this.properties = properties;
         this.executor = executor;
         this.summarizerChatClient = chatClientBuilder == null ? null : chatClientBuilder.clone().build();
+        this.promptTemplateStore = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
+        this.summarySystemPrompt = this.promptTemplateStore.text("memory.summary.system");
     }
 
     public String retrieveLongTermMemory(String userId, String userText) {
@@ -97,7 +76,7 @@ public class LongTermMemoryService {
     }
 
     public String renderLongTermMemoryPrompt(String longTermMemory) {
-        return LONG_TERM_SYSTEM_PROMPT.replace("{" + LONG_TERM_MEMORY_PLACEHOLDER + "}", longTermMemory);
+        return promptTemplateStore.render("memory.long-term.system", Map.of(LONG_TERM_MEMORY_PLACEHOLDER, longTermMemory));
     }
 
     public CompletableFuture<Boolean> scheduleSummaryIfNeeded(String userId,
@@ -139,7 +118,7 @@ public class LongTermMemoryService {
                 """.formatted(normalizeUserId(userId), conversationId, transcript);
 
         String summary = summarizerChatClient.prompt()
-                .system(SUMMARY_SYSTEM_PROMPT)
+                .system(summarySystemPrompt)
                 .user(summaryPrompt)
                 .call()
                 .content();

@@ -421,13 +421,14 @@ public class ReActAgent {
                                            PromptSecurityFilter.SecuredPrompt securedPrompt,
                                            ConversationTurnRecord conversationTurn) {
         ChatClient.ChatClientRequestSpec requestSpec = applyModelOptions(reactChatClient.prompt(), modelId);
+        String reactSystemPrompt = buildReactSystemPrompt(
+                activeTools.hasExternalTools(),
+                activeTools.hasMallTools(),
+                webSearchEnabled,
+                taskPolicies
+        );
         ChatClient.ChatClientRequestSpec requestWithSystem =
-                requestSpec.system(buildReactSystemPrompt(
-                        activeTools.hasExternalTools(),
-                        activeTools.hasMallTools(),
-                        webSearchEnabled,
-                        taskPolicies
-                ));
+                requestSpec.system(reactSystemPrompt);
         if (requestWithSystem == null) {
             requestWithSystem = requestSpec;
         }
@@ -452,8 +453,10 @@ public class ReActAgent {
             requestWithMemory = requestWithToolContext;
         }
         ChatClient.ChatClientRequestSpec finalRequestWithMemory = requestWithMemory;
+        Span span = tracing.currentSpan();
 
         return Flux.defer(() -> {
+            tracing.capturePromptText(span, "llm.react.input", reactInput(reactSystemPrompt, currentUserMessage, activeTools));
             StreamingSensitiveValueRestorer restorer =
                     new StreamingSensitiveValueRestorer(securedPrompt.sensitiveValues());
             StringBuilder rawAnswerBuilder = new StringBuilder();
@@ -495,6 +498,7 @@ public class ReActAgent {
                                 restoredAnswerBuilder
                         ))
                         .doOnComplete(() -> {
+                            tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
                             if (fallbackUsed.get()) {
                                 conversationLogService.partialTurn(
                                         conversationTurn,
@@ -519,11 +523,13 @@ public class ReActAgent {
                             );
                         })
                         .doOnError(ex -> {
+                            tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
                             conversationLogService.failTurn(conversationTurn, restoredAnswerBuilder.toString().trim(), ex);
                             persisted.set(true);
                         })
                         .doFinally(signalType -> {
                             if (signalType == SignalType.CANCEL && persisted.compareAndSet(false, true)) {
+                                tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
                                 conversationLogService.partialTurn(
                                         conversationTurn,
                                         restoredAnswerBuilder.toString().trim(),
@@ -533,6 +539,7 @@ public class ReActAgent {
                         });
             }
             catch (RuntimeException ex) {
+                tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
                 conversationLogService.failTurn(conversationTurn, restoredAnswerBuilder.toString().trim(), ex);
                 persisted.set(true);
                 return Flux.error(ex);
@@ -814,6 +821,27 @@ public class ReActAgent {
                 : basePrompt;
     }
 
+    private String reactInput(String systemPrompt, Message currentUserMessage, ActiveToolCallbacks activeTools) {
+        return "system:\n" + systemPrompt
+                + "\n\nuser:\n" + messageText(currentUserMessage)
+                + "\n\nmedia_count: " + mediaCountFromMessage(currentUserMessage)
+                + "\ntools: " + activeTools.toolNames();
+    }
+
+    private String messageText(Message message) {
+        if (message instanceof UserMessage userMessage) {
+            return userMessage.getText();
+        }
+        return message == null ? "" : String.valueOf(message);
+    }
+
+    private int mediaCountFromMessage(Message message) {
+        if (message instanceof UserMessage userMessage) {
+            return userMessage.getMedia().size();
+        }
+        return 0;
+    }
+
     private String renderTaskPolicyPrompt(List<ShoppingTaskPolicy> taskPolicies) {
         if (taskPolicies == null || taskPolicies.isEmpty()) {
             return "";
@@ -853,6 +881,17 @@ public class ReActAgent {
     }
 
     private record ActiveToolCallbacks(List<ToolCallback> callbacks, boolean hasExternalTools, boolean hasMallTools) {
+
+        private List<String> toolNames() {
+            if (callbacks == null || callbacks.isEmpty()) {
+                return List.of();
+            }
+            return callbacks.stream()
+                    .filter(callback -> callback != null && callback.getToolDefinition() != null)
+                    .map(callback -> callback.getToolDefinition().name())
+                    .filter(StringUtils::hasText)
+                    .toList();
+        }
     }
 
     private static final class MallMcpToolResolutionException extends RuntimeException {

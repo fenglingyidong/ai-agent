@@ -162,4 +162,51 @@ class RagTracingTest {
         assertEquals("[{\"rank\":1,\"sourceId\":\"product-\\\"P\\\\1001\\\"\\n\\t\\b\\f\\u0001\","
                 + "\"title\":\"云跑\\nAir\\tLite \\\"缓震\\\" \\\\跑步鞋\"}]", json);
     }
+
+    @Test
+    void capturePromptTextShouldOnlyWriteSanitizedTextWhenCaptureEnabled() throws Exception {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCapturePrompt(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+        String expected = "手机号 [REDACTED_PHONE] password=[REDACTED] token: [REDACTED] Authorization: [REDACTED]";
+
+        enabledTracing.capturePromptText(span, "llm.input",
+                "手机号 13812345678 password=abc123 token: sk-test Authorization: Bearer abc");
+
+        verify(span).setAttribute("llm.input", expected);
+        verify(span).setAttribute("llm.input.length", (long) expected.length());
+        verify(span).setAttribute("llm.input.truncated", false);
+    }
+
+    @Test
+    void capturePromptTextShouldSkipWhenCaptureDisabled() throws Exception {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCapturePrompt(false);
+        RagTracing disabledCaptureTracing = new RagTracing(mock(Tracer.class), properties);
+
+        disabledCaptureTracing.capturePromptText(span, "llm.input", "password=abc123");
+
+        verify(span, never()).setAttribute(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+        verify(span, never()).setAttribute(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyLong());
+        verify(span, never()).setAttribute(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void capturePromptTextShouldTruncateLongText() {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCapturePrompt(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+
+        enabledTracing.capturePromptText(span, "llm.input", "x".repeat(8_001));
+
+        verify(span).setAttribute("llm.input", "x".repeat(8_000));
+        verify(span).setAttribute("llm.input.length", 8_000L);
+        verify(span).setAttribute("llm.input.truncated", true);
+    }
 }

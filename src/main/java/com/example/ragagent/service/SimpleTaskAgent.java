@@ -1,7 +1,9 @@
 package com.example.ragagent.service;
 
 import com.example.ragagent.mall.MallMcpClient;
+import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
+import io.opentelemetry.api.trace.Span;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +74,7 @@ public class SimpleTaskAgent {
     private final ChatClient.Builder builder;
     private final BuiltInTools builtInTools;
     private final MallMcpToolCallback mallMcpToolCallback;
+    private final RagTracing tracing;
 
     @Value("${app.ai.simple-task.enabled:true}")
     private boolean enabled = true;
@@ -87,19 +90,35 @@ public class SimpleTaskAgent {
     @Autowired
     public SimpleTaskAgent(ChatClient.Builder builder,
                            BuiltInTools builtInTools,
-                           MallMcpClient mallMcpClient) {
+                           MallMcpClient mallMcpClient,
+                           RagTracing tracing) {
         this.builder = builder;
         this.builtInTools = builtInTools;
         this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
+        this.tracing = tracing == null ? new RagTracing() : tracing;
+    }
+
+    public SimpleTaskAgent(ChatClient.Builder builder,
+                           BuiltInTools builtInTools,
+                           MallMcpClient mallMcpClient) {
+        this(builder, builtInTools, mallMcpClient, new RagTracing());
     }
 
     SimpleTaskAgent(ChatClient simpleTaskChatClient,
                     BuiltInTools builtInTools,
                     MallMcpClient mallMcpClient) {
+        this(simpleTaskChatClient, builtInTools, mallMcpClient, new RagTracing());
+    }
+
+    SimpleTaskAgent(ChatClient simpleTaskChatClient,
+                    BuiltInTools builtInTools,
+                    MallMcpClient mallMcpClient,
+                    RagTracing tracing) {
         this.builder = null;
         this.simpleTaskChatClient = simpleTaskChatClient;
         this.builtInTools = builtInTools;
         this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
+        this.tracing = tracing == null ? new RagTracing() : tracing;
     }
 
     @PostConstruct
@@ -198,14 +217,15 @@ public class SimpleTaskAgent {
                                                          String preferenceContext,
                                                          String systemPrompt,
                                                          Object toolObject) {
-        return callSimpleModel(route, () -> simpleTaskChatClient.prompt()
+        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext);
+        return callSimpleModel(route, systemPrompt, userPrompt, () -> simpleTaskChatClient.prompt()
                 .options(OpenAiChatOptions.builder()
                         .model(modelName())
                         .temperature(0.0)
                         .maxTokens(Math.max(1, maxTokens))
                         .build())
                 .system(systemPrompt)
-                .user(buildUserPrompt(route, userMessage, preferenceContext))
+                .user(userPrompt)
                 .tools(toolObject)
                 .call()
                 .content());
@@ -217,25 +237,32 @@ public class SimpleTaskAgent {
                                                             String systemPrompt,
                                                             List<ToolCallback> toolCallbacks,
                                                             Map<String, Object> toolContext) {
-        return callSimpleModel(route, () -> simpleTaskChatClient.prompt()
+        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext);
+        return callSimpleModel(route, systemPrompt, userPrompt, () -> simpleTaskChatClient.prompt()
                 .options(OpenAiChatOptions.builder()
                         .model(modelName())
                         .temperature(0.0)
                         .maxTokens(Math.max(1, maxTokens))
                         .build())
                 .system(systemPrompt)
-                .user(buildUserPrompt(route, userMessage, preferenceContext))
+                .user(userPrompt)
                 .toolCallbacks(toolCallbacks)
                 .toolContext(toolContext)
                 .call()
                 .content());
     }
 
-    private FastLaneResult callSimpleModel(ShoppingIntentRoute route, Supplier<String> modelCall) {
+    private FastLaneResult callSimpleModel(ShoppingIntentRoute route,
+                                           String systemPrompt,
+                                           String userPrompt,
+                                           Supplier<String> modelCall) {
         try {
+            Span span = tracing.currentSpan();
+            tracing.capturePromptText(span, "llm.simple_task.input", llmInput(systemPrompt, userPrompt));
             log.info("简单任务小模型开始：taskType={}, intent={}, model={}",
                     route.normalizedTaskType(), route.normalizedIntent(), modelName());
             String content = modelCall.get();
+            tracing.capturePromptText(span, "llm.simple_task.output", content);
             if (!StringUtils.hasText(content)) {
                 return FastLaneResult.fallbackToCore("简单任务小模型返回空内容");
             }
@@ -425,5 +452,9 @@ public class SimpleTaskAgent {
 
     private static String safeToolMessage(RuntimeException ex) {
         return ex == null || !StringUtils.hasText(ex.getMessage()) ? "unknown error" : ex.getMessage();
+    }
+
+    private String llmInput(String systemPrompt, String userPrompt) {
+        return "system:\n" + systemPrompt + "\n\nuser:\n" + userPrompt;
     }
 }

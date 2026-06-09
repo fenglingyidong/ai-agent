@@ -1,5 +1,7 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.observability.RagTracing;
+import io.opentelemetry.api.trace.Span;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -83,13 +85,21 @@ public class ShoppingIntentRouter {
     @Value("${app.ai.intent-router.model:qwen3-vl-8b-instruct}")
     private String model = "qwen3-vl-8b-instruct";
 
+    @Autowired(required = false)
+    private RagTracing tracing;
+
     private ChatClient routerChatClient;
 
     public ShoppingIntentRouter() {
     }
 
     public ShoppingIntentRouter(ChatClient routerChatClient) {
+        this(routerChatClient, new RagTracing());
+    }
+
+    ShoppingIntentRouter(ChatClient routerChatClient, RagTracing tracing) {
         this.routerChatClient = routerChatClient;
+        this.tracing = tracing == null ? new RagTracing() : tracing;
     }
 
     @jakarta.annotation.PostConstruct
@@ -114,19 +124,24 @@ public class ShoppingIntentRouter {
         String normalizedMessage = StringUtils.hasText(userMessage) ? userMessage.trim() : "";
         List<Media> safeMedia = media == null ? List.of() : media;
         try {
+            RagTracing activeTracing = tracing();
+            Span span = activeTracing.currentSpan();
             ChatClient.ChatClientRequestSpec requestSpec = routerChatClient.prompt()
                     .options(buildOptions())
                     .system(ROUTER_SYSTEM_PROMPT);
+            String userPrompt = buildUserPrompt(normalizedMessage, safeMedia.size(), preferenceContext);
+            activeTracing.capturePromptText(span, "llm.intent_router.input", llmInput(ROUTER_SYSTEM_PROMPT, userPrompt));
             if (safeMedia.isEmpty()) {
-                requestSpec = requestSpec.user(buildUserPrompt(normalizedMessage, 0, preferenceContext));
+                requestSpec = requestSpec.user(userPrompt);
             }
             else {
                 requestSpec = requestSpec.user(user -> user
-                        .text(buildUserPrompt(normalizedMessage, safeMedia.size(), preferenceContext))
+                        .text(userPrompt)
                         .media(safeMedia.toArray(Media[]::new)));
             }
 
             ShoppingIntentRoute route = normalizeFastLaneRoute(requestSpec.call().entity(ShoppingIntentRoute.class));
+            activeTracing.capturePromptText(span, "llm.intent_router.output", String.valueOf(route));
             if (route == null) {
                 return ShoppingIntentRoute.fallback("intent router returned empty route");
             }
@@ -213,5 +228,16 @@ public class ShoppingIntentRouter {
             return extra;
         }
         return reason.trim() + "；" + extra;
+    }
+
+    private RagTracing tracing() {
+        if (tracing == null) {
+            tracing = new RagTracing();
+        }
+        return tracing;
+    }
+
+    private String llmInput(String systemPrompt, String userPrompt) {
+        return "system:\n" + systemPrompt + "\n\nuser:\n" + userPrompt;
     }
 }

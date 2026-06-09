@@ -6,9 +6,11 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
 import com.example.ragagent.mall.MallMcpClient;
+import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.opentelemetry.api.trace.Span;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,7 @@ import org.springframework.ai.tool.execution.ToolExecutionException;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -102,6 +105,30 @@ class SimpleTaskAgentTest {
         assertTrue(prompt.contains("品类：跑鞋"));
         assertTrue(prompt.contains("用户本轮输入："));
         assertTrue(prompt.contains("再推荐几双"));
+    }
+
+    @Test
+    void tryRunShouldCaptureSimpleTaskInputAndOutput() {
+        AgentMocks mocks = agentMocks("轻量跑步鞋适合日常慢跑。");
+        RecordingTracing tracing = new RecordingTracing();
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null, tracing);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_KNOWLEDGE_QUERY",
+                "A_FAQ_SIMPLE_QUERY",
+                Map.of(),
+                Map.of("category", "跑鞋"),
+                false,
+                0.92,
+                "知识库简单查询"
+        );
+
+        FastLaneResult result = agent.tryRun(route, "推荐跑鞋", "session-1", 0.7);
+
+        assertTrue(result.handled());
+        assertTrue(tracing.text("llm.simple_task.input").contains("system:"));
+        assertTrue(tracing.text("llm.simple_task.input").contains("user:"));
+        assertTrue(tracing.text("llm.simple_task.input").contains("推荐跑鞋"));
+        assertEquals("轻量跑步鞋适合日常慢跑。", tracing.text("llm.simple_task.output"));
     }
 
     @Test
@@ -428,6 +455,25 @@ class SimpleTaskAgentTest {
             logger.setLevel(originalLevel);
             logger.setAdditive(originalAdditive);
             appender.stop();
+        }
+    }
+
+    private static final class RecordingTracing extends RagTracing {
+
+        private final Map<String, String> captured = new LinkedHashMap<>();
+
+        @Override
+        public Span currentSpan() {
+            return Span.getInvalid();
+        }
+
+        @Override
+        public void capturePromptText(Span span, String key, String value) {
+            captured.put(key, value);
+        }
+
+        private String text(String key) {
+            return captured.getOrDefault(key, "");
         }
     }
 }

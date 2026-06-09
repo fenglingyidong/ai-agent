@@ -4,11 +4,13 @@ import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
+import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.service.ChatModelRegistry;
 import com.example.ragagent.service.ReActAgent;
 import com.example.ragagent.tools.BuiltInTools;
 import io.modelcontextprotocol.client.McpSyncClient;
+import io.opentelemetry.api.trace.Span;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -29,7 +31,9 @@ import org.springframework.http.MediaType;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -98,6 +102,50 @@ class ReActAgentTest {
         assertTrue(systemPrompt.contains("不要输出“我来查询”“让我搜索”"));
         assertTrue(systemPrompt.contains("调用完成前不要输出任何可见文字"));
         assertTrue(systemPrompt.contains("必须使用“知识库原文事实”“导购推断”两个小节"));
+    }
+
+    @Test
+    void runStreamShouldCaptureReactInputAndOutput() {
+        ChatClient reactChatClient = mock(ChatClient.class);
+        ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
+        ChatClient.StreamResponseSpec streamResponseSpec = mock(ChatClient.StreamResponseSpec.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        MemoryTestSupport memory = memorySupport();
+        RecordingTracing tracing = new RecordingTracing();
+
+        when(reactChatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenReturn(requestSpec);
+        when(requestSpec.toolCallbacks(org.mockito.ArgumentMatchers.<List<ToolCallback>>any())).thenReturn(requestSpec);
+        when(requestSpec.advisors(org.mockito.ArgumentMatchers.<java.util.function.Consumer<ChatClient.AdvisorSpec>>any()))
+                .thenReturn(requestSpec);
+        when(requestSpec.messages(anyList())).thenReturn(requestSpec);
+        when(requestSpec.stream()).thenReturn(streamResponseSpec);
+        when(streamResponseSpec.content()).thenReturn(Flux.just("推荐 ", "轻量跑步鞋"));
+
+        ReActAgent agent = new ReActAgent(
+                builderFor(reactChatClient),
+                builtInTools,
+                memory.longTermMemoryAdvisor(),
+                memory.messageChatMemoryAdvisor(),
+                memory.conversationMemoryService(),
+                new PromptSecurityFilter(),
+                null,
+                null,
+                List.of(),
+                null,
+                mock(ConversationLogService.class),
+                tracing
+        );
+
+        String result = collect(agent.runStream("user-1", "session-1", null, "推荐跑鞋", false,
+                List.of(), "", "", ""));
+
+        assertEquals("推荐 轻量跑步鞋", result);
+        assertTrue(tracing.text("llm.react.input").contains("system:"));
+        assertTrue(tracing.text("llm.react.input").contains("user:"));
+        assertTrue(tracing.text("llm.react.input").contains("推荐跑鞋"));
+        assertTrue(tracing.text("llm.react.input").contains("searchProductKnowledge"));
+        assertEquals("推荐 轻量跑步鞋", tracing.text("llm.react.output"));
     }
 
     @Test
@@ -348,5 +396,24 @@ class ReActAgentTest {
             MessageChatMemoryAdvisor messageChatMemoryAdvisor,
             ConversationMemoryService conversationMemoryService
     ) {
+    }
+
+    private static final class RecordingTracing extends RagTracing {
+
+        private final Map<String, String> captured = new LinkedHashMap<>();
+
+        @Override
+        public Span currentSpan() {
+            return Span.getInvalid();
+        }
+
+        @Override
+        public void capturePromptText(Span span, String key, String value) {
+            captured.put(key, value);
+        }
+
+        private String text(String key) {
+            return captured.getOrDefault(key, "");
+        }
     }
 }

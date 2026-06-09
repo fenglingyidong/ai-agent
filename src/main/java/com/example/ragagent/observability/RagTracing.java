@@ -14,9 +14,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.regex.Pattern;
 
 @Component
 public class RagTracing {
+
+    private static final int PROMPT_CAPTURE_MAX_CHARS = 8_000;
+    private static final Pattern PHONE_PATTERN = Pattern.compile("(?<!\\d)1[3-9]\\d{9}(?!\\d)");
+    private static final Pattern SECRET_ASSIGNMENT_PATTERN = Pattern.compile(
+            "(?i)\\b(password|passwd|pwd|token|access[_-]?token|refresh[_-]?token|secret|api[_-]?key)\\b(\\s*[:=]\\s*)([^\\s,;\\]\\}\\)]+)");
+    private static final Pattern AUTHORIZATION_PATTERN = Pattern.compile("(?i)\\bAuthorization\\b\\s*[:=]\\s*Bearer\\s+[^\\s,;\\]\\}\\)]+");
 
     private final Tracer tracer;
     private final LangfuseProperties properties;
@@ -124,6 +131,28 @@ public class RagTracing {
         span.recordException(ex);
         span.setStatus(StatusCode.ERROR, ex.getClass().getSimpleName());
         span.setAttribute("error.type", ex.getClass().getSimpleName());
+    }
+
+    public void capturePromptText(Span span, String key, String value) {
+        if (!properties.isEnabled() || !properties.isCapturePrompt() || span == null
+                || !StringUtils.hasText(key) || value == null) {
+            return;
+        }
+        String sanitized = sanitizePromptText(value);
+        boolean truncated = sanitized.length() > PROMPT_CAPTURE_MAX_CHARS;
+        String captured = truncated ? sanitized.substring(0, PROMPT_CAPTURE_MAX_CHARS) : sanitized;
+        span.setAttribute(key, captured);
+        span.setAttribute(key + ".length", (long) captured.length());
+        span.setAttribute(key + ".truncated", truncated);
+    }
+
+    String sanitizePromptText(String value) {
+        if (value == null || value.isEmpty()) {
+            return "";
+        }
+        String sanitized = AUTHORIZATION_PATTERN.matcher(value).replaceAll("Authorization: [REDACTED]");
+        sanitized = SECRET_ASSIGNMENT_PATTERN.matcher(sanitized).replaceAll("$1$2[REDACTED]");
+        return PHONE_PATTERN.matcher(sanitized).replaceAll("[REDACTED_PHONE]");
     }
 
     public List<String> topDocumentIds(List<Document> documents, int limit) {

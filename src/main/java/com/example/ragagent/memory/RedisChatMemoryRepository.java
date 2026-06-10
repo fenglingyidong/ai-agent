@@ -77,12 +77,20 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         Assert.noNullElements(messages, "messages cannot contain null elements");
 
         markTouched(conversationId);
-        MemoryWindowSnapshot ageSnapshot = compactByAge(conversationId, readAllEntries(conversationId));
+        List<ConversationMemoryEntry> currentEntries = readAllEntries(conversationId);
+        MemoryWindowSnapshot ageSnapshot = compactByAge(conversationId, currentEntries);
         summarizeEvicted(conversationId, ageSnapshot.evictedEntries());
-        List<ConversationMemoryEntry> currentEntries = ageSnapshot.retainedEntries();
-        MergeResult mergeResult = mergeSavedMessages(conversationId, currentEntries, messages);
-        rewriteWindow(conversationId, mergeResult.retainedEntries(), true);
+        List<ConversationMemoryEntry> retainedEntries = ageSnapshot.retainedEntries();
+        if (ageSnapshot.evictedEntries().isEmpty() && isPrefixAppend(retainedEntries, messages)) {
+            List<ConversationMemoryEntry> appendedEntries = appendNewMessages(conversationId, retainedEntries, messages);
+            summarizeEvicted(conversationId, countEvictedByTrim(retainedEntries, appendedEntries));
+            refreshTtl(conversationId);
+            return;
+        }
+        MergeResult mergeResult = mergeSavedMessages(conversationId, retainedEntries, messages);
+        rewriteWindow(conversationId, mergeResult.retainedEntries(), false);
         summarizeEvicted(conversationId, mergeResult.evictedEntries());
+        refreshTtl(conversationId);
     }
 
     @Override
@@ -167,6 +175,42 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
             }
         }
         return new MergeResult(retained, evicted);
+    }
+
+    private boolean isPrefixAppend(List<ConversationMemoryEntry> currentEntries, List<Message> savedMessages) {
+        if (savedMessages.size() <= currentEntries.size()) {
+            return false;
+        }
+        for (int index = 0; index < currentEntries.size(); index++) {
+            if (!Objects.equals(signature(currentEntries.get(index)), signature(savedMessages.get(index)))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private List<ConversationMemoryEntry> appendNewMessages(String conversationId,
+                                                            List<ConversationMemoryEntry> currentEntries,
+                                                            List<Message> savedMessages) {
+        List<ConversationMemoryEntry> appendedEntries = new ArrayList<>();
+        for (int index = currentEntries.size(); index < savedMessages.size(); index++) {
+            ConversationMemoryEntry entry = ConversationMemoryEntry.fromMessage(nextSequence(conversationId), savedMessages.get(index));
+            redisTemplate.opsForList().rightPush(listKey(conversationId), serialize(entry));
+            appendedEntries.add(entry);
+        }
+        redisTemplate.opsForList().trim(listKey(conversationId), -properties.getMaxRecentMessages(), -1);
+        return appendedEntries;
+    }
+
+    private List<ConversationMemoryEntry> countEvictedByTrim(List<ConversationMemoryEntry> currentEntries,
+                                                             List<ConversationMemoryEntry> appendedEntries) {
+        int maxMessages = properties.getMaxRecentMessages();
+        int combinedSize = currentEntries.size() + appendedEntries.size();
+        int evictedCount = Math.max(0, combinedSize - maxMessages);
+        if (evictedCount <= 0) {
+            return List.of();
+        }
+        return List.copyOf(currentEntries.subList(0, Math.min(evictedCount, currentEntries.size())));
     }
 
     private int findMatchingEntryIndex(List<ConversationMemoryEntry> entries,

@@ -24,7 +24,6 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -74,7 +73,7 @@ class RedisChatMemoryRepositoryTest {
     }
 
     @Test
-    void findByConversationIdShouldReadMessagesAndRefreshTtl() throws Exception {
+    void findByConversationIdShouldReadMessagesWithoutTouchingConversation() throws Exception {
         ConversationMemoryEntry entry = ConversationMemoryEntry.fromMessage(1L, new UserMessage("hello"));
         when(listOperations.range("memory:short:user-1::session-1:messages", 0, -1))
                 .thenReturn(List.of(objectMapper.writeValueAsString(entry)));
@@ -83,9 +82,11 @@ class RedisChatMemoryRepositoryTest {
 
         assertEquals(1, messages.size());
         assertEquals("hello", ((UserMessage) messages.get(0)).getText());
-        verify(redisTemplate, times(2)).expire("memory:short:user-1::session-1:messages", Duration.ofHours(2));
-        verify(redisTemplate, times(2)).expire("memory:short:user-1::session-1:sequence", Duration.ofHours(2));
-        verify(redisTemplate, times(2)).expire("memory:short:user-1::session-1:state", Duration.ofHours(2));
+        verify(setOperations, never()).add(anyString(), anyString());
+        verify(hashOperations, never()).put(eq("memory:short:user-1::session-1:state"), eq("lastTouchedAt"), anyString());
+        verify(redisTemplate, never()).expire("memory:short:user-1::session-1:messages", Duration.ofHours(2));
+        verify(redisTemplate, never()).expire("memory:short:user-1::session-1:sequence", Duration.ofHours(2));
+        verify(redisTemplate, never()).expire("memory:short:user-1::session-1:state", Duration.ofHours(2));
     }
 
     @Test

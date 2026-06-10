@@ -63,7 +63,6 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     @Override
     public List<Message> findByConversationId(String conversationId) {
         Assert.hasText(conversationId, "conversationId cannot be null or empty");
-        touch(conversationId);
         MemoryWindowSnapshot snapshot = compactByAge(conversationId, readAllEntries(conversationId));
         summarizeEvicted(conversationId, snapshot.evictedEntries());
         return snapshot.retainedEntries().stream()
@@ -135,7 +134,6 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         }
 
         if (keepFromIndex <= 0) {
-            refreshTtl(conversationId);
             return new MemoryWindowSnapshot(List.copyOf(entries), List.of());
         }
 

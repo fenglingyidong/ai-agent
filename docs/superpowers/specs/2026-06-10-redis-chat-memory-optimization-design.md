@@ -123,23 +123,27 @@ saved messages 比 current messages 多出 1 条或多条
 新增后不需要复杂重排
 ```
 
+此外，`MessageWindowChatMemory` 在窗口已满时会把传入窗口裁成“当前窗口后缀 + 新消息”。这类安全的后缀重叠追加也可以走快路径：当前窗口的尾部必须与 `saved messages` 的头部连续匹配，新增消息只来自 `saved messages` 的剩余尾部。
+
 满足条件时不执行整窗 `DEL + RPUSHALL`，改为：
 
 ```text
 为每条新增消息 INCR sequence
 RPUSH 新增 entry
-LTRIM messages -maxRecentMessages -1
+LTRIM messages -savedMessages.size() -1
 markTouched
 refreshTtlOnce
 ```
 
-被 `LTRIM` 淘汰的旧消息仍需进入长期摘要。为避免额外 Redis 读，快路径使用本次已读取的 `currentEntries` 计算可能被淘汰的旧消息，并调用 `summarizeEvicted`。
+`LTRIM` 使用传入保存窗口的长度，而不是直接使用仓库 `maxRecentMessages`。这样可以保持 `ChatMemoryRepository.saveAll(messages)` 的外部语义：最终 Redis 窗口与调用方传入的保存窗口一致。常规 `MessageWindowChatMemory(maxMessages = maxRecentMessages)` 路径下，保存窗口长度通常等于 `maxRecentMessages`，因此仍会按窗口上限淘汰旧消息。
+
+被 `LTRIM` 淘汰的旧消息仍需进入长期摘要。为避免额外 Redis 读，快路径使用本次已读取的 `currentEntries` 与本次追加的 entries 计算实际被淘汰的消息，并调用 `summarizeEvicted`。
 
 ### 4. 回退整窗路径
 
 以下情况继续使用现有合并重写逻辑：
 
-- `saved messages` 不是当前窗口的前缀追加。
+- `saved messages` 既不是当前窗口的前缀追加，也不是安全的后缀重叠滑动追加。
 - 年龄压缩淘汰了旧消息。
 - 当前窗口存在系统消息去重、顺序调整等复杂情况。
 - 后续测试发现 Spring AI 传入模式不满足追加快路径假设。
@@ -158,7 +162,7 @@ refreshTtlOnce
   LRANGE messages
   INCR sequence
   RPUSH messages
-  LTRIM messages
+  LTRIM messages -savedMessages.size() -1
   SADD conversations
   HSET state lastTouchedAt
   EXPIRE messages / sequence / state
@@ -167,7 +171,7 @@ refreshTtlOnce
   LRANGE messages
   INCR sequence
   RPUSH messages
-  LTRIM messages
+  LTRIM messages -savedMessages.size() -1
   SADD conversations
   HSET state lastTouchedAt
   EXPIRE messages / sequence / state
@@ -180,7 +184,9 @@ refreshTtlOnce
 - key 结构不变，已有 Redis 数据可继续读取。
 - 序列号仍由 Redis `INCR` 分配，保持单会话内单调递增。
 - 普通读不刷新 TTL，极端情况下只有读取没有写入的会话可能更早过期；对 `/api/react` 常规请求可接受，因为模型请求会写入当前轮消息。
-- `LTRIM` 的淘汰摘要依赖本次读取的 `currentEntries` 计算，必须用测试覆盖窗口溢出场景。
+- `LTRIM` 的淘汰摘要依赖本次读取的 `currentEntries` 和本次追加的 entries 计算，必须用测试覆盖窗口溢出场景。
+- 快路径必须保证 `RPUSH + LTRIM` 后的 Redis 窗口等价于传入的 `saved messages`。如果无法证明等价，必须回退整窗重写。
+- `saveAll` 如果先发生年龄淘汰，年龄压缩重写路径仍会刷新 TTL；常规无年龄淘汰写路径只在末尾刷新一次 TTL。
 - 若快路径判断失败，必须回退旧逻辑，不能丢消息或改变顺序。
 
 ## 测试验收
@@ -191,6 +197,8 @@ refreshTtlOnce
 - `saveAll` 简单追加单条用户消息时使用 `RPUSH` / `LTRIM`，不调用 `delete(messages)`。
 - `saveAll` 简单追加助手消息时保持同样快路径。
 - 窗口超过 `maxRecentMessages` 时，旧消息被识别为 evicted 并触发长期摘要。
+- `MessageWindowChatMemory` 滑动窗口产生后缀重叠追加时，使用 `RPUSH` / `LTRIM`，并摘要被移出保存窗口的旧消息。
+- 传入保存窗口长度大于仓库 `maxRecentMessages` 时，快路径按传入窗口长度裁剪，避免改变 `saveAll(messages)` 语义。
 - 非前缀追加或复杂重排时回退整窗重写。
 - 现有短期记忆测试全部通过。
 

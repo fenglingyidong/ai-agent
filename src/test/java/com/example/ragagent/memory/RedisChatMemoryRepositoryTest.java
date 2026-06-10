@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -87,6 +88,23 @@ class RedisChatMemoryRepositoryTest {
         verify(redisTemplate, never()).expire("memory:short:user-1::session-1:messages", Duration.ofHours(2));
         verify(redisTemplate, never()).expire("memory:short:user-1::session-1:sequence", Duration.ofHours(2));
         verify(redisTemplate, never()).expire("memory:short:user-1::session-1:state", Duration.ofHours(2));
+    }
+
+    @Test
+    void saveAllShouldRefreshTtlOnceForSimpleAppend() throws Exception {
+        ConversationMemoryEntry existing = new ConversationMemoryEntry(1L, System.currentTimeMillis(), "USER", "hello", List.of(), null);
+        when(listOperations.range("memory:short:user-1::session-1:messages", 0, -1))
+                .thenReturn(List.of(objectMapper.writeValueAsString(existing)));
+        when(valueOperations.increment("memory:short:user-1::session-1:sequence")).thenReturn(2L);
+
+        repository.saveAll("user-1::session-1", List.of(
+                existing.toMessage(),
+                new UserMessage("next")
+        ));
+
+        verify(redisTemplate, times(1)).expire("memory:short:user-1::session-1:messages", Duration.ofHours(2));
+        verify(redisTemplate, times(1)).expire("memory:short:user-1::session-1:sequence", Duration.ofHours(2));
+        verify(redisTemplate, times(1)).expire("memory:short:user-1::session-1:state", Duration.ofHours(2));
     }
 
     @Test

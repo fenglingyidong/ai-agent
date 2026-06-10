@@ -76,12 +76,12 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         Assert.notNull(messages, "messages cannot be null");
         Assert.noNullElements(messages, "messages cannot contain null elements");
 
-        touch(conversationId);
+        markTouched(conversationId);
         MemoryWindowSnapshot ageSnapshot = compactByAge(conversationId, readAllEntries(conversationId));
         summarizeEvicted(conversationId, ageSnapshot.evictedEntries());
         List<ConversationMemoryEntry> currentEntries = ageSnapshot.retainedEntries();
         MergeResult mergeResult = mergeSavedMessages(conversationId, currentEntries, messages);
-        rewriteWindow(conversationId, mergeResult.retainedEntries());
+        rewriteWindow(conversationId, mergeResult.retainedEntries(), true);
         summarizeEvicted(conversationId, mergeResult.evictedEntries());
     }
 
@@ -139,7 +139,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
 
         List<ConversationMemoryEntry> evicted = new ArrayList<>(entries.subList(0, keepFromIndex));
         List<ConversationMemoryEntry> retained = new ArrayList<>(entries.subList(keepFromIndex, entries.size()));
-        rewriteWindow(conversationId, retained);
+        rewriteWindow(conversationId, retained, true);
         return new MemoryWindowSnapshot(retained, evicted);
     }
 
@@ -189,13 +189,15 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         return sequence;
     }
 
-    private void rewriteWindow(String conversationId, List<ConversationMemoryEntry> retainedEntries) {
+    private void rewriteWindow(String conversationId, List<ConversationMemoryEntry> retainedEntries, boolean refreshTtl) {
         String listKey = listKey(conversationId);
         redisTemplate.delete(listKey);
         if (!retainedEntries.isEmpty()) {
             redisTemplate.opsForList().rightPushAll(listKey, retainedEntries.stream().map(this::serialize).toList());
         }
-        refreshTtl(conversationId);
+        if (refreshTtl) {
+            refreshTtl(conversationId);
+        }
     }
 
     private List<ConversationMemoryEntry> readAllEntries(String conversationId) {
@@ -248,10 +250,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         }
     }
 
-    private void touch(String conversationId) {
+    private void markTouched(String conversationId) {
         redisTemplate.opsForSet().add(CONVERSATION_SET_KEY, conversationId);
         redisTemplate.opsForHash().put(stateKey(conversationId), LAST_TOUCHED_AT_FIELD, Long.toString(System.currentTimeMillis()));
-        refreshTtl(conversationId);
     }
 
     private MemoryState readState(String conversationId) {

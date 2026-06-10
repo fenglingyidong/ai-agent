@@ -81,8 +81,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         MemoryWindowSnapshot ageSnapshot = compactByAge(conversationId, currentEntries);
         summarizeEvicted(conversationId, ageSnapshot.evictedEntries());
         List<ConversationMemoryEntry> retainedEntries = ageSnapshot.retainedEntries();
-        if (ageSnapshot.evictedEntries().isEmpty() && isPrefixAppend(retainedEntries, messages)) {
-            List<ConversationMemoryEntry> appendedEntries = appendNewMessages(conversationId, retainedEntries, messages);
+        int appendFromIndex = appendFromIndex(retainedEntries, messages);
+        if (ageSnapshot.evictedEntries().isEmpty() && appendFromIndex >= 0) {
+            List<ConversationMemoryEntry> appendedEntries = appendNewMessages(conversationId, messages, appendFromIndex);
             summarizeEvicted(conversationId, countEvictedByTrim(retainedEntries, appendedEntries));
             refreshTtl(conversationId);
             return;
@@ -189,11 +190,45 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         return true;
     }
 
+    private int appendFromIndex(List<ConversationMemoryEntry> currentEntries, List<Message> savedMessages) {
+        if (isPrefixAppend(currentEntries, savedMessages)) {
+            return currentEntries.size();
+        }
+
+        int overlap = suffixPrefixOverlap(currentEntries, savedMessages);
+        if (overlap > 0 && savedMessages.size() > overlap) {
+            return overlap;
+        }
+        return -1;
+    }
+
+    private int suffixPrefixOverlap(List<ConversationMemoryEntry> currentEntries, List<Message> savedMessages) {
+        int maxOverlap = Math.min(currentEntries.size(), savedMessages.size());
+        for (int overlap = maxOverlap; overlap > 0; overlap--) {
+            if (suffixMatchesPrefix(currentEntries, savedMessages, overlap)) {
+                return overlap;
+            }
+        }
+        return 0;
+    }
+
+    private boolean suffixMatchesPrefix(List<ConversationMemoryEntry> currentEntries,
+                                        List<Message> savedMessages,
+                                        int overlap) {
+        int currentOffset = currentEntries.size() - overlap;
+        for (int index = 0; index < overlap; index++) {
+            if (!Objects.equals(signature(currentEntries.get(currentOffset + index)), signature(savedMessages.get(index)))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private List<ConversationMemoryEntry> appendNewMessages(String conversationId,
-                                                            List<ConversationMemoryEntry> currentEntries,
-                                                            List<Message> savedMessages) {
+                                                            List<Message> savedMessages,
+                                                            int appendFromIndex) {
         List<ConversationMemoryEntry> appendedEntries = new ArrayList<>();
-        for (int index = currentEntries.size(); index < savedMessages.size(); index++) {
+        for (int index = appendFromIndex; index < savedMessages.size(); index++) {
             ConversationMemoryEntry entry = ConversationMemoryEntry.fromMessage(nextSequence(conversationId), savedMessages.get(index));
             redisTemplate.opsForList().rightPush(listKey(conversationId), serialize(entry));
             appendedEntries.add(entry);

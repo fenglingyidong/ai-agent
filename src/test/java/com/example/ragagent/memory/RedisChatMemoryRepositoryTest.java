@@ -150,9 +150,10 @@ class RedisChatMemoryRepositoryTest {
 
     @Test
     void messageWindowChatMemoryShouldEvictOldestMessageByCount() throws Exception {
+        String messagesKey = "memory:short:user-1::session-1:messages";
         ConversationMemoryEntry first = new ConversationMemoryEntry(1L, System.currentTimeMillis(), "USER", "first", List.of(), null);
         ConversationMemoryEntry second = new ConversationMemoryEntry(2L, System.currentTimeMillis(), "USER", "second", List.of(), null);
-        when(listOperations.range("memory:short:user-1::session-1:messages", 0, -1))
+        when(listOperations.range(messagesKey, 0, -1))
                 .thenReturn(List.of(
                         objectMapper.writeValueAsString(first),
                         objectMapper.writeValueAsString(second)
@@ -165,7 +166,30 @@ class RedisChatMemoryRepositoryTest {
                 .build()
                 .add("user-1::session-1", new UserMessage("third"));
 
+        ArgumentCaptor<String> appendedEntryCaptor = ArgumentCaptor.forClass(String.class);
+        verify(listOperations).rightPush(eq(messagesKey), appendedEntryCaptor.capture());
+        ConversationMemoryEntry appended = objectMapper.readValue(appendedEntryCaptor.getValue(), ConversationMemoryEntry.class);
+        assertEquals(3L, appended.sequence());
+        assertEquals("third", appended.text());
+        verify(listOperations).trim(messagesKey, -2, -1);
+        verify(redisTemplate, never()).delete(messagesKey);
         verify(longTermMemoryService).scheduleSummaryIfNeeded("user-1", "user-1::session-1", List.of(first));
+    }
+
+    @Test
+    void saveAllShouldRewriteWindowWhenSavedMessagesAreNotPrefixAppend() throws Exception {
+        String messagesKey = "memory:short:user-1::session-1:messages";
+        ConversationMemoryEntry existing = new ConversationMemoryEntry(1L, System.currentTimeMillis(), "USER", "hello", List.of(), null);
+        when(listOperations.range(messagesKey, 0, -1))
+                .thenReturn(List.of(objectMapper.writeValueAsString(existing)));
+        when(valueOperations.increment("memory:short:user-1::session-1:sequence")).thenReturn(2L);
+
+        repository.saveAll("user-1::session-1", List.of(new UserMessage("replacement")));
+
+        verify(redisTemplate).delete(messagesKey);
+        verify(listOperations).rightPushAll(eq(messagesKey), any(List.class));
+        verify(listOperations, never()).trim(messagesKey, -2, -1);
+        verify(longTermMemoryService).scheduleSummaryIfNeeded("user-1", "user-1::session-1", List.of(existing));
     }
 
     @Test

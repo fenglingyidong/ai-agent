@@ -204,13 +204,14 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
 
     private List<ConversationMemoryEntry> countEvictedByTrim(List<ConversationMemoryEntry> currentEntries,
                                                              List<ConversationMemoryEntry> appendedEntries) {
-        int maxMessages = properties.getMaxRecentMessages();
         int combinedSize = currentEntries.size() + appendedEntries.size();
-        int evictedCount = Math.max(0, combinedSize - maxMessages);
-        if (evictedCount <= 0) {
+        int evictedCount = Math.max(0, combinedSize - properties.getMaxRecentMessages());
+        if (evictedCount == 0) {
             return List.of();
         }
-        return List.copyOf(currentEntries.subList(0, Math.min(evictedCount, currentEntries.size())));
+        List<ConversationMemoryEntry> combinedEntries = new ArrayList<>(currentEntries);
+        combinedEntries.addAll(appendedEntries);
+        return List.copyOf(combinedEntries.subList(0, evictedCount));
     }
 
     private int findMatchingEntryIndex(List<ConversationMemoryEntry> entries,

@@ -4,6 +4,7 @@ import com.example.ragagent.config.HierarchicalMemoryProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -123,6 +124,28 @@ class RedisChatMemoryRepositoryTest {
         verify(listOperations, never()).rightPushAll(eq("memory:short:user-1::session-1:messages"), any(List.class));
         verify(listOperations).rightPush(eq("memory:short:user-1::session-1:messages"), org.mockito.ArgumentMatchers.contains("\"text\":\"next\""));
         verify(listOperations).trim("memory:short:user-1::session-1:messages", -2, -1);
+    }
+
+    @Test
+    void saveAllShouldSummarizeAppendedMessagesEvictedByTrim() throws Exception {
+        ConversationMemoryEntry first = new ConversationMemoryEntry(1L, System.currentTimeMillis(), "USER", "A", List.of(), null);
+        when(listOperations.range("memory:short:user-1::session-1:messages", 0, -1))
+                .thenReturn(List.of(objectMapper.writeValueAsString(first)));
+        when(valueOperations.increment("memory:short:user-1::session-1:sequence"))
+                .thenReturn(2L, 3L, 4L);
+
+        repository.saveAll("user-1::session-1", List.of(
+                first.toMessage(),
+                new UserMessage("B"),
+                new UserMessage("C"),
+                new UserMessage("D")
+        ));
+
+        ArgumentCaptor<List<ConversationMemoryEntry>> entriesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(longTermMemoryService).scheduleSummaryIfNeeded(eq("user-1"), eq("user-1::session-1"), entriesCaptor.capture());
+        assertEquals(List.of("A", "B"), entriesCaptor.getValue().stream()
+                .map(ConversationMemoryEntry::text)
+                .toList());
     }
 
     @Test

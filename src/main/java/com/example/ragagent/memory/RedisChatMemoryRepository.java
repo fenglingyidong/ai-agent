@@ -84,7 +84,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         int appendFromIndex = appendFromIndex(retainedEntries, messages);
         if (ageSnapshot.evictedEntries().isEmpty() && appendFromIndex >= 0) {
             List<ConversationMemoryEntry> appendedEntries = appendNewMessages(conversationId, messages, appendFromIndex);
-            summarizeEvicted(conversationId, countEvictedByTrim(retainedEntries, appendedEntries));
+            summarizeEvicted(conversationId, countEvictedByTrim(retainedEntries, appendedEntries, messages.size()));
             refreshTtl(conversationId);
             return;
         }
@@ -195,10 +195,6 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
             return currentEntries.size();
         }
 
-        if (savedMessages.size() < properties.getMaxRecentMessages()) {
-            return -1;
-        }
-
         int overlap = suffixPrefixOverlap(currentEntries, savedMessages);
         if (overlap > 0 && savedMessages.size() > overlap) {
             return overlap;
@@ -237,14 +233,15 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
             redisTemplate.opsForList().rightPush(listKey(conversationId), serialize(entry));
             appendedEntries.add(entry);
         }
-        redisTemplate.opsForList().trim(listKey(conversationId), -properties.getMaxRecentMessages(), -1);
+        redisTemplate.opsForList().trim(listKey(conversationId), -savedMessages.size(), -1);
         return appendedEntries;
     }
 
     private List<ConversationMemoryEntry> countEvictedByTrim(List<ConversationMemoryEntry> currentEntries,
-                                                             List<ConversationMemoryEntry> appendedEntries) {
+                                                             List<ConversationMemoryEntry> appendedEntries,
+                                                             int retainedCount) {
         int combinedSize = currentEntries.size() + appendedEntries.size();
-        int evictedCount = Math.max(0, combinedSize - properties.getMaxRecentMessages());
+        int evictedCount = Math.max(0, combinedSize - retainedCount);
         if (evictedCount == 0) {
             return List.of();
         }

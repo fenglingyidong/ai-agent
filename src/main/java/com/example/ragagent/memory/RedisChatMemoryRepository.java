@@ -195,6 +195,10 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
             return currentEntries.size();
         }
 
+        if (savedMessages.size() < properties.getMaxRecentMessages()) {
+            return -1;
+        }
+
         int overlap = suffixPrefixOverlap(currentEntries, savedMessages);
         if (overlap > 0 && savedMessages.size() > overlap) {
             return overlap;

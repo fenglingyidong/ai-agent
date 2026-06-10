@@ -187,9 +187,64 @@ class RedisChatMemoryRepositoryTest {
         repository.saveAll("user-1::session-1", List.of(new UserMessage("replacement")));
 
         verify(redisTemplate).delete(messagesKey);
-        verify(listOperations).rightPushAll(eq(messagesKey), any(List.class));
+        ArgumentCaptor<List<String>> rewrittenEntriesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(listOperations).rightPushAll(eq(messagesKey), rewrittenEntriesCaptor.capture());
+        List<String> rewrittenEntries = rewrittenEntriesCaptor.getValue();
+        assertEquals(1, rewrittenEntries.size());
+        ConversationMemoryEntry rewritten = objectMapper.readValue(rewrittenEntries.get(0), ConversationMemoryEntry.class);
+        assertEquals(2L, rewritten.sequence());
+        assertEquals("replacement", rewritten.text());
         verify(listOperations, never()).trim(messagesKey, -2, -1);
         verify(longTermMemoryService).scheduleSummaryIfNeeded("user-1", "user-1::session-1", List.of(existing));
+    }
+
+    @Test
+    void saveAllShouldRewriteWhenSuffixOverlapWouldLeaveRemovedMessages() throws Exception {
+        String conversationId = "user-1::session-1";
+        String messagesKey = "memory:short:user-1::session-1:messages";
+        ConversationMemoryEntry a = new ConversationMemoryEntry(1L, System.currentTimeMillis(), "USER", "A", List.of(), null);
+        ConversationMemoryEntry b = new ConversationMemoryEntry(2L, System.currentTimeMillis(), "USER", "B", List.of(), null);
+        ConversationMemoryEntry c = new ConversationMemoryEntry(3L, System.currentTimeMillis(), "USER", "C", List.of(), null);
+
+        HierarchicalMemoryProperties maxThreeProperties = new HierarchicalMemoryProperties();
+        maxThreeProperties.setMaxRecentMessages(3);
+        maxThreeProperties.setMaxRecentAge(Duration.ofHours(1));
+        maxThreeProperties.setShortTermTtl(Duration.ofHours(2));
+        maxThreeProperties.setIdleSummaryAge(Duration.ofMinutes(30));
+        RedisChatMemoryRepository maxThreeRepository =
+                new RedisChatMemoryRepository(redisTemplate, objectMapper, maxThreeProperties, longTermMemoryService);
+
+        when(listOperations.range(messagesKey, 0, -1))
+                .thenReturn(List.of(
+                        objectMapper.writeValueAsString(a),
+                        objectMapper.writeValueAsString(b),
+                        objectMapper.writeValueAsString(c)
+                ));
+        when(valueOperations.increment("memory:short:user-1::session-1:sequence")).thenReturn(4L);
+
+        maxThreeRepository.saveAll(conversationId, List.of(c.toMessage(), new UserMessage("D")));
+
+        verify(redisTemplate).delete(messagesKey);
+        ArgumentCaptor<List<String>> rewrittenEntriesCaptor = ArgumentCaptor.forClass(List.class);
+        verify(listOperations).rightPushAll(eq(messagesKey), rewrittenEntriesCaptor.capture());
+        List<ConversationMemoryEntry> rewrittenEntries = rewrittenEntriesCaptor.getValue().stream()
+                .map(value -> {
+                    try {
+                        return objectMapper.readValue(value, ConversationMemoryEntry.class);
+                    }
+                    catch (Exception ex) {
+                        throw new IllegalStateException(ex);
+                    }
+                })
+                .toList();
+        assertEquals(List.of("C", "D"), rewrittenEntries.stream()
+                .map(ConversationMemoryEntry::text)
+                .toList());
+        assertEquals(List.of(3L, 4L), rewrittenEntries.stream()
+                .map(ConversationMemoryEntry::sequence)
+                .toList());
+        verify(listOperations, never()).trim(messagesKey, -3, -1);
+        verify(longTermMemoryService).scheduleSummaryIfNeeded("user-1", conversationId, List.of(a, b));
     }
 
     @Test

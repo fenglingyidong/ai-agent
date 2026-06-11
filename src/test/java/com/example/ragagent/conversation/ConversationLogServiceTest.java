@@ -2,16 +2,19 @@ package com.example.ragagent.conversation;
 
 import com.example.ragagent.conversation.entity.ConversationTurnEntity;
 import com.example.ragagent.conversation.mapper.ConversationSessionMapper;
+import com.example.ragagent.conversation.mapper.ConversationSessionSummaryRow;
 import com.example.ragagent.conversation.mapper.ConversationTurnMapper;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -136,6 +139,8 @@ class ConversationLogServiceTest {
 
         assertNull(record);
         verify(sessionMapper, never()).upsertSession(any(), any(), any(), any());
+        assertEquals(List.of(), service.listRecentSessions("alice", 20));
+        verify(sessionMapper, never()).selectRecentSessionSummaries(any(), anyInt());
         verify(turnMapper, never()).insert(any(ConversationTurnEntity.class));
     }
 
@@ -170,5 +175,65 @@ class ConversationLogServiceTest {
         assertEquals(1, records.size());
         assertEquals("问题", records.get(0).userText());
         assertEquals("回答", records.get(0).assistantText());
+    }
+
+    @Test
+    void listRecentSessionsShouldConvertRowsAndClampLimit() {
+        ConversationSessionMapper sessionMapper = mock(ConversationSessionMapper.class);
+        ConversationTurnMapper turnMapper = mock(ConversationTurnMapper.class);
+        ConversationLogService service = new ConversationLogService(
+                sessionMapper,
+                turnMapper,
+                new ObjectMapper(),
+                new ConversationLogProperties()
+        );
+        LocalDateTime createdAt = LocalDateTime.of(2026, 6, 11, 10, 0);
+        LocalDateTime updatedAt = LocalDateTime.of(2026, 6, 11, 10, 5);
+        ConversationSessionSummaryRow row = new ConversationSessionSummaryRow();
+        row.setSessionId("session-1");
+        row.setTitle("推荐通勤跑鞋");
+        row.setCreatedAt(createdAt);
+        row.setUpdatedAt(updatedAt);
+        row.setTurnCount(3L);
+        row.setLatestUserText("再对比一下");
+        row.setLatestAssistantText("黑色更耐脏");
+        when(sessionMapper.selectRecentSessionSummaries("alice", 100)).thenReturn(List.of(row));
+
+        List<ConversationSessionSummary> sessions = service.listRecentSessions("alice", 500);
+
+        assertEquals(1, sessions.size());
+        assertEquals("session-1", sessions.get(0).sessionId());
+        assertEquals("推荐通勤跑鞋", sessions.get(0).title());
+        assertEquals(createdAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), sessions.get(0).createdAt());
+        assertEquals(updatedAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), sessions.get(0).updatedAt());
+        assertEquals(3L, sessions.get(0).turnCount());
+        assertEquals("再对比一下", sessions.get(0).latestUserText());
+        assertEquals("黑色更耐脏", sessions.get(0).latestAssistantText());
+        verify(sessionMapper).selectRecentSessionSummaries("alice", 100);
+    }
+
+    @Test
+    void listRecentSessionsShouldDefaultNullRowFields() {
+        ConversationSessionMapper sessionMapper = mock(ConversationSessionMapper.class);
+        ConversationTurnMapper turnMapper = mock(ConversationTurnMapper.class);
+        ConversationLogService service = new ConversationLogService(
+                sessionMapper,
+                turnMapper,
+                new ObjectMapper(),
+                new ConversationLogProperties()
+        );
+        ConversationSessionSummaryRow row = new ConversationSessionSummaryRow();
+        when(sessionMapper.selectRecentSessionSummaries("alice", 20)).thenReturn(List.of(row));
+
+        List<ConversationSessionSummary> sessions = service.listRecentSessions("alice", 20);
+
+        assertEquals(1, sessions.size());
+        assertEquals("", sessions.get(0).sessionId());
+        assertEquals("", sessions.get(0).title());
+        assertEquals(0L, sessions.get(0).createdAt());
+        assertEquals(0L, sessions.get(0).updatedAt());
+        assertEquals(0L, sessions.get(0).turnCount());
+        assertEquals("", sessions.get(0).latestUserText());
+        assertEquals("", sessions.get(0).latestAssistantText());
     }
 }

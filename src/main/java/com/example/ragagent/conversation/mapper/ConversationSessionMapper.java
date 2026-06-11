@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Mapper
 public interface ConversationSessionMapper extends BaseMapper<ConversationSessionEntity> {
@@ -40,4 +41,30 @@ public interface ConversationSessionMapper extends BaseMapper<ConversationSessio
                          @Param("sessionId") String sessionId,
                          @Param("nextTurnNo") long nextTurnNo,
                          @Param("now") LocalDateTime now);
+
+    @Select("""
+            SELECT s.session_id,
+                   s.title,
+                   s.created_at,
+                   s.updated_at,
+                   (SELECT COUNT(*)
+                      FROM conversation_turns tc
+                     WHERE tc.user_id = s.user_id AND tc.session_id = s.session_id) AS turn_count,
+                   COALESCE((SELECT tu.user_text
+                               FROM conversation_turns tu
+                              WHERE tu.user_id = s.user_id AND tu.session_id = s.session_id
+                              ORDER BY tu.turn_no DESC
+                              LIMIT 1), '') AS latest_user_text,
+                   COALESCE((SELECT ta.assistant_text
+                               FROM conversation_turns ta
+                              WHERE ta.user_id = s.user_id AND ta.session_id = s.session_id
+                              ORDER BY ta.turn_no DESC
+                              LIMIT 1), '') AS latest_assistant_text
+              FROM conversation_sessions s
+             WHERE s.user_id = #{userId} AND s.deleted_at IS NULL
+             ORDER BY s.updated_at DESC
+             LIMIT #{limit}
+            """)
+    List<ConversationSessionSummaryRow> selectRecentSessionSummaries(@Param("userId") String userId,
+                                                                      @Param("limit") int limit);
 }

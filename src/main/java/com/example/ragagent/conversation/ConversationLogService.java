@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.ragagent.conversation.entity.ConversationSessionEntity;
 import com.example.ragagent.conversation.entity.ConversationTurnEntity;
 import com.example.ragagent.conversation.mapper.ConversationSessionMapper;
+import com.example.ragagent.conversation.mapper.ConversationSessionSummaryRow;
 import com.example.ragagent.conversation.mapper.ConversationTurnMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -109,6 +110,18 @@ public class ConversationLogService {
                 .toList();
     }
 
+    public List<ConversationSessionSummary> listRecentSessions(String userId, int limit) {
+        if (!properties.isEnabled()) {
+            return List.of();
+        }
+        String normalizedUserId = normalize(userId, DEFAULT_USER_ID);
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        return sessionMapper.selectRecentSessionSummaries(normalizedUserId, safeLimit)
+                .stream()
+                .map(this::toSessionSummary)
+                .toList();
+    }
+
     private String buildSessionTitle(String userText, int mediaCount) {
         String normalized = userText == null ? "" : userText.replaceAll("\\s+", " ").trim();
         if (normalized.isEmpty()) {
@@ -192,6 +205,18 @@ public class ConversationLogService {
                 toEpochMillis(entity.getCreatedAt()),
                 toEpochMillis(entity.getCompletedAt()),
                 deserializeMetadata(entity.getMetadataJson())
+        );
+    }
+
+    private ConversationSessionSummary toSessionSummary(ConversationSessionSummaryRow row) {
+        return new ConversationSessionSummary(
+                nullToEmpty(row.getSessionId()),
+                nullToEmpty(row.getTitle()),
+                toEpochMillis(row.getCreatedAt()),
+                toEpochMillis(row.getUpdatedAt()),
+                row.getTurnCount() == null ? 0L : row.getTurnCount(),
+                nullToEmpty(row.getLatestUserText()),
+                nullToEmpty(row.getLatestAssistantText())
         );
     }
 

@@ -1,6 +1,7 @@
 package com.example.ragagent.controller;
 
 import com.example.ragagent.conversation.ConversationLogService;
+import com.example.ragagent.conversation.ConversationSessionSummary;
 import com.example.ragagent.conversation.ConversationTurnRecord;
 import org.springframework.security.core.Authentication;
 import org.springframework.util.StringUtils;
@@ -23,6 +24,15 @@ public class ConversationController {
 
     public ConversationController(ConversationLogService conversationLogService) {
         this.conversationLogService = conversationLogService;
+    }
+
+    @GetMapping
+    public ConversationsResponse sessions(@RequestParam(value = "limit", defaultValue = "50") int limit,
+                                          Authentication authentication) {
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        return new ConversationsResponse(
+                conversationLogService.listRecentSessions(resolveCurrentUserId(authentication), safeLimit)
+        );
     }
 
     @GetMapping("/{sessionId}/turns")
@@ -55,5 +65,8 @@ public class ConversationController {
             String sessionId,
             List<ConversationTurnRecord> items
     ) {
+    }
+
+    public record ConversationsResponse(List<ConversationSessionSummary> items) {
     }
 }

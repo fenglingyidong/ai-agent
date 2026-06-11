@@ -1,4 +1,6 @@
 target/
+frontend/node_modules/
+frontend/dist/
 dureader_preprocessed/
 .worktrees/
 .claude/

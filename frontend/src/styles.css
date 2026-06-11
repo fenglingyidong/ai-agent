@@ -1,0 +1,27 @@
+:root {
+    color: #182230;
+    background: #f4f6f8;
+    font-family: "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+}
+
+button,
+input,
+textarea {
+    letter-spacing: 0;
+}
+
+.bootstrap-screen {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+}

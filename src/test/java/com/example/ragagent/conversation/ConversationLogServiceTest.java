@@ -36,10 +36,50 @@ class ConversationLogServiceTest {
 
         assertEquals(1L, record.turnNo());
         assertEquals(ConversationTurnStatus.PROCESSING, record.status());
-        verify(sessionMapper).upsertSession(eq("alice"), eq("session-1"), any());
+        verify(sessionMapper).upsertSession(eq("alice"), eq("session-1"), eq("问题"), any());
         verify(sessionMapper).updateNextTurnNo(eq("alice"), eq("session-1"), eq(2L), any());
         verify(turnMapper).insert(any(ConversationTurnEntity.class));
         verify(turnMapper).deleteOverflowTurns("alice", "session-1", 1000);
+    }
+
+    @Test
+    void beginTurnShouldCollapseWhitespaceAndLimitSessionTitle() {
+        ConversationSessionMapper sessionMapper = mock(ConversationSessionMapper.class);
+        ConversationTurnMapper turnMapper = mock(ConversationTurnMapper.class);
+        ConversationLogService service = new ConversationLogService(
+                sessionMapper,
+                turnMapper,
+                new ObjectMapper(),
+                new ConversationLogProperties()
+        );
+        when(sessionMapper.lockNextTurnNo("alice", "session-1")).thenReturn(1L);
+        String question = "  帮我\n推荐   一双适合城市通勤和慢跑且预算五百元以内的男款运动鞋，优先轻量透气耐磨并支持四十七码  ";
+
+        service.beginTurn("alice", "session-1", "qwen", false, question, 0);
+
+        verify(sessionMapper).upsertSession(
+                eq("alice"),
+                eq("session-1"),
+                eq("帮我 推荐 一双适合城市通勤和慢跑且预算五百元以内的男款运动鞋，优先轻量透气耐磨"),
+                any()
+        );
+    }
+
+    @Test
+    void beginTurnShouldUseImageConsultationTitleWhenTextIsBlank() {
+        ConversationSessionMapper sessionMapper = mock(ConversationSessionMapper.class);
+        ConversationTurnMapper turnMapper = mock(ConversationTurnMapper.class);
+        ConversationLogService service = new ConversationLogService(
+                sessionMapper,
+                turnMapper,
+                new ObjectMapper(),
+                new ConversationLogProperties()
+        );
+        when(sessionMapper.lockNextTurnNo("alice", "session-1")).thenReturn(1L);
+
+        service.beginTurn("alice", "session-1", "qwen", false, "", 1);
+
+        verify(sessionMapper).upsertSession(eq("alice"), eq("session-1"), eq("图片导购咨询"), any());
     }
 
     @Test
@@ -95,7 +135,7 @@ class ConversationLogServiceTest {
         service.completeTurn(record, "回答");
 
         assertNull(record);
-        verify(sessionMapper, never()).upsertSession(any(), any(), any());
+        verify(sessionMapper, never()).upsertSession(any(), any(), any(), any());
         verify(turnMapper, never()).insert(any(ConversationTurnEntity.class));
     }
 

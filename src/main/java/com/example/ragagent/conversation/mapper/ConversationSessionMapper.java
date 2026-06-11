@@ -15,11 +15,12 @@ public interface ConversationSessionMapper extends BaseMapper<ConversationSessio
 
     @Insert("""
             INSERT INTO conversation_sessions (user_id, session_id, title, next_turn_no, created_at, updated_at, deleted_at)
-            VALUES (#{userId}, #{sessionId}, '', 1, #{now}, #{now}, NULL)
+            VALUES (#{userId}, #{sessionId}, #{title}, 1, #{now}, #{now}, NULL)
             ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at), deleted_at = NULL
             """)
     int upsertSession(@Param("userId") String userId,
                       @Param("sessionId") String sessionId,
+                      @Param("title") String title,
                       @Param("now") LocalDateTime now);
 
     @Select("""

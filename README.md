@@ -42,7 +42,7 @@ flowchart LR
 | 缓存 | Redis（短期记忆、父块缓存、偏好、商城 token） |
 | 关系型存储 | MySQL（原文会话流水） |
 | 安全 | Spring Security Basic Auth + Form Login |
-| 前端 | 原生 HTML / CSS / JavaScript |
+| 前端 | Vue3 / Vite / Element Plus |
 
 ## 快速启动
 
@@ -54,7 +54,7 @@ $env:DASHSCOPE_API_KEY="<your-key>"
 mvn spring-boot:run
 ```
 
-前端在另一个终端启动 `cd frontend; node server.js 4173`，访问 `http://localhost:4173`。后端默认端口 `18082`，本仓库的 `docker-compose.yml` 不包含 MySQL。
+前端在另一个终端启动 `cd frontend; npm install; npm run dev`，访问 `http://localhost:4173`。后端默认端口 `18082`，本仓库的 `docker-compose.yml` 不包含 MySQL。
 
 完整前置依赖、环境变量、Docker 依赖和健康检查见 [docs/runtime.md](docs/runtime.md)。
 
@@ -67,7 +67,7 @@ POST /api/react
 Authorization: Basic ...
 Content-Type: multipart/form-data
 
-message=帮我找这双鞋的相似款，预算500以内
+message=帮我找这双鞋的相似款，预算 500 以内
 image=@shoe.png
 sessionId=shopping-demo
 modelId=qwen
@@ -109,7 +109,7 @@ Content-Type: application/json
 
 商城商品、购物车和订单经独立 `mall-mcp` 服务暴露，MCP endpoint 为 `http://localhost:8120/mcp`。工具清单、上下文接口、`mall_create_order` 硬门禁等细节见 [docs/architecture.md#mcp-边界](docs/architecture.md#mcp-边界)。
 
-其他接口：`GET /api/models/chat`、`POST /api/rag/documents/import`。
+其他接口：`GET /api/models/chat`、`GET /api/conversations`、`POST /api/rag/documents/import`。
 
 ## 文档索引
 

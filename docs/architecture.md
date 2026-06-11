@@ -2,6 +2,18 @@
 
 本文件描述当前仓库已落地的运行时架构，按链路从入口到存储依次展开。每节只覆盖代码中真实存在的模块和职责，配置默认值和接口参数以 `src/main/resources/application.yml` 和对应 Controller 为准。
 
+## 目录
+
+- [总体链路](#总体链路)
+- [核心模块](#核心模块)
+- [请求流转](#请求流转)
+- [存储设计](#存储设计)
+- [记忆设计](#记忆设计)
+- [MCP 边界](#mcp-边界)
+- [RAG 检索](#rag-检索)
+- [安全策略](#安全策略)
+- [接口速查](#接口速查)
+
 ## 总体链路
 
 ```mermaid
@@ -40,7 +52,7 @@ flowchart LR
 ## 存储设计
 
 - **Redis**：父文档正文（`rag:parent:`）、短期记忆窗口（`memory:short:`）、导购偏好当前状态 Hash（`shopping:preference:v2:state:`）、最近 5 次偏好增量 List（`shopping:preference:v2:changes:`）、商城 token 缓存（`mall:auth:`）。两类偏好 key 的默认 TTL 均由 `SHOPPING_PREFERENCE_TTL` 控制。
-- **MySQL**：`conversation_sessions` 和 `conversation_turns` 两张表，由 `ConversationLogService` 维护，保存用户提问和助手最终可见回答的原文流水。
+- **MySQL**：`conversation_sessions` 和 `conversation_turns` 两张表，由 `ConversationLogService` 维护，保存用户提问和助手最终可见回答的原文流水。`conversation_sessions.title` 在首轮写入时取首条用户问题的压缩文本，后续 turn 不覆盖；会话列表按 `updated_at DESC` 查询。
 - **Milvus**：`product_index` 存放商品子块（Dense embedding + Sparse-BM25 字段），`memory_index` 存放长期摘要向量；父块本体回查 Redis。
 
 ## 记忆设计
@@ -74,5 +86,6 @@ flowchart LR
 
 - `POST /api/react` -> `ChatController` / `ReActAgent`（图文流式对话主入口）
 - `POST /api/rag/documents/import`、`POST /api/rag/documents/products/import` -> `RagDocumentController` / `ParentChildDocumentIndexer`
+- `GET /api/conversations` -> `ConversationController` / `ConversationLogService`（当前用户最近会话摘要）
 - `GET /api/conversations/{sessionId}/turns`、`DELETE /api/conversations/{sessionId}` -> `ConversationController` / `ConversationLogService`
 - `GET /api/models/chat` -> `ChatController` / `ChatModelRegistry`

@@ -2,6 +2,15 @@
 
 本文档描述如何在本地把 `rag-agent` 跑起来。架构与模块职责见 [架构说明](architecture.md)。
 
+## 目录
+
+- [前置依赖](#前置依赖)
+- [环境变量](#环境变量)
+- [本地启动](#本地启动)
+- [Docker 依赖](#docker-依赖)
+- [常见问题](#常见问题)
+- [健康检查](#健康检查)
+
 ## 前置依赖
 
 - JDK 17
@@ -45,23 +54,23 @@ RAG 召回参数：`RAG_DENSE_CHILD_TOP_K=24`、`RAG_BM25_CHILD_TOP_K=8`、`RAG_
 
 后端启动前需确认 MySQL 可用：默认 `localhost:3307/rag_agent`，账号 `root/root`；非默认环境可设置 `MYSQL_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。
 
+终端 1：启动后端。
+
 ```powershell
-# 1. 启动基础设施（普通 Redis + Milvus 套件）
 docker compose up -d redis etcd minio milvus
-
-# 2. 设置环境变量
 $env:DASHSCOPE_API_KEY="<your-key>"
-
-# 3. 启动后端
 mvn spring-boot:run
-
-# 4. 启动前端（另开终端）
-cd frontend
-node server.js 4173
-# 访问 http://localhost:4173
 ```
 
-后端默认地址：`http://localhost:18082`，唯一对话入口 `POST /api/react`。
+终端 2：启动前端。
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+访问 `http://localhost:4173`。本项目 Vite 开发服务器固定监听 `4173`；前端登录页默认连接 `http://localhost:18082`。后端唯一对话入口为 `POST /api/react`。
 
 ## Docker 依赖
 

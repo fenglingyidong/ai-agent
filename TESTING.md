@@ -1,5 +1,16 @@
 # 测试计划
 
+## 目录
+
+- [1. 测试范围](#1-测试范围)
+- [2. 前置条件](#2-前置条件)
+- [3. 自动化测试](#3-自动化测试)
+- [4. Langfuse RAG Tracing 回归](#4-langfuse-rag-tracing-回归)
+- [5. 接口冒烟测试](#5-接口冒烟测试)
+- [6. 购物车闭环测试](#6-购物车闭环测试)
+- [7. 导购场景验收用例](#7-导购场景验收用例)
+- [8. 前端手工测试](#8-前端手工测试)
+
 ## 1. 测试范围
 
 当前测试围绕多模态电商导购 Agent 的主链路展开：
@@ -9,7 +20,7 @@
 - 购物车链路：通过 Agent 工具完成查看、加购、修改数量、移除商品。
 - RAG 知识库：普通文档导入、结构化商品知识导入、父子块检索、dense + BM25 混合召回。
 - 安全链路：Basic 登录、商城 token 透传、Prompt Injection 过滤。
-- 前端导购工作台：聊天、商品卡片、图片上传、对比视图、购物车抽屉和降级提示。
+- 前端导购工作台：Basic Auth 登录、真实会话列表、图文流式输出、模型选择、联网搜索开关和降级提示。
 
 ## 2. 前置条件
 
@@ -46,6 +57,11 @@ mvn -q -DskipTests compile
 mvn -q -Dtest=ReActAgentTest test
 mvn -q -Dtest=BuiltInToolsTest test
 mvn -q -Dtest=ChatControllerTest test
+mvn "-Dtest=ConversationLogServiceTest,ConversationControllerTest" test
+Push-Location frontend
+npm test
+npm run build
+Pop-Location
 ```
 
 新增保守收敛覆盖：
@@ -105,7 +121,7 @@ curl -u alice:密码 -F "message=你好" -F "modelId=qwen" -F "webSearchEnabled=
 商品查询会话：
 
 ```powershell
-curl -u alice:密码 -F "message=儿童积木套装 300片要多少钱" -F "sessionId=test-001" -F "modelId=qwen" http://localhost:18082/api/react
+curl -u alice:密码 -F "message=儿童积木套装 300 片要多少钱" -F "sessionId=test-001" -F "modelId=qwen" http://localhost:18082/api/react
 ```
 
 期望：正常连通时回答包含真实价格；DashScope 或商城连接中断时返回中文降级提示。
@@ -148,10 +164,10 @@ curl -u alice:密码 -F "message=从购物车移除 SKU 3020" -F "sessionId=test
 
 优先验证这些自然语言问题：
 
-- `儿童积木套装 300片要多少钱`
+- `儿童积木套装 300 片要多少钱`
 - `推荐一个不锈钢保温杯`
 - `帮我找 SKU 3020 的相似款`
-- `把儿童积木套装 300片加入购物车，买 1 件`
+- `把儿童积木套装 300 片加入购物车，买 1 件`
 - `看一下我的购物车`
 - `我想买儿童玩具，预算 200 以内`
 
@@ -170,7 +186,8 @@ curl -u alice:密码 -F "message=从购物车移除 SKU 3020" -F "sessionId=test
 
 ```powershell
 cd frontend
-node server.js 4173
+npm install
+npm run dev
 ```
 
 访问：
@@ -181,9 +198,9 @@ http://localhost:4173
 
 手工检查：
 
-- 登录后能进入导购工作台。
-- 文本导购能触发流式回答。
-- 图片上传或图片 URL 能进入后端 `POST /api/react`。
-- 商品卡片不直连商城 REST，导入知识后可用于追问、对比和向 Agent 发起加购请求。
-- 购物车相关按钮通过 Agent 对话完成查看、加购、改数量和删除。
-- 商城服务或模型服务异常时，前端展示降级提示而不是卡死。
+- Basic Auth 登录成功和失败提示。
+- 真实会话列表、新建、切换、删除。
+- 文本和图片请求流式输出。
+- 模型选择和联网搜索参数。
+- 流式期间会话操作禁用。
+- 停止生成后保留已收到文本。

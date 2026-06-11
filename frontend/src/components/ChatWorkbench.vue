@@ -1,6 +1,8 @@
 <script setup>
 import SessionSidebar from "./SessionSidebar.vue";
 import ChatHeader from "./ChatHeader.vue";
+import MessageList from "./MessageList.vue";
+import ChatComposer from "./ChatComposer.vue";
 
 defineProps({ store: { type: Object, required: true } });
 </script>
@@ -10,7 +12,8 @@ defineProps({ store: { type: Object, required: true } });
     <SessionSidebar :store="store" />
     <section class="chat-workspace">
       <ChatHeader :store="store" />
-      <div class="chat-placeholder">消息区将在下一任务接入</div>
+      <MessageList :messages="store.state.messages" />
+      <ChatComposer :store="store" />
     </section>
   </main>
 </template>

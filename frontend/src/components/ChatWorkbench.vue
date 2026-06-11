@@ -12,6 +12,13 @@ defineProps({ store: { type: Object, required: true } });
     <SessionSidebar :store="store" />
     <section class="chat-workspace">
       <ChatHeader :store="store" />
+      <el-alert
+        v-if="store.state.error"
+        class="workspace-alert"
+        :title="store.state.error"
+        type="error"
+        :closable="false"
+      />
       <MessageList :messages="store.state.messages" />
       <ChatComposer :store="store" />
     </section>

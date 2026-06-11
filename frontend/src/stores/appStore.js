@@ -119,6 +119,16 @@ function releaseMessageMedia(messages) {
     }
 }
 
+function resolveErrorMessage(error, fallback, { networkFallback = false } = {}) {
+    if (error instanceof ApiError) {
+        return error.message || fallback;
+    }
+    if (networkFallback && error instanceof TypeError) {
+        return "请检查后端地址和服务状态。";
+    }
+    return error?.message || fallback;
+}
+
 export function createAppStore(api = defaultApi, storage) {
     const safeStorage = resolveStorage(storage);
     const preferences = loadPreferences(safeStorage);
@@ -144,6 +154,10 @@ export function createAppStore(api = defaultApi, storage) {
         }));
     }
 
+    function clearError() {
+        state.error = "";
+    }
+
     async function refreshSessions() {
         state.sessions = await api.listSessions(state.auth);
         return state.sessions;
@@ -153,16 +167,24 @@ export function createAppStore(api = defaultApi, storage) {
         if (state.isStreaming) {
             return;
         }
-        const nextMessages = turnsToMessages(await api.loadTurns(state.auth, sessionId));
-        releaseMessageMedia(state.messages);
-        state.currentSessionId = sessionId;
-        state.messages = nextMessages;
+        clearError();
+        try {
+            const nextMessages = turnsToMessages(await api.loadTurns(state.auth, sessionId));
+            releaseMessageMedia(state.messages);
+            state.currentSessionId = sessionId;
+            state.messages = nextMessages;
+        }
+        catch (error) {
+            state.error = resolveErrorMessage(error, "加载会话失败。", { networkFallback: true });
+            throw error;
+        }
     }
 
     function newSession() {
         if (state.isStreaming) {
             return;
         }
+        clearError();
         releaseMessageMedia(state.messages);
         state.currentSessionId = createSessionId();
         state.messages = [];
@@ -199,7 +221,7 @@ export function createAppStore(api = defaultApi, storage) {
             state.isAuthenticated = false;
             state.error = error instanceof ApiError && [401, 403].includes(error.status)
                 ? "账号或密码无效。"
-                : "请检查后端地址和服务状态。";
+                : resolveErrorMessage(error, "无法连接后端服务。", { networkFallback: true });
             throw error;
         }
         finally {
@@ -230,16 +252,23 @@ export function createAppStore(api = defaultApi, storage) {
         if (state.isStreaming) {
             return;
         }
-        await api.deleteSession(state.auth, sessionId);
-        await refreshSessions();
-        if (state.currentSessionId !== sessionId) {
-            return;
+        clearError();
+        try {
+            await api.deleteSession(state.auth, sessionId);
+            await refreshSessions();
+            if (state.currentSessionId !== sessionId) {
+                return;
+            }
+            if (state.sessions.length) {
+                await selectSession(state.sessions[0].sessionId);
+            }
+            else {
+                newSession();
+            }
         }
-        if (state.sessions.length) {
-            await selectSession(state.sessions[0].sessionId);
-        }
-        else {
-            newSession();
+        catch (error) {
+            state.error = resolveErrorMessage(error, "删除会话失败。", { networkFallback: true });
+            throw error;
         }
     }
 
@@ -301,13 +330,14 @@ export function createAppStore(api = defaultApi, storage) {
             assistantMessage.status = error?.name === "AbortError" ? "partial" : "failed";
             assistantMessage.errorMessage = error?.name === "AbortError"
                 ? "请求已停止。"
-                : error.message || "请求失败。";
+                : resolveErrorMessage(error, "请求失败。", { networkFallback: true });
             if (error instanceof ApiError && [401, 403].includes(error.status)) {
                 resetAuthState({
                     preserveMessages: true,
                     error: "登录已失效，请重新登录。"
                 });
             }
+            throw error;
         }
         finally {
             state.isStreaming = false;
@@ -342,7 +372,8 @@ export function createAppStore(api = defaultApi, storage) {
         sendMessage,
         stopStreaming,
         refreshSessions,
-        persistPreferences
+        persistPreferences,
+        clearError
     };
 }
 

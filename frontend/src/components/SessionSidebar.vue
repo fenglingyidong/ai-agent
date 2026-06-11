@@ -1,6 +1,6 @@
 <script setup>
 import { Plus, Trash2 } from "lucide-vue-next";
-import { ElMessageBox } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 
 const props = defineProps({ store: { type: Object, required: true } });
 
@@ -15,7 +15,19 @@ async function remove(session) {
   catch {
     return;
   }
-  await props.store.removeSession(session.sessionId);
+  try {
+    await props.store.removeSession(session.sessionId);
+  } catch (error) {
+    ElMessage.error(error?.message || props.store.state.error || "删除会话失败。");
+  }
+}
+
+async function select(sessionId) {
+  try {
+    await props.store.selectSession(sessionId);
+  } catch (error) {
+    ElMessage.error(error?.message || props.store.state.error || "加载会话失败。");
+  }
 }
 
 function formatTime(value) {
@@ -45,7 +57,7 @@ function formatTime(value) {
           type="button"
           class="session-select"
           :disabled="store.state.isStreaming"
-          @click="store.selectSession(session.sessionId)"
+          @click="select(session.sessionId)"
         >
           <strong>{{ session.title || "新会话" }}</strong>
           <small>{{ session.latestUserText || "开始对话" }}</small>

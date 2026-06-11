@@ -100,7 +100,8 @@ describe("appStore", () => {
         store.state.isAuthenticated = true;
         store.state.currentSessionId = "session-1";
 
-        await store.sendMessage({ message: "推荐跑鞋", files: [], imageUrl: "" });
+        await expect(store.sendMessage({ message: "推荐跑鞋", files: [], imageUrl: "" }))
+            .rejects.toThrow("Unauthorized");
 
         expect(store.state.isAuthenticated).toBe(false);
         expect(store.state.error).toBe("登录已失效，请重新登录。");
@@ -125,6 +126,22 @@ describe("appStore", () => {
 
         expect(store.state.isAuthenticated).toBe(false);
         expect(store.state.error).toBe("请检查后端地址和服务状态。");
+    });
+
+    it("keeps server error details when login returns a non-auth api error", async () => {
+        const api = {
+            loadModels: vi.fn().mockRejectedValue(new ApiError(500, "服务暂不可用"))
+        };
+        const store = createAppStore(api, memoryStorage());
+
+        await expect(store.login({
+            apiBase: "http://localhost:18082",
+            username: "alice",
+            password: "demo123"
+        })).rejects.toThrow("服务暂不可用");
+
+        expect(store.state.isAuthenticated).toBe(false);
+        expect(store.state.error).toBe("服务暂不可用");
     });
 
     it("logout clears messages for manual sign out", () => {
@@ -177,8 +194,47 @@ describe("appStore", () => {
 
         expect(store.state.currentSessionId).toBe("session-1");
         expect(store.state.messages).toStrictEqual(currentMessages);
+        expect(store.state.error).toBe("加载失败");
         expect(revokeObjectURL).not.toHaveBeenCalled();
         revokeObjectURL.mockRestore();
+    });
+
+    it("keeps sessions unchanged and stores an error when deleting fails", async () => {
+        const api = {
+            deleteSession: vi.fn().mockRejectedValue(new Error("删除失败")),
+            listSessions: vi.fn(),
+            loadTurns: vi.fn()
+        };
+        const store = createAppStore(api, memoryStorage());
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+        store.state.sessions = [{ sessionId: "session-1", title: "第一个会话" }];
+        store.state.currentSessionId = "session-1";
+
+        await expect(store.removeSession("session-1")).rejects.toThrow("删除失败");
+
+        expect(store.state.sessions).toEqual([{ sessionId: "session-1", title: "第一个会话" }]);
+        expect(store.state.currentSessionId).toBe("session-1");
+        expect(store.state.error).toBe("删除失败");
+        expect(api.listSessions).not.toHaveBeenCalled();
+    });
+
+    it("rethrows send failures after storing assistant error", async () => {
+        const api = {
+            streamReactChat: vi.fn().mockRejectedValue(new Error("请求失败")),
+            listSessions: vi.fn().mockResolvedValue([])
+        };
+        const store = createAppStore(api, memoryStorage());
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+        store.state.currentSessionId = "session-1";
+
+        await expect(store.sendMessage({ message: "推荐跑鞋", files: [], imageUrl: "" }))
+            .rejects.toThrow("请求失败");
+
+        expect(store.state.messages[1]).toMatchObject({
+            role: "assistant",
+            status: "failed",
+            errorMessage: "请求失败"
+        });
     });
 
     it("restores a valid saved model preference after login", async () => {

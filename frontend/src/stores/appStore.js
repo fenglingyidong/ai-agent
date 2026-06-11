@@ -199,7 +199,7 @@ export function createAppStore(api = defaultApi, storage) {
             state.isAuthenticated = false;
             state.error = error instanceof ApiError && [401, 403].includes(error.status)
                 ? "账号或密码无效。"
-                : error.message || "无法连接后端服务。";
+                : "请检查后端地址和服务状态。";
             throw error;
         }
         finally {

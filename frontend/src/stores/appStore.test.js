@@ -111,6 +111,22 @@ describe("appStore", () => {
         });
     });
 
+    it("shows a friendly error when login cannot reach the backend", async () => {
+        const api = {
+            loadModels: vi.fn().mockRejectedValue(new TypeError("Failed to fetch"))
+        };
+        const store = createAppStore(api, memoryStorage());
+
+        await expect(store.login({
+            apiBase: "http://localhost:18082",
+            username: "alice",
+            password: "demo123"
+        })).rejects.toThrow("Failed to fetch");
+
+        expect(store.state.isAuthenticated).toBe(false);
+        expect(store.state.error).toBe("请检查后端地址和服务状态。");
+    });
+
     it("logout clears messages for manual sign out", () => {
         const store = createAppStore({}, memoryStorage());
         store.state.isAuthenticated = true;

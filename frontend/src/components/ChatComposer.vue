@@ -77,7 +77,7 @@ async function send() {
     imageUrl.value = "";
     clearFiles();
   } catch (error) {
-    ElMessage.error(error?.message || "发送失败，请稍后重试。");
+    ElMessage.error(props.store.state.error || error?.message || "发送失败，请稍后重试。");
   }
 }
 

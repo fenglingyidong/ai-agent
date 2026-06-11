@@ -18,7 +18,7 @@ async function remove(session) {
   try {
     await props.store.removeSession(session.sessionId);
   } catch (error) {
-    ElMessage.error(error?.message || props.store.state.error || "删除会话失败。");
+    ElMessage.error(props.store.state.error || error?.message || "删除会话失败。");
   }
 }
 
@@ -26,7 +26,7 @@ async function select(sessionId) {
   try {
     await props.store.selectSession(sessionId);
   } catch (error) {
-    ElMessage.error(error?.message || props.store.state.error || "加载会话失败。");
+    ElMessage.error(props.store.state.error || error?.message || "加载会话失败。");
   }
 }
 

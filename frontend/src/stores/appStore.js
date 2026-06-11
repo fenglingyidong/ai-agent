@@ -323,14 +323,15 @@ export function createAppStore(api = defaultApi, storage) {
                 await refreshSessions();
             }
             catch (error) {
-                state.error = error.message || "会话列表刷新失败。";
+                state.error = resolveErrorMessage(error, "会话列表刷新失败。", { networkFallback: true });
             }
         }
         catch (error) {
+            state.error = resolveErrorMessage(error, "请求失败。", { networkFallback: true });
             assistantMessage.status = error?.name === "AbortError" ? "partial" : "failed";
             assistantMessage.errorMessage = error?.name === "AbortError"
                 ? "请求已停止。"
-                : resolveErrorMessage(error, "请求失败。", { networkFallback: true });
+                : state.error;
             if (error instanceof ApiError && [401, 403].includes(error.status)) {
                 resetAuthState({
                     preserveMessages: true,

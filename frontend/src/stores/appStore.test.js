@@ -90,6 +90,23 @@ describe("appStore", () => {
         expect(store.state.error).toBe("刷新失败");
     });
 
+    it("shows a friendly refresh error when session refresh fails due to network", async () => {
+        const api = {
+            streamReactChat: vi.fn(async (_auth, _payload, onChunk) => {
+                onChunk("推荐");
+            }),
+            listSessions: vi.fn().mockRejectedValue(new TypeError("Failed to fetch"))
+        };
+        const store = createAppStore(api, memoryStorage());
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+        store.state.currentSessionId = "session-1";
+
+        await store.sendMessage({ message: "推荐跑鞋", files: [], imageUrl: "" });
+
+        expect(store.state.messages[1].status).toBe("completed");
+        expect(store.state.error).toBe("请检查后端地址和服务状态。");
+    });
+
     it("keeps a visible error and failed assistant message when streaming auth expires", async () => {
         const api = {
             streamReactChat: vi.fn().mockRejectedValue(new ApiError(401, "Unauthorized")),
@@ -235,6 +252,27 @@ describe("appStore", () => {
             status: "failed",
             errorMessage: "请求失败"
         });
+        expect(store.state.error).toBe("请求失败");
+    });
+
+    it("normalizes network send failures to a friendly error", async () => {
+        const api = {
+            streamReactChat: vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+            listSessions: vi.fn().mockResolvedValue([])
+        };
+        const store = createAppStore(api, memoryStorage());
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+        store.state.currentSessionId = "session-1";
+
+        await expect(store.sendMessage({ message: "推荐跑鞋", files: [], imageUrl: "" }))
+            .rejects.toThrow("Failed to fetch");
+
+        expect(store.state.messages[1]).toMatchObject({
+            role: "assistant",
+            status: "failed",
+            errorMessage: "请检查后端地址和服务状态。"
+        });
+        expect(store.state.error).toBe("请检查后端地址和服务状态。");
     });
 
     it("restores a valid saved model preference after login", async () => {

@@ -72,6 +72,13 @@ npm run dev
 
 访问 `http://localhost:4173`。本项目 Vite 开发服务器固定监听 `4173`；前端登录页默认连接 `http://localhost:18082`。后端唯一对话入口为 `POST /api/react`。
 
+如果 Windows PowerShell 拦截 `npm.ps1`，使用 `npm.cmd install` 和 `npm.cmd run dev`。如果 `4173` 已被旧前端进程占用，先停止占用进程：
+
+```powershell
+$owners = Get-NetTCPConnection -LocalPort 4173 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+$owners | ForEach-Object { Stop-Process -Id $_ }
+```
+
 ## Docker 依赖
 
 `docker-compose.yml` 提供以下服务：
@@ -98,6 +105,7 @@ docker compose up -d prometheus grafana
 - **MySQL 连接失败**：默认端口 `3307`（非 3306），如本机 MySQL 装在 3306，需用 `MYSQL_URL` 覆盖。
 - **`mall_*` 工具不可用**：检查 `MALL_MCP_BASE_URL` 指向的 `mall-mcp` 服务和 `MCP_CONTEXT_SECRET` 是否与 `mall-mcp` 侧一致；`mall-mcp` 未启动时商城 B 类快车道会直接降级。
 - **`mall_create_order` 被拒绝**：这是 Java 侧硬门禁，需要路由为 `CREATE_ORDER` 且参数包含有效 `confirmationId` 与 `userConfirmed=true`，详见 [architecture.md#mcp-边界](architecture.md#mcp-边界)。
+- **前端启动提示 `EADDRINUSE: 4173`**：已有旧前端或 Vite 进程占用端口，按上方端口释放命令停止后重新执行 `npm run dev`。
 - **流式请求中途断开**：调大 `SPRING_MVC_ASYNC_REQUEST_TIMEOUT`。
 
 ## 健康检查

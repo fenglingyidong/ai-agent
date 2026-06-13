@@ -24,6 +24,8 @@ npm run dev
 
 访问 `http://localhost:4173`，默认后端地址为 `http://localhost:18082`。
 
+Windows PowerShell 若拦截 `npm.ps1`，改用 `npm.cmd install` 和 `npm.cmd run dev`。
+
 ## 验证
 
 ```powershell

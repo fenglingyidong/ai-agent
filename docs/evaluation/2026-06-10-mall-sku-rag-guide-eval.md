@@ -925,7 +925,7 @@
 
 ### 测试环境
 
-- 测试入口：当前分支 `feat/vue3-chat-frontend` 的 Vue 前端，`http://localhost:5177/`。
+- 测试入口：主分支 Vue3 前端，`http://localhost:4173/`。
 - 后端实例：Docker 容器 `rag-agent-eval`，暴露 `http://localhost:18082/`，健康检查通过。
 - 浏览器方式：先在前端登录 `alice`，再从浏览器页面上下文逐题调用 `POST /api/react`。
 - 模型与开关：`modelId=qwen`，`webSearchEnabled=false`。

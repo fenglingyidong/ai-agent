@@ -115,6 +115,7 @@ Content-Type: application/json
 
 - [架构说明](docs/architecture.md)
 - [运行说明](docs/runtime.md)
+- [本地完整部署教程](docs/deployment.md)
 - [Langfuse 本地可观测环境](observability/langfuse/README.md)
 - [测试说明](TESTING.md)
 

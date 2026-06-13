@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.ragagent.conversation.entity.ConversationSessionEntity;
 import com.example.ragagent.conversation.entity.ConversationTurnEntity;
 import com.example.ragagent.conversation.mapper.ConversationSessionMapper;
+import com.example.ragagent.conversation.mapper.ConversationSessionSummaryRow;
 import com.example.ragagent.conversation.mapper.ConversationTurnMapper;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -24,6 +25,9 @@ public class ConversationLogService {
 
     public static final String DEFAULT_USER_ID = "anonymous";
     public static final String DEFAULT_SESSION_ID = "default";
+    private static final String DEFAULT_SESSION_TITLE = "新会话";
+    private static final String IMAGE_SESSION_TITLE = "图片导购咨询";
+    private static final int MAX_SESSION_TITLE_LENGTH = 40;
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {
     };
 
@@ -55,7 +59,12 @@ public class ConversationLogService {
         String normalizedUserId = normalize(userId, DEFAULT_USER_ID);
         String normalizedSessionId = normalize(sessionId, DEFAULT_SESSION_ID);
         LocalDateTime now = LocalDateTime.now();
-        sessionMapper.upsertSession(normalizedUserId, normalizedSessionId, now);
+        sessionMapper.upsertSession(
+                normalizedUserId,
+                normalizedSessionId,
+                buildSessionTitle(userText, mediaCount),
+                now
+        );
         Long nextTurnNo = sessionMapper.lockNextTurnNo(normalizedUserId, normalizedSessionId);
         long turnNo = nextTurnNo == null || nextTurnNo < 1 ? 1L : nextTurnNo;
         sessionMapper.updateNextTurnNo(normalizedUserId, normalizedSessionId, turnNo + 1, now);
@@ -99,6 +108,28 @@ public class ConversationLogService {
                 .stream()
                 .map(this::toRecord)
                 .toList();
+    }
+
+    public List<ConversationSessionSummary> listRecentSessions(String userId, int limit) {
+        if (!properties.isEnabled()) {
+            return List.of();
+        }
+        String normalizedUserId = normalize(userId, DEFAULT_USER_ID);
+        int safeLimit = Math.max(1, Math.min(limit, 100));
+        return sessionMapper.selectRecentSessionSummaries(normalizedUserId, safeLimit)
+                .stream()
+                .map(this::toSessionSummary)
+                .toList();
+    }
+
+    private String buildSessionTitle(String userText, int mediaCount) {
+        String normalized = userText == null ? "" : userText.replaceAll("\\s+", " ").trim();
+        if (normalized.isEmpty()) {
+            return mediaCount > 0 ? IMAGE_SESSION_TITLE : DEFAULT_SESSION_TITLE;
+        }
+        return normalized.length() <= MAX_SESSION_TITLE_LENGTH
+                ? normalized
+                : normalized.substring(0, MAX_SESSION_TITLE_LENGTH);
     }
 
     @Transactional
@@ -174,6 +205,18 @@ public class ConversationLogService {
                 toEpochMillis(entity.getCreatedAt()),
                 toEpochMillis(entity.getCompletedAt()),
                 deserializeMetadata(entity.getMetadataJson())
+        );
+    }
+
+    private ConversationSessionSummary toSessionSummary(ConversationSessionSummaryRow row) {
+        return new ConversationSessionSummary(
+                nullToEmpty(row.getSessionId()),
+                nullToEmpty(row.getTitle()),
+                toEpochMillis(row.getCreatedAt()),
+                toEpochMillis(row.getUpdatedAt()),
+                row.getTurnCount() == null ? 0L : row.getTurnCount(),
+                nullToEmpty(row.getLatestUserText()),
+                nullToEmpty(row.getLatestAssistantText())
         );
     }
 

@@ -1,44 +1,38 @@
-# 电商导购工作台前端
+# 电商智能导购前端
 
-这个目录是零依赖静态前端，用于联调多模态电商智能导购 Agent。
+## 目录
 
-## 功能
+- [能力](#能力)
+- [启动](#启动)
+- [验证](#验证)
+- [约束](#约束)
 
-- 连接 Spring Security Basic Auth 保护的后端接口
-- 前端不直接管理商城 Token，后端通过商城适配层代登录并缓存商城 Token
-- 调用 `POST /api/react` 发起 multipart 图文导购会话
-- 支持上传商品图和填写图片 URL
-- 展示导购聊天区、商品卡片、对比视图和购物车抽屉
-- 商品卡片加购、数量调整和移除不再直连商城 REST，统一转成自然语言请求交给 Agent 工具处理
-- 调用 `/api/rag/documents/products/import` 快速导入结构化商品知识
-- 从 `/api/models/chat` 动态加载可选模型
-- 把连接设置、聊天记录、商品卡片、对比项和购物车保存在浏览器本地存储
+## 能力
 
-## 启动方式
+- Vue3 + Element Plus 导购聊天工作台。
+- Spring Security Basic Auth 登录。
+- 当前用户真实会话列表、切换和删除。
+- `/api/react` 图文流式输出。
+- 模型选择和联网搜索开关。
 
-1. 在项目根目录启动后端：
-
-```powershell
-mvn spring-boot:run
-```
-
-2. 另开终端启动前端静态服务器：
+## 启动
 
 ```powershell
-cd frontend
-node server.js 4173
+npm install
+npm run dev
 ```
 
-3. 访问：
+访问 `http://localhost:4173`，默认后端地址为 `http://localhost:18082`。
 
-```text
-http://localhost:4173
+## 验证
+
+```powershell
+npm test
+npm run build
 ```
 
-默认连接地址是 `http://localhost:18082`，默认账号是 `alice / demo123`。
+## 约束
 
-## 当前约束
-
-- 商品卡片和对比视图仍是前端工作台状态，用于演示导购操作台体验。
-- 购物车状态以后端 Agent 工具回复为准，前端不再按 Session ID 直接拉取商城 REST。
-- 图片上传已走 Spring AI `Media` 后端链路，但视觉识别效果取决于当前所选模型是否支持图片输入。
+- 首版不展示旧工作台中的商品卡片、对比、购物车和知识导入面板。
+- Basic Auth 凭据保存在浏览器本地存储，仅适合本地原型和受控环境。
+- 历史会话只恢复文本，不恢复已上传图片。

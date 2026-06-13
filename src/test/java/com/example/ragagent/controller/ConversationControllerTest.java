@@ -1,6 +1,7 @@
 package com.example.ragagent.controller;
 
 import com.example.ragagent.conversation.ConversationLogService;
+import com.example.ragagent.conversation.ConversationSessionSummary;
 import com.example.ragagent.conversation.ConversationTurnRecord;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -13,6 +14,31 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ConversationControllerTest {
+
+    @Test
+    void sessionsShouldReturnCurrentUsersRecentSessions() {
+        ConversationLogService service = mock(ConversationLogService.class);
+        ConversationController controller = new ConversationController(service);
+        ConversationSessionSummary summary = new ConversationSessionSummary(
+                "session-1",
+                "推荐通勤跑鞋",
+                100L,
+                200L,
+                2L,
+                "对比黑色和灰色",
+                "黑色更耐脏"
+        );
+        when(service.listRecentSessions("alice", 100)).thenReturn(List.of(summary));
+
+        ConversationController.ConversationsResponse response = controller.sessions(
+                500,
+                UsernamePasswordAuthenticationToken.authenticated("alice", null, List.of())
+        );
+
+        assertEquals(1, response.items().size());
+        assertEquals("session-1", response.items().get(0).sessionId());
+        verify(service).listRecentSessions("alice", 100);
+    }
 
     @Test
     void turnsShouldReturnCurrentUsersRecentTurns() {

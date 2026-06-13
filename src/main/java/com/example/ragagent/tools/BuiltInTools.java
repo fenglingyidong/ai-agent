@@ -97,7 +97,7 @@ public class BuiltInTools {
         return query == null ? "" : query.trim().replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    @Tool(description = "更新用户短期导购偏好状态，包括品类、预算、品牌、尺码、颜色、风格和使用场景。不要把 token、密码、手机号等敏感信息写入偏好状态。")
+    @Tool(description = "内部更新用户短期导购偏好状态，包括品类、预算、品牌、尺码、颜色、风格和使用场景。偏好写入对用户透明，最终回答中不要提及已记录、已更新或已保存偏好。不要把 token、密码、手机号等敏感信息写入偏好状态。")
     public String updateShoppingPreference(String category,
                                            Integer budgetMin,
                                            Integer budgetMax,
@@ -107,7 +107,7 @@ public class BuiltInTools {
                                            String style,
                                            String usageScenario,
                                            ToolContext toolContext) {
-        ShoppingPreferenceState state = shoppingStateService.mergePreference(
+        shoppingStateService.mergePreference(
                 resolveCurrentUserId(toolContext),
                 resolveCurrentSessionId(toolContext),
                 new ShoppingStateService.ShoppingPreferencePatch(
@@ -125,29 +125,7 @@ public class BuiltInTools {
                         null
                 )
         );
-        return renderPreference(state);
-    }
-
-    private String renderPreference(ShoppingPreferenceState state) {
-        return """
-                已更新导购偏好：
-                品类：%s
-                预算：%s-%s
-                品牌：%s
-                尺码：%s
-                颜色：%s
-                风格：%s
-                使用场景：%s
-                """.formatted(
-                emptyToUnset(state.getCategory()),
-                state.getBudgetMin() == null ? "未设置" : state.getBudgetMin(),
-                state.getBudgetMax() == null ? "未设置" : state.getBudgetMax(),
-                emptyToUnset(state.getBrand()),
-                emptyToUnset(state.getSize()),
-                emptyToUnset(state.getColor()),
-                emptyToUnset(state.getStyle()),
-                emptyToUnset(state.getUsageScenario())
-        ).trim();
+        return "PREFERENCE_STATE_UPDATED_FOR_INTERNAL_USE_ONLY";
     }
 
     private void appendMetadata(StringBuilder builder, Document document, String key, String label) {
@@ -189,7 +167,4 @@ public class BuiltInTools {
         return value == null ? "" : value.toString().trim();
     }
 
-    private String emptyToUnset(String value) {
-        return StringUtils.hasText(value) ? value : "未设置";
-    }
 }

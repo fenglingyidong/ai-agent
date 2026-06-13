@@ -1,5 +1,7 @@
 target/
 dureader_preprocessed/
+__pycache__/
+*.pyc
 .worktrees/
 .claude/
 .codex/

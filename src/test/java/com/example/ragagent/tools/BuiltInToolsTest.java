@@ -87,9 +87,7 @@ class BuiltInToolsTest {
 
         String result = tools.updateShoppingPreference("玩具", 100, 200, "启蒙", "", "", "", "", toolContext);
 
-        assertTrue(result.contains("品类：玩具"));
-        assertTrue(result.contains("预算：100-200"));
-        assertTrue(result.contains("品牌：启蒙"));
+        assertEquals("PREFERENCE_STATE_UPDATED_FOR_INTERNAL_USE_ONLY", result);
         ArgumentCaptor<ShoppingStateService.ShoppingPreferencePatch> patchCaptor =
                 ArgumentCaptor.forClass(ShoppingStateService.ShoppingPreferencePatch.class);
         verify(shoppingStateService).mergePreference(

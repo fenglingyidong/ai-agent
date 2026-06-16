@@ -8,6 +8,7 @@ import io.milvus.param.IndexType;
 import io.milvus.param.MetricType;
 import io.milvus.v2.client.ConnectConfig;
 import io.milvus.v2.client.MilvusClientV2;
+import io.milvus.v2.client.RetryConfig;
 import io.milvus.v2.common.DataType;
 import io.milvus.v2.common.IndexParam;
 import io.milvus.v2.service.collection.request.AddFieldReq;
@@ -27,6 +28,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.util.StringUtils;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -74,7 +77,27 @@ public class MilvusVectorStoreConfiguration {
     @Bean(name = BM25_MILVUS_CLIENT, destroyMethod = "close")
     public MilvusClientV2 bm25MilvusClientV2(AppVectorProperties properties,
                                              RagRetrievalProperties retrievalProperties) {
-        return buildMilvusClient(properties, retrievalProperties.getBm25RpcDeadlineMs());
+        requireUtf8JvmCharset(Charset.defaultCharset());
+        MilvusClientV2 client = buildMilvusClient(properties, retrievalProperties.getBm25RpcDeadlineMs());
+        client.retryConfig(bm25RetryConfig(retrievalProperties));
+        return client;
+    }
+
+    static void requireUtf8JvmCharset(Charset charset) {
+        if (!StandardCharsets.UTF_8.equals(charset)) {
+            throw new IllegalStateException("Milvus BM25 text search requires JVM default charset UTF-8. "
+                    + "Start with -Dfile.encoding=UTF-8; current charset is " + charset + ".");
+        }
+    }
+
+    static RetryConfig bm25RetryConfig(RagRetrievalProperties properties) {
+        return RetryConfig.builder()
+                .maxRetryTimes(2)
+                .initialBackOffMs(10)
+                .maxBackOffMs(50)
+                .backOffMultiplier(2)
+                .maxRetryTimeoutMs(properties.getBm25RpcDeadlineMs())
+                .build();
     }
 
     private MilvusClientV2 buildMilvusClient(AppVectorProperties properties, int rpcDeadlineMs) {

@@ -28,10 +28,12 @@ public class ConversationController {
 
     @GetMapping
     public ConversationsResponse sessions(@RequestParam(value = "limit", defaultValue = "50") int limit,
+                                          @RequestParam(value = "offset", defaultValue = "0") int offset,
                                           Authentication authentication) {
         int safeLimit = Math.max(1, Math.min(limit, 100));
+        int safeOffset = Math.max(0, offset);
         return new ConversationsResponse(
-                conversationLogService.listRecentSessions(resolveCurrentUserId(authentication), safeLimit)
+                conversationLogService.listRecentSessions(resolveCurrentUserId(authentication), safeLimit, safeOffset)
         );
     }
 

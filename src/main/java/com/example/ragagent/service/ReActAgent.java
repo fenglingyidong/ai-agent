@@ -10,6 +10,7 @@ import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.tools.BuiltInTools;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -41,6 +42,15 @@ public class ReActAgent {
     private static final Logger log = LoggerFactory.getLogger(ReActAgent.class);
     private static final String TOOL_CONTEXT_USER_ID = "userId";
     private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
+    private static final String REACT_SYSTEM_PROMPT = "react.system";
+    private static final String REACT_MALL_RULE_ENABLED = "react.mall-rule.enabled";
+    private static final String REACT_MALL_RULE_DISABLED = "react.mall-rule.disabled";
+    private static final String REACT_NETWORK_RULE_ENABLED = "react.network-rule.enabled";
+    private static final String REACT_NETWORK_RULE_DISABLED = "react.network-rule.disabled";
+    private static final String REACT_TASK_POLICY_HEADER = "react.task-policy.header";
+    private static final String REACT_TASK_POLICY_ITEM = "react.task-policy.item";
+    private static final String REACT_TASK_POLICY_ALLOWED_TOOLS = "react.task-policy.allowed-tools";
+    private static final String REACT_TASK_POLICY_CONFIRMATION_REQUIRED = "react.task-policy.confirmation-required";
 
     private final BuiltInTools builtInTools;
     private final LongTermMemoryAdvisor longTermMemoryAdvisor;
@@ -195,6 +205,8 @@ public class ReActAgent {
                 safeMedia.size()
         );
         try {
+            Span rootSpan = tracing.currentSpan();
+            tracing.recordTraceInput(rootSpan, userMessage);
             PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt = promptSecurityFilter.secure(userMessage);
             RoutedAgentRequest routedRequest = routeBeforeCore(
                     userId,
@@ -214,7 +226,8 @@ public class ReActAgent {
                         routedRequest.userMessage(),
                         routedRequest.shortCircuitStream(),
                         preRouteSecuredPrompt,
-                        conversationTurn
+                        conversationTurn,
+                        rootSpan
                 );
             }
 
@@ -232,7 +245,8 @@ public class ReActAgent {
                     routedRequest.taskPolicies(),
                     routedRequest.orderCreationAllowed(),
                     securedPrompt,
-                    conversationTurn
+                    conversationTurn,
+                    rootSpan
             );
         }
         catch (RuntimeException ex) {
@@ -267,7 +281,8 @@ public class ReActAgent {
                                                   String userMessage,
                                                   Flux<String> shortCircuitStream,
                                                   PromptSecurityFilter.SecuredPrompt preRouteSecuredPrompt,
-                                                  ConversationTurnRecord conversationTurn) {
+                                                  ConversationTurnRecord conversationTurn,
+                                                  Span rootSpan) {
         PromptSecurityFilter.SecuredPrompt securedPrompt = promptSecurityFilter.secure(
                 userMessage,
                 preRouteSecuredPrompt.sensitiveValues()
@@ -304,18 +319,24 @@ public class ReActAgent {
                                 securedPrompt.modelInput(),
                                 memoryAnswerBuilder.toString().trim()
                         );
-                        conversationLogService.completeTurn(conversationTurn, visibleAnswerBuilder.toString().trim());
+                        String visibleAnswer = visibleAnswerBuilder.toString().trim();
+                        tracing.recordTraceOutput(rootSpan, visibleAnswer);
+                        conversationLogService.completeTurn(conversationTurn, visibleAnswer);
                         persisted.set(true);
                     })
                     .doOnError(ex -> {
-                        conversationLogService.failTurn(conversationTurn, visibleAnswerBuilder.toString().trim(), ex);
+                        String visibleAnswer = visibleAnswerBuilder.toString().trim();
+                        tracing.recordTraceOutput(rootSpan, visibleAnswer);
+                        conversationLogService.failTurn(conversationTurn, visibleAnswer, ex);
                         persisted.set(true);
                     })
                     .doFinally(signalType -> {
                         if (signalType == SignalType.CANCEL && persisted.compareAndSet(false, true)) {
+                            String visibleAnswer = visibleAnswerBuilder.toString().trim();
+                            tracing.recordTraceOutput(rootSpan, visibleAnswer);
                             conversationLogService.partialTurn(
                                     conversationTurn,
-                                    visibleAnswerBuilder.toString().trim(),
+                                    visibleAnswer,
                                     "stream cancelled"
                             );
                         }
@@ -332,7 +353,8 @@ public class ReActAgent {
                                          List<ShoppingTaskPolicy> taskPolicies,
                                          boolean orderCreationAllowed,
                                          PromptSecurityFilter.SecuredPrompt securedPrompt,
-                                         ConversationTurnRecord conversationTurn) {
+                                         ConversationTurnRecord conversationTurn,
+                                         Span rootSpan) {
         ActiveToolCallbacks activeTools;
         try {
             activeTools = resolveActiveToolCallbacks(
@@ -369,7 +391,8 @@ public class ReActAgent {
                 webSearchEnabled,
                 taskPolicies,
                 securedPrompt,
-                conversationTurn
+                conversationTurn,
+                rootSpan
         );
     }
 
@@ -432,7 +455,8 @@ public class ReActAgent {
                                            boolean webSearchEnabled,
                                            List<ShoppingTaskPolicy> taskPolicies,
                                            PromptSecurityFilter.SecuredPrompt securedPrompt,
-                                           ConversationTurnRecord conversationTurn) {
+                                           ConversationTurnRecord conversationTurn,
+                                           Span rootSpan) {
         ChatClient.ChatClientRequestSpec requestSpec = applyModelOptions(reactChatClient.prompt(), modelId);
         String reactSystemPrompt = buildReactSystemPrompt(
                 activeTools.hasExternalTools(),
@@ -466,9 +490,10 @@ public class ReActAgent {
             requestWithMemory = requestWithToolContext;
         }
         ChatClient.ChatClientRequestSpec finalRequestWithMemory = requestWithMemory;
-        Span span = tracing.currentSpan();
 
         return Flux.defer(() -> {
+            Span span = tracing.startSpan("llm.react");
+            Scope scope = tracing.makeCurrent(span);
             tracing.capturePromptText(span, "llm.react.input", reactInput(reactSystemPrompt, currentUserMessage, activeTools));
             StreamingSensitiveValueRestorer restorer =
                     new StreamingSensitiveValueRestorer(securedPrompt.sensitiveValues());
@@ -511,18 +536,20 @@ public class ReActAgent {
                                 restoredAnswerBuilder
                         ))
                         .doOnComplete(() -> {
-                            tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
+                            String visibleAnswer = restoredAnswerBuilder.toString().trim();
+                            tracing.capturePromptText(span, "llm.react.output", visibleAnswer);
+                            tracing.recordTraceOutput(rootSpan, visibleAnswer);
                             if (fallbackUsed.get()) {
                                 conversationLogService.partialTurn(
                                         conversationTurn,
-                                        restoredAnswerBuilder.toString().trim(),
+                                        visibleAnswer,
                                         "model stream fallback"
                                 );
                             }
                             else {
                                 conversationLogService.completeTurn(
                                         conversationTurn,
-                                        restoredAnswerBuilder.toString().trim()
+                                        visibleAnswer
                                 );
                             }
                             persisted.set(true);
@@ -536,25 +563,35 @@ public class ReActAgent {
                             );
                         })
                         .doOnError(ex -> {
-                            tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
-                            conversationLogService.failTurn(conversationTurn, restoredAnswerBuilder.toString().trim(), ex);
+                            String visibleAnswer = restoredAnswerBuilder.toString().trim();
+                            tracing.capturePromptText(span, "llm.react.output", visibleAnswer);
+                            tracing.recordTraceOutput(rootSpan, visibleAnswer);
+                            conversationLogService.failTurn(conversationTurn, visibleAnswer, ex);
                             persisted.set(true);
                         })
                         .doFinally(signalType -> {
                             if (signalType == SignalType.CANCEL && persisted.compareAndSet(false, true)) {
-                                tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
+                                String visibleAnswer = restoredAnswerBuilder.toString().trim();
+                                tracing.capturePromptText(span, "llm.react.output", visibleAnswer);
+                                tracing.recordTraceOutput(rootSpan, visibleAnswer);
                                 conversationLogService.partialTurn(
                                         conversationTurn,
-                                        restoredAnswerBuilder.toString().trim(),
+                                        visibleAnswer,
                                         "stream cancelled"
                                 );
                             }
+                            scope.close();
+                            tracing.endSpan(span);
                         });
             }
             catch (RuntimeException ex) {
-                tracing.capturePromptText(span, "llm.react.output", restoredAnswerBuilder.toString().trim());
-                conversationLogService.failTurn(conversationTurn, restoredAnswerBuilder.toString().trim(), ex);
+                String visibleAnswer = restoredAnswerBuilder.toString().trim();
+                tracing.capturePromptText(span, "llm.react.output", visibleAnswer);
+                tracing.recordTraceOutput(rootSpan, visibleAnswer);
+                conversationLogService.failTurn(conversationTurn, visibleAnswer, ex);
                 persisted.set(true);
+                scope.close();
+                tracing.endSpan(span);
                 return Flux.error(ex);
             }
         });
@@ -822,13 +859,13 @@ public class ReActAgent {
                                           boolean webSearchEnabled,
                                           List<ShoppingTaskPolicy> taskPolicies) {
         String mallRule = hasMallTools
-                ? "当用户要求实时商品搜索、具体商品详情、价格、库存、相似款、加购物车、查购物车、订单确认或下单时，必须使用 mall_* MCP 工具；不要使用直连商城 REST 的假设。"
-                : "当前未注册 mall_* 实时商城工具；如问题不需要实时价格、库存、购物车或订单操作，可基于已知知识和用户条件直接回答，不要声称已经查询实时商城。";
+                ? promptTemplateStore.text(REACT_MALL_RULE_ENABLED)
+                : promptTemplateStore.text(REACT_MALL_RULE_DISABLED);
         String networkRule = webSearchEnabled && hasExternalTools
-                ? "对于需要最新公开互联网信息的问题，优先使用联网搜索相关工具。"
-                : "当前未启用联网搜索工具，不要假设自己能够访问互联网。";
+                ? promptTemplateStore.text(REACT_NETWORK_RULE_ENABLED)
+                : promptTemplateStore.text(REACT_NETWORK_RULE_DISABLED);
         String policyPrompt = renderTaskPolicyPrompt(taskPolicies);
-        return promptTemplateStore.render("react.system", Map.of(
+        return promptTemplateStore.render(REACT_SYSTEM_PROMPT, Map.of(
                 "mall_rule", mallRule,
                 "network_rule", networkRule,
                 "task_policy_prompt", StringUtils.hasText(policyPrompt)
@@ -863,25 +900,37 @@ public class ReActAgent {
             return "";
         }
 
-        StringBuilder builder = new StringBuilder("当前导购任务策略：");
+        StringBuilder builder = new StringBuilder(promptTemplateStore.text(REACT_TASK_POLICY_HEADER));
         for (ShoppingTaskPolicy policy : taskPolicies) {
             builder.append(System.lineSeparator())
-                    .append("- ")
-                    .append(policy.id())
-                    .append(" / ")
-                    .append(policy.name())
-                    .append("：")
-                    .append(policy.promptFragment());
-            if (!policy.allowedToolNames().isEmpty()) {
-                builder.append(" 受控工具范围：")
-                        .append(String.join(", ", policy.allowedToolNames()))
-                        .append("。");
-            }
-            if (policy.confirmationRequired()) {
-                builder.append(" 该策略需要用户确认，不能跳过确认步骤。");
-            }
+                    .append(renderTaskPolicyItem(policy));
         }
         return builder.toString();
+    }
+
+    private String renderTaskPolicyItem(ShoppingTaskPolicy policy) {
+        return promptTemplateStore.render(REACT_TASK_POLICY_ITEM, Map.of(
+                "policy_id", policy.id(),
+                "policy_name", policy.name(),
+                "policy_prompt", policy.promptFragment(),
+                "allowed_tools_text", renderAllowedToolsText(policy),
+                "confirmation_required_text", renderConfirmationRequiredText(policy)
+        ));
+    }
+
+    private String renderAllowedToolsText(ShoppingTaskPolicy policy) {
+        if (policy.allowedToolNames().isEmpty()) {
+            return "";
+        }
+        return promptTemplateStore.render(REACT_TASK_POLICY_ALLOWED_TOOLS, Map.of(
+                "allowed_tools", String.join(", ", policy.allowedToolNames())
+        ));
+    }
+
+    private String renderConfirmationRequiredText(ShoppingTaskPolicy policy) {
+        return policy.confirmationRequired()
+                ? promptTemplateStore.text(REACT_TASK_POLICY_CONFIRMATION_REQUIRED)
+                : "";
     }
 
     private String mallMcpFailureMessage(MallMcpToolResolutionException ex) {

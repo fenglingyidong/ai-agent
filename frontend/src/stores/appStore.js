@@ -4,6 +4,7 @@ import { ApiError, normalizeBaseUrl } from "../api/http.js";
 
 const AUTH_STORAGE_KEY = "rag-agent-vue-auth";
 const PREFERENCES_STORAGE_KEY = "rag-agent-vue-preferences";
+const SESSION_PAGE_SIZE = 20;
 
 export function createSessionId() {
     return `shopping-${crypto.randomUUID().slice(0, 8)}`;
@@ -143,6 +144,9 @@ export function createAppStore(api = defaultApi, storage) {
         selectedModelId: preferences.selectedModelId,
         webSearchEnabled: preferences.webSearchEnabled,
         sessions: [],
+        sessionsOffset: 0,
+        hasMoreSessions: true,
+        isLoadingSessions: false,
         currentSessionId: "",
         messages: []
     });
@@ -159,8 +163,43 @@ export function createAppStore(api = defaultApi, storage) {
     }
 
     async function refreshSessions() {
-        state.sessions = await api.listSessions(state.auth);
-        return state.sessions;
+        state.isLoadingSessions = true;
+        try {
+            const sessions = await api.listSessions(state.auth, { limit: SESSION_PAGE_SIZE, offset: 0 });
+            state.sessions = sessions;
+            state.sessionsOffset = sessions.length;
+            state.hasMoreSessions = sessions.length === SESSION_PAGE_SIZE;
+            return state.sessions;
+        }
+        finally {
+            state.isLoadingSessions = false;
+        }
+    }
+
+    async function loadMoreSessions() {
+        if (state.isLoadingSessions || !state.hasMoreSessions) {
+            return state.sessions;
+        }
+        state.isLoadingSessions = true;
+        try {
+            const sessions = await api.listSessions(state.auth, {
+                limit: SESSION_PAGE_SIZE,
+                offset: state.sessionsOffset
+            });
+            const existingIds = new Set(state.sessions.map((session) => session.sessionId));
+            const nextSessions = sessions.filter((session) => !existingIds.has(session.sessionId));
+            state.sessions.push(...nextSessions);
+            state.sessionsOffset += sessions.length;
+            state.hasMoreSessions = sessions.length === SESSION_PAGE_SIZE;
+            return state.sessions;
+        }
+        catch (error) {
+            state.error = resolveErrorMessage(error, "会话列表加载失败。", { networkFallback: true });
+            throw error;
+        }
+        finally {
+            state.isLoadingSessions = false;
+        }
     }
 
     async function selectSession(sessionId) {
@@ -237,6 +276,9 @@ export function createAppStore(api = defaultApi, storage) {
         state.auth = { apiBase: "http://localhost:18082", username: "", password: "" };
         state.isAuthenticated = false;
         state.sessions = [];
+        state.sessionsOffset = 0;
+        state.hasMoreSessions = true;
+        state.isLoadingSessions = false;
         if (!preserveMessages) {
             state.messages = [];
         }
@@ -373,6 +415,7 @@ export function createAppStore(api = defaultApi, storage) {
         sendMessage,
         stopStreaming,
         refreshSessions,
+        loadMoreSessions,
         persistPreferences,
         clearError
     };

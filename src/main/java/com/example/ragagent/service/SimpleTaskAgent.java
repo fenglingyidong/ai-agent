@@ -23,7 +23,6 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.function.Supplier;
 
 @Service
@@ -32,14 +31,7 @@ public class SimpleTaskAgent {
     private static final Logger log = LoggerFactory.getLogger(SimpleTaskAgent.class);
     private static final String EMPTY_KNOWLEDGE_MESSAGE = "商品知识库中没有检索到相关内容。";
     private static final String MALL_MCP_FAILURE_MESSAGE = "商城 MCP 调用失败：请稍后重试";
-    private static final Set<String> SIMPLE_MALL_INTENTS = Set.of(
-            "PRICE_STOCK_QUERY",
-            "QUERY_ATTRIBUTE",
-            "VIEW_CART",
-            "ADD_TO_CART",
-            "PREPARE_ORDER"
-    );
-    private static final Set<String> SIMPLE_MALL_TOOL_NAMES = Set.of(
+    private static final java.util.Set<String> SIMPLE_MALL_TOOL_NAMES = java.util.Set.of(
             "mall_search_products",
             "mall_get_product_detail",
             "mall_add_to_cart",
@@ -149,8 +141,8 @@ public class SimpleTaskAgent {
         }
 
         return switch (route.normalizedTaskType()) {
-            case "A_FAQ_SIMPLE_QUERY" -> runKnowledgeTask(route, userMessage, preferenceContext);
-            case "B_SIMPLE_SHOPPING_TOOL" -> runMallTask(route, userMessage, sessionId, preferenceContext);
+            case "FAQ_SIMPLE_QUERY" -> runKnowledgeTask(route, userMessage, preferenceContext);
+            case "SIMPLE_SHOPPING_TOOL" -> runMallTask(route, userMessage, sessionId, preferenceContext);
             default -> FastLaneResult.notHandled();
         };
     }
@@ -172,9 +164,6 @@ public class SimpleTaskAgent {
                                        String userMessage,
                                        String sessionId,
                                        String preferenceContext) {
-        if (!SIMPLE_MALL_INTENTS.contains(route.normalizedIntent())) {
-            return FastLaneResult.notHandled();
-        }
         if (!StringUtils.hasText(sessionId)) {
             return FastLaneResult.fallbackToCore("简单商城任务缺少 sessionId");
         }
@@ -205,6 +194,7 @@ public class SimpleTaskAgent {
         try {
             return mallMcpToolCallback.getToolCallbacks().stream()
                     .filter(callback -> SIMPLE_MALL_TOOL_NAMES.contains(toolName(callback)))
+                    .map(callback -> (ToolCallback) new LoggingToolCallback(callback, "simple-task", "simple-task", tracing))
                     .toList();
         }
         catch (RuntimeException ex) {
@@ -256,6 +246,18 @@ public class SimpleTaskAgent {
                                            String systemPrompt,
                                            String userPrompt,
                                            Supplier<String> modelCall) {
+        return tracing.inSpan("llm.simple_task", () -> callSimpleModelInCurrentSpan(
+                route,
+                systemPrompt,
+                userPrompt,
+                modelCall
+        ));
+    }
+
+    private FastLaneResult callSimpleModelInCurrentSpan(ShoppingIntentRoute route,
+                                                       String systemPrompt,
+                                                       String userPrompt,
+                                                       Supplier<String> modelCall) {
         try {
             Span span = tracing.currentSpan();
             tracing.capturePromptText(span, "llm.simple_task.input", llmInput(systemPrompt, userPrompt));

@@ -133,6 +133,19 @@ class LoggingToolCallbackTest {
         assertEquals("error", tracing.stringAttribute("tool.status"));
     }
 
+    @Test
+    void callShouldCaptureSanitizedToolPayloadForDebugTracing() {
+        ToolCallback delegate = delegateReturning("{\"ok\":true,\"token\":\"secret-token\"}");
+        RecordingTracing tracing = new RecordingTracing();
+        LoggingToolCallback callback = new LoggingToolCallback(delegate, "user-1", "session-1", tracing);
+
+        String result = callback.call("{\"skuId\":3020,\"token\":\"secret-token\"}", new ToolContext(Map.of()));
+
+        assertEquals("{\"ok\":true,\"token\":\"secret-token\"}", result);
+        assertEquals("{\"skuId\":3020,\"token\":\"[REDACTED]\"}", tracing.stringAttribute("tool.input"));
+        assertEquals("{\"ok\":true,\"token\":\"[REDACTED]\"}", tracing.stringAttribute("tool.output"));
+    }
+
     private ToolCallback delegateReturning(String output) {
         ToolCallback delegate = mock(ToolCallback.class);
         ToolDefinition definition = mock(ToolDefinition.class);
@@ -207,6 +220,11 @@ class LoggingToolCallbackTest {
         @Override
         public void setAttribute(Span span, String key, String value) {
             stringAttributes.put(key, value);
+        }
+
+        @Override
+        public void captureToolPayload(Span span, String key, String value) {
+            stringAttributes.put(key, value == null ? "" : value.replace("secret-token", "[REDACTED]"));
         }
 
         @Override

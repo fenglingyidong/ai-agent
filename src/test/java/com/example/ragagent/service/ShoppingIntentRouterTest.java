@@ -31,6 +31,7 @@ class ShoppingIntentRouterTest {
     void routeShouldParseModelJsonResponse() {
         RouterMocks mocks = routerMocks("""
                 {
+                  "task_type": "SIMPLE_SHOPPING_TOOL",
                   "intent": "QUERY_ATTRIBUTE",
                   "visual_context": {"category": "运动鞋", "brand_logo": "Nike"},
                   "text_slots": {"target_attribute": "颜色"},
@@ -43,11 +44,12 @@ class ShoppingIntentRouterTest {
 
         ShoppingIntentRoute route = router.route("还有别的颜色吗", List.of());
 
-        assertEquals("QUERY_ATTRIBUTE", route.normalizedIntent());
-        assertEquals("B_SIMPLE_SHOPPING_TOOL", route.normalizedTaskType());
+        assertEquals("UNKNOWN", route.normalizedIntent());
+        assertEquals("SIMPLE_SHOPPING_TOOL", route.normalizedTaskType());
         assertEquals(false, route.routeToCore());
         assertEquals(0.95, route.confidence());
         assertEquals("Nike", route.visualContext().get("brand_logo"));
+        assertEquals(Map.of(), route.textSlots());
     }
 
     @Test
@@ -66,6 +68,7 @@ class ShoppingIntentRouterTest {
     void routeShouldNormalizeHighConfidenceSimpleIntentToSkipCore() {
         RouterMocks mocks = routerMocks("""
                 {
+                  "task_type": "SIMPLE_SHOPPING_TOOL",
                   "intent": "PRICE_STOCK_QUERY",
                   "visual_context": {},
                   "text_slots": {"product_name": "儿童积木套装 300片", "target_attribute": "stock"},
@@ -83,20 +86,21 @@ class ShoppingIntentRouterTest {
 
         ShoppingIntentRoute route = router.route("儿童积木套装 300片库存还有多少", List.of());
 
-        assertEquals("PRICE_STOCK_QUERY", route.normalizedIntent());
+        assertEquals("UNKNOWN", route.normalizedIntent());
         assertEquals(false, route.routeToCore());
-        assertEquals(List.of("PRODUCT_SELECTION"), route.taskPolicies());
-        assertEquals(List.of("sku_id"), route.missingSlots());
-        assertEquals(List.of("mall_get_product_detail"), route.toolCandidates());
-        assertEquals(true, route.needConfirm());
+        assertEquals(List.of(), route.taskPolicies());
+        assertEquals(List.of(), route.missingSlots());
+        assertEquals(List.of(), route.toolCandidates());
+        assertEquals(false, route.needConfirm());
         assertEquals("LOW", route.riskLevel());
-        assertTrue(route.reason().contains("短路候选"));
+        assertEquals("查库存", route.reason());
     }
 
     @Test
     void routeShouldKeepComplexIntentOnCore() {
         RouterMocks mocks = routerMocks("""
                 {
+                  "task_type": "COMPLEX_REACT",
                   "intent": "COMPLEX_RECOMMENDATION",
                   "visual_context": {},
                   "text_slots": {"budget": "300", "use_scene": "生日礼物"},
@@ -109,16 +113,16 @@ class ShoppingIntentRouterTest {
 
         ShoppingIntentRoute route = router.route("预算300给5岁孩子买生日礼物，帮我比较推荐", List.of());
 
-        assertEquals("COMPLEX_RECOMMENDATION", route.normalizedIntent());
-        assertEquals("C_COMPLEX_REACT", route.normalizedTaskType());
+        assertEquals("UNKNOWN", route.normalizedIntent());
+        assertEquals("COMPLEX_REACT", route.normalizedTaskType());
         assertTrue(route.routeToCore());
     }
 
     @Test
-    void routeShouldParseTaskPolicyMetadata() {
+    void routeShouldIgnoreTaskPolicyMetadataFromModelJsonResponse() {
         RouterMocks mocks = routerMocks("""
                 {
-                  "task_type": "C_COMPLEX_REACT",
+                  "task_type": "COMPLEX_REACT",
                   "intent": "COMPLEX_RECOMMENDATION",
                   "visual_context": {},
                   "text_slots": {"budget": "300", "use_scene": "生日礼物"},
@@ -136,22 +140,56 @@ class ShoppingIntentRouterTest {
 
         ShoppingIntentRoute route = router.route("预算300买生日礼物，帮我推荐", List.of());
 
-        assertEquals(List.of("PRODUCT_SELECTION", "FOLLOW_UP", "RECOMMENDATION"), route.taskPolicies());
-        assertEquals(List.of("age"), route.missingSlots());
-        assertEquals(List.of("searchProductKnowledge", "mall_search_products"), route.toolCandidates());
+        assertEquals(List.of(), route.taskPolicies());
+        assertEquals(List.of(), route.missingSlots());
+        assertEquals(List.of(), route.toolCandidates());
         assertEquals(false, route.needConfirm());
-        assertEquals("MEDIUM", route.riskLevel());
+        assertEquals("LOW", route.riskLevel());
     }
 
     @Test
-    void routePromptShouldAskForTaskPolicies() {
+    void routeShouldIgnoreLegacyModelFieldsOutsideLightweightSchema() {
         RouterMocks mocks = routerMocks("""
                 {
-                  "task_type": "B_SIMPLE_SHOPPING_TOOL",
-                  "intent": "QUERY_ATTRIBUTE",
-                  "visual_context": {},
-                  "text_slots": {"target_attribute": "color"},
+                  "task_type": "COMPLEX_REACT",
+                  "intent": "COMPLEX_RECOMMENDATION",
+                  "visual_context": {"category": "鼠标"},
+                  "text_slots": {"budget": "100"},
+                  "preference_delta": {"usage_scenario": "办公室"},
+                  "task_policies": ["FOLLOW_UP"],
+                  "missing_slots": ["budget"],
+                  "tool_candidates": [],
+                  "need_confirm": true,
+                  "risk_level": "HIGH",
                   "route_to_core": false,
+                  "confidence": 0.9,
+                  "reason": "场景推荐"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+
+        ShoppingIntentRoute route = router.route("办公室用鼠标，希望点击声音小一点，买哪款？", List.of());
+
+        assertEquals("UNKNOWN", route.normalizedIntent());
+        assertEquals("COMPLEX_REACT", route.normalizedTaskType());
+        assertEquals(true, route.routeToCore());
+        assertEquals(Map.of(), route.textSlots());
+        assertEquals(List.of(), route.taskPolicies());
+        assertEquals(List.of(), route.missingSlots());
+        assertEquals(List.of(), route.toolCandidates());
+        assertEquals(false, route.needConfirm());
+        assertEquals("LOW", route.riskLevel());
+        assertEquals("办公室", route.preferenceDelta().get("usage_scenario"));
+        assertEquals("鼠标", route.visualContext().get("category"));
+    }
+
+    @Test
+    void routePromptShouldAskOnlyForLightweightTaskType() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "SIMPLE_SHOPPING_TOOL",
+                  "visual_context": {},
+                  "preference_delta": {},
                   "confidence": 0.9,
                   "reason": "查属性"
                 }
@@ -163,19 +201,73 @@ class ShoppingIntentRouterTest {
         ArgumentCaptor<String> systemCaptor = ArgumentCaptor.forClass(String.class);
         verify(mocks.requestSpec).system(systemCaptor.capture());
         String systemPrompt = systemCaptor.getValue();
-        assertTrue(systemPrompt.contains("task_policies"));
-        assertTrue(systemPrompt.contains("PRODUCT_SELECTION"));
-        assertTrue(systemPrompt.contains("CART_CONFIRMATION"));
-        assertTrue(systemPrompt.contains("missing_slots 只列最关键 1-3 个"));
-        assertTrue(systemPrompt.contains("reason 不超过 20 个字"));
+        assertTrue(systemPrompt.contains("task_type: FAQ_SIMPLE_QUERY | SIMPLE_SHOPPING_TOOL | COMPLEX_REACT"));
+        assertTrue(systemPrompt.contains("preference_delta"));
+        assertTrue(!systemPrompt.contains("图像识别"));
+        assertTrue(!systemPrompt.contains("task_policies"));
+        assertTrue(!systemPrompt.contains("tool_candidates"));
+        assertTrue(!systemPrompt.contains("missing_slots"));
+        assertTrue(!systemPrompt.contains("route_to_core"));
+        assertTrue(systemPrompt.contains("reason"));
+        assertTrue(systemPrompt.contains("不超过 20 个字"));
         assertTrue(!systemPrompt.contains("\"target_attribute\": \"\""));
+    }
+
+    @Test
+    void routePromptShouldIncludeImageInstructionsOnlyWhenMediaExists() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "COMPLEX_REACT",
+                  "visual_context": {"category": "运动鞋"},
+                  "preference_delta": {},
+                  "confidence": 0.76,
+                  "reason": "图文理解"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        Media media = new Media(MediaType.IMAGE_PNG, new ByteArrayResource(new byte[]{1, 2, 3}));
+
+        router.route("看看图里是什么", List.of(media));
+
+        ArgumentCaptor<String> systemCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mocks.requestSpec).system(systemCaptor.capture());
+        String systemPrompt = systemCaptor.getValue();
+        assertTrue(systemPrompt.contains("图像识别"));
+        assertTrue(systemPrompt.contains("visual_context 无图片时输出 {}"));
+        assertTrue(systemPrompt.contains("category、brand_logo、main_color、product_name、style、material"));
+    }
+
+    @Test
+    void routeShouldParsePreferenceDeltaFromModelJsonResponse() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "COMPLEX_REACT",
+                  "visual_context": {},
+                  "preference_delta": {
+                    "category": "跑鞋",
+                    "budget_max": 500,
+                    "usage_scenario": "通勤",
+                    "clear_fields": ["brand"]
+                  },
+                  "confidence": 0.88,
+                  "reason": "推荐需主代理"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+
+        ShoppingIntentRoute route = router.route("预算500以内，通勤跑鞋，品牌不限", List.of());
+
+        assertEquals("跑鞋", route.preferenceDelta().get("category"));
+        assertEquals(500, route.preferenceDelta().get("budget_max"));
+        assertEquals("通勤", route.preferenceDelta().get("usage_scenario"));
+        assertEquals(List.of("brand"), route.preferenceDelta().get("clear_fields"));
     }
 
     @Test
     void routeShouldIncludePreferenceContextWhenProvided() {
         RouterMocks mocks = routerMocks("""
                 {
-                  "task_type": "C_COMPLEX_REACT",
+                  "task_type": "COMPLEX_REACT",
                   "intent": "COMPLEX_RECOMMENDATION",
                   "visual_context": {},
                   "text_slots": {},
@@ -244,7 +336,7 @@ class ShoppingIntentRouterTest {
     void routeShouldNotIncludePreferenceContextWhenMissing() {
         RouterMocks mocks = routerMocks("""
                 {
-                  "task_type": "B_SIMPLE_SHOPPING_TOOL",
+                  "task_type": "SIMPLE_SHOPPING_TOOL",
                   "intent": "QUERY_ATTRIBUTE",
                   "visual_context": {},
                   "text_slots": {"target_attribute": "color"},
@@ -267,7 +359,7 @@ class ShoppingIntentRouterTest {
     void routeShouldCaptureRouterInputAndOutput() {
         RouterMocks mocks = routerMocks("""
                 {
-                  "task_type": "C_COMPLEX_REACT",
+                  "task_type": "COMPLEX_REACT",
                   "intent": "COMPLEX_RECOMMENDATION",
                   "visual_context": {},
                   "text_slots": {"category": "跑鞋"},
@@ -284,18 +376,23 @@ class ShoppingIntentRouterTest {
         assertTrue(tracing.text("llm.intent_router.input").contains("system:"));
         assertTrue(tracing.text("llm.intent_router.input").contains("user:"));
         assertTrue(tracing.text("llm.intent_router.input").contains("推荐跑鞋"));
-        assertTrue(tracing.text("llm.intent_router.output").contains("COMPLEX_RECOMMENDATION"));
+        assertTrue(tracing.text("llm.intent_router.output").contains("\"task_type\":\"COMPLEX_REACT\""));
+        assertTrue(tracing.text("llm.intent_router.output").contains("\"visual_context\":{}"));
+        assertTrue(tracing.text("llm.intent_router.output").contains("\"preference_delta\":{}"));
+        assertTrue(tracing.text("llm.intent_router.output").contains("\"confidence\":0.88"));
+        assertTrue(tracing.text("llm.intent_router.output").contains("\"reason\":\"需要综合推荐\""));
+        assertTrue(!tracing.text("llm.intent_router.output").contains("ShoppingIntentRoute["));
+        assertTrue(!tracing.text("llm.intent_router.output").contains("textSlots"));
+        assertTrue(!tracing.text("llm.intent_router.output").contains("routeToCore"));
+        assertTrue(!tracing.text("llm.intent_router.output").contains("COMPLEX_RECOMMENDATION"));
     }
 
     @Test
     void routeShouldParseSimpleRagTaskType() {
         RouterMocks mocks = routerMocks("""
                 {
-                  "task_type": "A_FAQ_SIMPLE_QUERY",
-                  "intent": "PRODUCT_KNOWLEDGE_QUERY",
+                  "task_type": "FAQ_SIMPLE_QUERY",
                   "visual_context": {},
-                  "text_slots": {"product_name": "儿童积木套装"},
-                  "route_to_core": false,
                   "confidence": 0.91,
                   "reason": "商品知识库事实查询"
                 }
@@ -304,8 +401,25 @@ class ShoppingIntentRouterTest {
 
         ShoppingIntentRoute route = router.route("儿童积木套装有什么特点", List.of());
 
-        assertEquals("A_FAQ_SIMPLE_QUERY", route.normalizedTaskType());
-        assertEquals("PRODUCT_KNOWLEDGE_QUERY", route.normalizedIntent());
+        assertEquals("FAQ_SIMPLE_QUERY", route.normalizedTaskType());
+        assertEquals(false, route.routeToCore());
+    }
+
+    @Test
+    void routeShouldParseSimpleShoppingTaskTypeWithoutLegacyIntentFields() {
+        RouterMocks mocks = routerMocks("""
+                {
+                  "task_type": "SIMPLE_SHOPPING_TOOL",
+                  "visual_context": {},
+                  "confidence": 0.92,
+                  "reason": "单步商城工具"
+                }
+                """);
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+
+        ShoppingIntentRoute route = router.route("购物车里有什么", List.of());
+
+        assertEquals("SIMPLE_SHOPPING_TOOL", route.normalizedTaskType());
         assertEquals(false, route.routeToCore());
     }
 

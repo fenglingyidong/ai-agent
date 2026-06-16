@@ -140,7 +140,7 @@ class ConversationLogServiceTest {
         assertNull(record);
         verify(sessionMapper, never()).upsertSession(any(), any(), any(), any());
         assertEquals(List.of(), service.listRecentSessions("alice", 20));
-        verify(sessionMapper, never()).selectRecentSessionSummaries(any(), anyInt());
+        verify(sessionMapper, never()).selectRecentSessionSummaries(any(), anyInt(), anyInt());
         verify(turnMapper, never()).insert(any(ConversationTurnEntity.class));
     }
 
@@ -197,9 +197,9 @@ class ConversationLogServiceTest {
         row.setTurnCount(3L);
         row.setLatestUserText("再对比一下");
         row.setLatestAssistantText("黑色更耐脏");
-        when(sessionMapper.selectRecentSessionSummaries("alice", 100)).thenReturn(List.of(row));
+        when(sessionMapper.selectRecentSessionSummaries("alice", 100, 30)).thenReturn(List.of(row));
 
-        List<ConversationSessionSummary> sessions = service.listRecentSessions("alice", 500);
+        List<ConversationSessionSummary> sessions = service.listRecentSessions("alice", 500, 30);
 
         assertEquals(1, sessions.size());
         assertEquals("session-1", sessions.get(0).sessionId());
@@ -209,7 +209,7 @@ class ConversationLogServiceTest {
         assertEquals(3L, sessions.get(0).turnCount());
         assertEquals("再对比一下", sessions.get(0).latestUserText());
         assertEquals("黑色更耐脏", sessions.get(0).latestAssistantText());
-        verify(sessionMapper).selectRecentSessionSummaries("alice", 100);
+        verify(sessionMapper).selectRecentSessionSummaries("alice", 100, 30);
     }
 
     @Test
@@ -223,7 +223,7 @@ class ConversationLogServiceTest {
                 new ConversationLogProperties()
         );
         ConversationSessionSummaryRow row = new ConversationSessionSummaryRow();
-        when(sessionMapper.selectRecentSessionSummaries("alice", 20)).thenReturn(List.of(row));
+        when(sessionMapper.selectRecentSessionSummaries("alice", 20, 0)).thenReturn(List.of(row));
 
         List<ConversationSessionSummary> sessions = service.listRecentSessions("alice", 20);
 

@@ -22,6 +22,9 @@ class LangfusePropertiesTest {
 
         assertTrue(properties.isEnabled());
         assertFalse(properties.isCapturePrompt());
+        assertFalse(properties.isCaptureToolPayload());
+        assertFalse(properties.isCaptureRagContent());
+        assertEquals(8_000, properties.getMaxCaptureChars());
     }
 
     @Test
@@ -29,6 +32,21 @@ class LangfusePropertiesTest {
         LangfuseProperties properties = bind(Map.of());
 
         assertEquals("http://localhost:3001", properties.getBaseUrl());
+    }
+
+    @Test
+    void bindShouldSupportDevelopmentCaptureFlags() {
+        LangfuseProperties properties = bind(Map.of(
+                "app.observability.langfuse.capture-prompt", "true",
+                "app.observability.langfuse.capture-tool-payload", "true",
+                "app.observability.langfuse.capture-rag-content", "true",
+                "app.observability.langfuse.max-capture-chars", "12000"
+        ));
+
+        assertTrue(properties.isCapturePrompt());
+        assertTrue(properties.isCaptureToolPayload());
+        assertTrue(properties.isCaptureRagContent());
+        assertEquals(12_000, properties.getMaxCaptureChars());
     }
 
     private LangfuseProperties bind(Map<String, String> values) {

@@ -4,6 +4,8 @@ import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
+import com.example.ragagent.observability.RagTracing;
+import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.tools.BuiltInTools;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -100,6 +102,69 @@ class ReActAgentTaskPolicyTest {
         assertFalse(registeredCallbacks.stream()
                 .map(callback -> callback.getToolDefinition().name())
                 .anyMatch("searchProductKnowledge"::equals));
+    }
+
+    @Test
+    void runStreamShouldRenderDynamicPromptFragmentsFromTemplates() {
+        ChatClient reactChatClient = mock(ChatClient.class);
+        ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
+        ChatClient.StreamResponseSpec streamResponseSpec = mock(ChatClient.StreamResponseSpec.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        ShoppingRouteExecutor routeExecutor = mock(ShoppingRouteExecutor.class);
+        ConversationMemoryService conversationMemoryService = mock(ConversationMemoryService.class);
+        List<String> systemPrompts = new ArrayList<>();
+        ShoppingTaskPolicy policy = new ShoppingTaskPolicy(
+                "TEST_POLICY",
+                "测试策略",
+                Set.of("COMPLEX_REACT"),
+                Set.of(),
+                Set.of("searchProductKnowledge"),
+                true,
+                "测试策略片段。"
+        );
+
+        when(conversationMemoryService.buildConversationId(anyString(), anyString()))
+                .thenAnswer(invocation -> invocation.getArgument(0) + "::" + invocation.getArgument(1));
+        when(routeExecutor.routeBeforeCore("user-1", "session-1", "帮我推荐静音鼠标", List.of(), "", "", ""))
+                .thenReturn(new RoutedAgentRequest("帮我推荐静音鼠标", List.of(), null, false, List.of(policy)));
+        when(reactChatClient.prompt()).thenReturn(requestSpec);
+        when(requestSpec.system(anyString())).thenAnswer(invocation -> {
+            systemPrompts.add(invocation.getArgument(0));
+            return requestSpec;
+        });
+        when(requestSpec.toolCallbacks(org.mockito.ArgumentMatchers.<List<ToolCallback>>any())).thenReturn(requestSpec);
+        when(requestSpec.advisors(org.mockito.ArgumentMatchers.<java.util.function.Consumer<ChatClient.AdvisorSpec>>any()))
+                .thenReturn(requestSpec);
+        when(requestSpec.messages(anyList())).thenReturn(requestSpec);
+        when(requestSpec.stream()).thenReturn(streamResponseSpec);
+        when(streamResponseSpec.content()).thenReturn(Flux.just("推荐静音鼠标"));
+
+        ReActAgent agent = new ReActAgent(
+                builderFor(reactChatClient),
+                builtInTools,
+                mock(LongTermMemoryAdvisor.class),
+                memoryAdvisor(),
+                conversationMemoryService,
+                new PromptSecurityFilter(),
+                null,
+                routeExecutor,
+                List.of(),
+                null,
+                mock(ConversationLogService.class),
+                new RagTracing(),
+                PromptTemplateStore.fromClasspath("prompts/react-fragments-test")
+        );
+
+        collect(agent.runStream("user-1", "session-1", null, "帮我推荐静音鼠标", false,
+                List.of(), "", "", ""));
+
+        String systemPrompt = systemPrompts.get(0);
+        assertTrue(systemPrompt.contains("TEST_MALL_DISABLED_RULE"));
+        assertTrue(systemPrompt.contains("TEST_NETWORK_DISABLED_RULE"));
+        assertTrue(systemPrompt.contains("TEST_TASK_POLICY_HEADER"));
+        assertTrue(systemPrompt.contains("TEST_POLICY / 测试策略：测试策略片段。"));
+        assertTrue(systemPrompt.contains("TEST_ALLOWED_TOOLS searchProductKnowledge。"));
+        assertTrue(systemPrompt.contains("TEST_CONFIRMATION_REQUIRED"));
     }
 
     @Test

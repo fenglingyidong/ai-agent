@@ -16,7 +16,7 @@ class ShoppingTaskPolicyRegistryTest {
     void shouldResolvePlannerSelectedPoliciesInOrder() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "COMPLEX_RECOMMENDATION",
-                "C_COMPLEX_REACT",
+                "COMPLEX_REACT",
                 Map.of(),
                 Map.of("budget", "300"),
                 true,
@@ -40,7 +40,7 @@ class ShoppingTaskPolicyRegistryTest {
     void shouldFallbackToCartConfirmationForCreateOrder() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "CREATE_ORDER",
-                "C_COMPLEX_REACT",
+                "COMPLEX_REACT",
                 Map.of(),
                 Map.of(),
                 true,
@@ -59,7 +59,7 @@ class ShoppingTaskPolicyRegistryTest {
     void shouldPrependFollowUpWhenRouteHasMissingSlots() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRICE_STOCK_QUERY",
-                "B_SIMPLE_SHOPPING_TOOL",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "儿童积木"),
                 true,

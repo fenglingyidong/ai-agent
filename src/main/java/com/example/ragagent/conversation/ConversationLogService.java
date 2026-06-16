@@ -111,12 +111,17 @@ public class ConversationLogService {
     }
 
     public List<ConversationSessionSummary> listRecentSessions(String userId, int limit) {
+        return listRecentSessions(userId, limit, 0);
+    }
+
+    public List<ConversationSessionSummary> listRecentSessions(String userId, int limit, int offset) {
         if (!properties.isEnabled()) {
             return List.of();
         }
         String normalizedUserId = normalize(userId, DEFAULT_USER_ID);
         int safeLimit = Math.max(1, Math.min(limit, 100));
-        return sessionMapper.selectRecentSessionSummaries(normalizedUserId, safeLimit)
+        int safeOffset = Math.max(0, offset);
+        return sessionMapper.selectRecentSessionSummaries(normalizedUserId, safeLimit, safeOffset)
                 .stream()
                 .map(this::toSessionSummary)
                 .toList();

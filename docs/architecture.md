@@ -51,9 +51,9 @@ flowchart LR
 
 ## 存储设计
 
-- **Redis**：父文档正文（`rag:parent:`）、短期记忆窗口（`memory:short:`）、导购偏好当前状态 Hash（`shopping:preference:v2:state:`）、最近 5 次偏好增量 List（`shopping:preference:v2:changes:`）、商城 token 缓存（`mall:auth:`）。两类偏好 key 的默认 TTL 均由 `SHOPPING_PREFERENCE_TTL` 控制。
-- **MySQL**：`conversation_sessions` 和 `conversation_turns` 两张表，由 `ConversationLogService` 维护，保存用户提问和助手最终可见回答的原文流水。`conversation_sessions.title` 在首轮写入时取首条用户问题的压缩文本，后续 turn 不覆盖；会话列表按 `updated_at DESC` 查询。
-- **Milvus**：`product_index` 存放商品子块（Dense embedding + Sparse-BM25 字段），`memory_index` 存放长期摘要向量；父块本体回查 Redis。
+- **Redis**：短期记忆窗口（`memory:short:`）、导购偏好当前状态 Hash（`shopping:preference:v2:state:`）、最近 5 次偏好增量 List（`shopping:preference:v2:changes:`）、商城 token 缓存（`mall:auth:`），以及 RAG 父块热点缓存（`rag:parent:cache:`）。RAG 父块缓存按需写入，不是事实源；两类偏好 key 的默认 TTL 均由 `SHOPPING_PREFERENCE_TTL` 控制。
+- **MySQL**：`conversation_sessions`、`conversation_turns` 和 `rag_parent_documents`。其中 `conversation_sessions` / `conversation_turns` 由 `ConversationLogService` 维护，保存用户提问和助手最终可见回答的原文流水；`rag_parent_documents` 保存 RAG 父块正文、标题、来源、父块序号、文档 hash 和商品元数据 JSON。
+- **Milvus**：`product_index` 存放商品子块（Dense embedding + Sparse-BM25 字段），`memory_index` 存放长期摘要向量；RAG 检索命中 child chunk 后通过 `parentId` 回查 MySQL，并用 Redis 加速热点父块读取。
 
 ## 记忆设计
 
@@ -71,8 +71,9 @@ flowchart LR
 ## RAG 检索
 
 - 入口：`searchProductKnowledge` 工具委托 `DocumentRetriever`，默认实现是 `@Primary` 的 `ParentChildHybridDocumentRetriever`。
-- 索引：`ParentChildDocumentIndexer` 把原文切成父块（落 Redis）和子块（落 Milvus dense + sparse 字段）。
-- 召回：`ParentChildHybridDocumentRetriever` 分别从 Milvus dense（Top-K 默认 24）和 BM25 child chunk（Top-K 默认 8）取 child，使用 Reciprocal Rank Fusion 融合排名，再按最大归一化分差截断，最后通过 `denseRetriever.loadParentDocuments(...)` 回查父块（默认上限 6）。
+- 索引：`ParentChildDocumentIndexer` 把原文切成父块和子块；父块写入 MySQL，子块写入 Milvus dense + sparse 字段。
+- 当前父块缓存一致性防护（single-flight、mutation version、同 source 导入串行化）是单应用实例内的本地机制；多实例部署需要引入共享 generation、Redis 分布式锁或队列化导入，避免跨实例旧缓存回写。
+- 召回：`ParentChildHybridDocumentRetriever` 分别从 Milvus dense（Top-K 默认 24）和 BM25 child chunk（Top-K 默认 8）取 child，使用 Reciprocal Rank Fusion 融合排名，再按最大归一化分差截断，融合后通过 `ParentDocumentStore.load(parentId)` 回查父块（默认上限 6）。`ParentDocumentStore` 先查 Redis 热点缓存，未命中时查 MySQL 并回填缓存。
 - BM25 路出现异常时降级为只用 dense 结果，不影响主流程。
 
 ## 安全策略

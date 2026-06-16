@@ -23,12 +23,19 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 @Component
 @Primary
 public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
 
     private static final Logger log = LoggerFactory.getLogger(ParentChildHybridDocumentRetriever.class);
+    private static final Pattern CHINESE_OR_DIGIT_WHITESPACE_PATTERN =
+            Pattern.compile("(?<=[\\p{IsHan}\\d])\\s+(?=[\\p{IsHan}\\d])");
+    private static final Pattern MULTIPLE_WHITESPACE_PATTERN = Pattern.compile("\\s+");
+    private static final Pattern COMPACT_KEYBOARD_PATTERN = Pattern.compile("(\\d+)\\s*键\\s*机械键盘");
+    private static final Pattern KEYBOARD_ATTRIBUTE_PRICE_QUESTION_PATTERN =
+            Pattern.compile(".*?(\\d+键\\s*机械键盘).*?(?:什么轴|轴).*?(?:多少钱|价格).*");
 
     private final ParentChildDocumentRetriever denseRetriever;
     private final MilvusBm25ChildChunkRetriever bm25Retriever;
@@ -54,25 +61,31 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
      */
     @Override
     public List<Document> retrieve(Query query) {
-        String normalizedQuery = normalizeText(query == null ? null : query.text());
-        if (!StringUtils.hasText(normalizedQuery)) {
+        String originalQuery = normalizeText(query == null ? null : query.text());
+        if (!StringUtils.hasText(originalQuery)) {
             return List.of();
         }
+        String retrievalQuery = rewriteRetrievalQuery(originalQuery);
 
-        return tracing.inSpan("rag.hybrid.retrieve", () -> retrieveHybrid(normalizedQuery));
+        return tracing.inSpan("rag.hybrid.retrieve", () -> retrieveHybrid(originalQuery, retrievalQuery));
     }
 
-    private List<Document> retrieveHybrid(String normalizedQuery) {
+    private List<Document> retrieveHybrid(String originalQuery, String retrievalQuery) {
         Span span = tracing.currentSpan();
-        tracing.setAttribute(span, "rag.query.length", normalizedQuery.length());
+        tracing.setAttribute(span, "rag.query.length", retrievalQuery.length());
+        tracing.setAttribute(span, "rag.query.original.length", originalQuery.length());
+        tracing.setAttribute(span, "rag.query.rewritten.length", retrievalQuery.length());
+        tracing.setAttribute(span, "rag.query.rewritten.changed", !originalQuery.equals(retrievalQuery));
+        tracing.captureRagContent(span, "rag.query.original", originalQuery);
+        tracing.captureRagContent(span, "rag.query.rewritten", retrievalQuery);
         tracing.setAttribute(span, "rag.dense.top_k", properties.getDenseChildTopK());
         tracing.setAttribute(span, "rag.bm25.top_k", properties.getBm25ChildTopK());
         tracing.setAttribute(span, "rag.rrf.k", properties.getRrfK());
         tracing.setAttribute(span, "rag.max_parent_results", properties.getMaxParentResults());
 
-        CompletableFuture<List<Document>> bm25Future = retrieveBm25ChildDocumentsAsync(normalizedQuery);
+        CompletableFuture<List<Document>> bm25Future = retrieveBm25ChildDocumentsAsync(retrievalQuery);
 
-        List<Document> denseChildDocuments = retrieveDenseChildDocuments(normalizedQuery);
+        List<Document> denseChildDocuments = retrieveDenseChildDocuments(retrievalQuery);
         List<Document> bm25ChildDocuments = bm25Future.join();
         List<RankedChildDocument> rankedChildDocuments =
                 rankWithReciprocalRankFusion(denseChildDocuments, bm25ChildDocuments);
@@ -305,11 +318,14 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
     private List<Document> loadParentDocuments(List<Document> fusedChildDocuments) {
         return tracing.inSpan("rag.parent.load", () -> {
             Span span = tracing.currentSpan();
-            tracing.setAttribute(span, "rag.input.child_count", safeDocuments(fusedChildDocuments).size());
-            List<Document> parents = denseRetriever.loadParentDocuments(fusedChildDocuments);
+            List<Document> safeChildren = safeDocuments(fusedChildDocuments);
+            tracing.setAttribute(span, "rag.input.child_count", safeChildren.size());
+            tracing.captureRagContent(span, "rag.input.children.debug", tracing.debugChildrenJson(safeChildren, 10));
+            List<Document> parents = denseRetriever.loadParentDocuments(safeChildren);
             List<Document> safeParents = safeDocuments(parents);
             tracing.setAttribute(span, "rag.result.parent_count", safeParents.size());
             tracing.setAttribute(span, "rag.result.parents", tracing.safeParentsJson(safeParents, 10));
+            tracing.captureRagContent(span, "rag.result.parents.debug", tracing.debugParentsJson(safeParents, 10));
             return safeParents;
         });
     }
@@ -332,6 +348,19 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
      */
     private String normalizeText(String value) {
         return value == null ? "" : value.trim().replace("\r\n", "\n").replace('\r', '\n');
+    }
+
+    private String rewriteRetrievalQuery(String query) {
+        String rewritten = normalizeText(query);
+        if (!StringUtils.hasText(rewritten)) {
+            return "";
+        }
+
+        rewritten = CHINESE_OR_DIGIT_WHITESPACE_PATTERN.matcher(rewritten).replaceAll("");
+        rewritten = COMPACT_KEYBOARD_PATTERN.matcher(rewritten).replaceAll("$1键 机械键盘");
+        rewritten = KEYBOARD_ATTRIBUTE_PRICE_QUESTION_PATTERN.matcher(rewritten).replaceAll("$1 轴 价格");
+        rewritten = MULTIPLE_WHITESPACE_PATTERN.matcher(rewritten).replaceAll(" ").trim();
+        return StringUtils.hasText(rewritten) ? rewritten : normalizeText(query);
     }
 
     private record RankedChildDocument(Document document, double score) {

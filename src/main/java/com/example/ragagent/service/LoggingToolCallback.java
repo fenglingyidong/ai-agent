@@ -50,10 +50,12 @@ final class LoggingToolCallback implements ToolCallback {
         String result = tracing.inSpan(toolSpanName(), () -> {
             Span span = tracing.currentSpan();
             writeToolStartAttributes(span, input);
+            tracing.captureToolPayload(span, "tool.input", input);
             logToolInput(input);
             try {
                 String delegateResult = delegate.call(input);
                 tracing.setAttribute(span, "tool.output.length", textLength(delegateResult));
+                tracing.captureToolPayload(span, "tool.output", delegateResult);
                 tracing.setAttribute(span, "tool.status", "ok");
                 logToolOutput(delegateResult);
                 return delegateResult;
@@ -77,10 +79,12 @@ final class LoggingToolCallback implements ToolCallback {
         String result = tracing.inSpan(toolSpanName(), () -> {
             Span span = tracing.currentSpan();
             writeToolStartAttributes(span, input);
+            tracing.captureToolPayload(span, "tool.input", input);
             logToolInput(input);
             try {
                 String delegateResult = delegate.call(input, toolContext);
                 tracing.setAttribute(span, "tool.output.length", textLength(delegateResult));
+                tracing.captureToolPayload(span, "tool.output", delegateResult);
                 tracing.setAttribute(span, "tool.status", "ok");
                 logToolOutput(delegateResult);
                 return delegateResult;

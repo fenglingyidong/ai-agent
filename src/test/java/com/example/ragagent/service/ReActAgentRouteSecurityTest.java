@@ -41,7 +41,7 @@ class ReActAgentRouteSecurityTest {
         ShoppingRouteExecutor routeExecutor = new ShoppingRouteExecutor(intentRouter, null, simpleTaskAgent);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_KNOWLEDGE_QUERY",
-                "A_FAQ_SIMPLE_QUERY",
+                "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("product_name", "儿童积木"),
                 false,
@@ -104,7 +104,7 @@ class ReActAgentRouteSecurityTest {
         ShoppingRouteExecutor routeExecutor = new ShoppingRouteExecutor(intentRouter, null, simpleTaskAgent);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_KNOWLEDGE_QUERY",
-                "A_FAQ_SIMPLE_QUERY",
+                "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("product_name", "儿童积木"),
                 false,
@@ -172,7 +172,7 @@ class ReActAgentRouteSecurityTest {
         ShoppingRouteExecutor routeExecutor = new ShoppingRouteExecutor(intentRouter, null, simpleTaskAgent);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "COMPLEX_RECOMMENDATION",
-                "C_COMPLEX_REACT",
+                "COMPLEX_REACT",
                 Map.of(),
                 Map.of("product_name", "儿童积木"),
                 true,

@@ -10,11 +10,18 @@ import org.springframework.ai.vectorstore.filter.Filter;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -111,6 +118,66 @@ class ParentChildDocumentIndexerTest {
         assertEquals(firstParentId, secondParentId);
         verify(vectorStore, times(2)).delete(org.mockito.ArgumentMatchers.any(Filter.Expression.class));
         verify(parentDocumentStore, times(2)).deleteBySourceId("source-stable");
+    }
+
+    @Test
+    void indexingSameSourceShouldSerializeOverwriteAndWrites() throws Exception {
+        VectorStore vectorStore = mock(VectorStore.class);
+        ParentDocumentStore parentDocumentStore = mock(ParentDocumentStore.class);
+        ParentChildDocumentIndexer indexer = new ParentChildDocumentIndexer(vectorStore, parentDocumentStore);
+
+        CountDownLatch firstDeleteStarted = new CountDownLatch(1);
+        CountDownLatch releaseFirstDelete = new CountDownLatch(1);
+        CountDownLatch secondTaskStarted = new CountDownLatch(1);
+        CountDownLatch secondDeleteStarted = new CountDownLatch(1);
+        AtomicInteger deleteCalls = new AtomicInteger();
+
+        doAnswer(invocation -> {
+            int call = deleteCalls.incrementAndGet();
+            if (call == 1) {
+                firstDeleteStarted.countDown();
+                assertTrue(releaseFirstDelete.await(5, TimeUnit.SECONDS));
+            }
+            else if (call == 2) {
+                secondDeleteStarted.countDown();
+            }
+            return null;
+        }).when(parentDocumentStore).deleteBySourceId("source-1");
+
+        ExecutorService executorService = Executors.newFixedThreadPool(2);
+        try {
+            Future<String> firstFuture = executorService.submit(() ->
+                    indexer.indexParentChunk("source-1", "Guide A", "First parent text."));
+
+            assertTrue(firstDeleteStarted.await(5, TimeUnit.SECONDS));
+
+            Future<String> secondFuture = executorService.submit(() -> {
+                secondTaskStarted.countDown();
+                return indexer.indexParentChunk("source-1", "Guide B", "Second parent text.");
+            });
+
+            assertTrue(secondTaskStarted.await(5, TimeUnit.SECONDS));
+            assertFalse(secondDeleteStarted.await(400, TimeUnit.MILLISECONDS));
+
+            releaseFirstDelete.countDown();
+            firstFuture.get(5, TimeUnit.SECONDS);
+            secondFuture.get(5, TimeUnit.SECONDS);
+        }
+        finally {
+            releaseFirstDelete.countDown();
+            executorService.shutdownNow();
+        }
+
+        verify(parentDocumentStore, times(2)).deleteBySourceId("source-1");
+        verify(parentDocumentStore, times(2)).save(
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq("source-1"),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.eq(Map.of())
+        );
     }
 
     @Test

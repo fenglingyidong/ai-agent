@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { streamReactChat } from "./chat.js";
+import { listSessions, streamReactChat } from "./chat.js";
 
 describe("chat api", () => {
     afterEach(() => {
@@ -31,5 +31,22 @@ describe("chat api", () => {
         expect(options.body.get("webSearchEnabled")).toBe("true");
         expect(result).toBe("推荐结果");
         expect(chunks.join("")).toBe("推荐结果");
+    });
+
+    it("loads conversation sessions with limit and offset", async () => {
+        const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+            items: [{ sessionId: "session-21" }]
+        }), {
+            headers: { "Content-Type": "application/json" }
+        }));
+        vi.stubGlobal("fetch", fetchMock);
+
+        const sessions = await listSessions(
+            { apiBase: "http://localhost:18082", username: "alice", password: "demo123" },
+            { limit: 20, offset: 40 }
+        );
+
+        expect(fetchMock.mock.calls[0][0]).toBe("http://localhost:18082/api/conversations?limit=20&offset=40");
+        expect(sessions).toEqual([{ sessionId: "session-21" }]);
     });
 });

@@ -1,5 +1,7 @@
 package com.example.ragagent.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.prompt.PromptTemplateStore;
 import io.opentelemetry.api.trace.Span;
@@ -15,14 +17,17 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class ShoppingIntentRouter {
 
     private static final Logger log = LoggerFactory.getLogger(ShoppingIntentRouter.class);
     private static final double SIMPLE_ROUTE_CONFIDENCE_THRESHOLD = 0.7;
+    private static final ObjectMapper TRACE_OBJECT_MAPPER = new ObjectMapper();
 
     private final String routerSystemPrompt;
+    private final String routerVisualSystemPrompt;
 
     @Autowired
     private ChatClient.Builder builder;
@@ -55,6 +60,7 @@ public class ShoppingIntentRouter {
         this.tracing = tracing == null ? new RagTracing() : tracing;
         PromptTemplateStore store = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
         this.routerSystemPrompt = store.text("intent-router.system");
+        this.routerVisualSystemPrompt = store.text("intent-router.visual.system");
     }
 
     @jakarta.annotation.PostConstruct
@@ -78,14 +84,21 @@ public class ShoppingIntentRouter {
 
         String normalizedMessage = StringUtils.hasText(userMessage) ? userMessage.trim() : "";
         List<Media> safeMedia = media == null ? List.of() : media;
+        return tracing().inSpan("llm.intent_router", () -> routeInCurrentSpan(normalizedMessage, safeMedia, preferenceContext));
+    }
+
+    private ShoppingIntentRoute routeInCurrentSpan(String normalizedMessage,
+                                                  List<Media> safeMedia,
+                                                  String preferenceContext) {
         try {
             RagTracing activeTracing = tracing();
             Span span = activeTracing.currentSpan();
+            String systemPrompt = buildSystemPrompt(safeMedia.size());
             ChatClient.ChatClientRequestSpec requestSpec = routerChatClient.prompt()
                     .options(buildOptions())
-                    .system(routerSystemPrompt);
+                    .system(systemPrompt);
             String userPrompt = buildUserPrompt(normalizedMessage, safeMedia.size(), preferenceContext);
-            activeTracing.capturePromptText(span, "llm.intent_router.input", llmInput(routerSystemPrompt, userPrompt));
+            activeTracing.capturePromptText(span, "llm.intent_router.input", llmInput(systemPrompt, userPrompt));
             if (safeMedia.isEmpty()) {
                 requestSpec = requestSpec.user(userPrompt);
             }
@@ -95,8 +108,10 @@ public class ShoppingIntentRouter {
                         .media(safeMedia.toArray(Media[]::new)));
             }
 
-            ShoppingIntentRoute route = normalizeFastLaneRoute(requestSpec.call().entity(ShoppingIntentRoute.class));
-            activeTracing.capturePromptText(span, "llm.intent_router.output", String.valueOf(route));
+            ShoppingIntentRoute route = normalizeFastLaneRoute(toLightweightRoute(
+                    requestSpec.call().entity(ShoppingIntentRoute.class)
+            ));
+            activeTracing.capturePromptText(span, "llm.intent_router.output", routeTraceJson(route));
             if (route == null) {
                 return ShoppingIntentRoute.fallback("intent router returned empty route");
             }
@@ -124,6 +139,13 @@ public class ShoppingIntentRouter {
 
     private String buildUserPrompt(String userMessage, int mediaCount) {
         return buildUserPrompt(userMessage, mediaCount, "");
+    }
+
+    private String buildSystemPrompt(int mediaCount) {
+        if (mediaCount <= 0 || !StringUtils.hasText(routerVisualSystemPrompt)) {
+            return routerSystemPrompt;
+        }
+        return routerSystemPrompt + "\n\n" + routerVisualSystemPrompt;
     }
 
     private String buildUserPrompt(String userMessage, int mediaCount, String preferenceContext) {
@@ -157,6 +179,7 @@ public class ShoppingIntentRouter {
                 route.normalizedTaskType(),
                 route.visualContext(),
                 route.textSlots(),
+                route.preferenceDelta(),
                 false,
                 route.confidence(),
                 appendReason(route.reason(), "高置信简单意图按规则进入短路候选"),
@@ -168,11 +191,32 @@ public class ShoppingIntentRouter {
         );
     }
 
+    private ShoppingIntentRoute toLightweightRoute(ShoppingIntentRoute route) {
+        if (route == null) {
+            return null;
+        }
+        return new ShoppingIntentRoute(
+                "UNKNOWN",
+                route.normalizedTaskType(),
+                route.visualContext(),
+                Map.of(),
+                route.preferenceDelta(),
+                null,
+                route.confidence(),
+                route.reason(),
+                List.of(),
+                List.of(),
+                List.of(),
+                false,
+                "LOW"
+        );
+    }
+
     private boolean isFastLaneTask(ShoppingIntentRoute route) {
-        if ("A_FAQ_SIMPLE_QUERY".equals(route.normalizedTaskType())) {
+        if ("FAQ_SIMPLE_QUERY".equals(route.normalizedTaskType())) {
             return true;
         }
-        return "B_SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType()) && switch (route.normalizedIntent()) {
+        return "SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType()) && switch (route.normalizedIntent()) {
             case "QUERY_ATTRIBUTE", "PRICE_STOCK_QUERY", "VIEW_CART", "ADD_TO_CART", "PREPARE_ORDER" -> true;
             default -> false;
         };
@@ -183,6 +227,25 @@ public class ShoppingIntentRouter {
             return extra;
         }
         return reason.trim() + "；" + extra;
+    }
+
+    private String routeTraceJson(ShoppingIntentRoute route) {
+        if (route == null) {
+            return "null";
+        }
+        Map<String, Object> trace = Map.of(
+                "task_type", route.normalizedTaskType(),
+                "visual_context", route.visualContext(),
+                "preference_delta", route.preferenceDelta(),
+                "confidence", route.confidence(),
+                "reason", route.reason()
+        );
+        try {
+            return TRACE_OBJECT_MAPPER.writeValueAsString(trace);
+        }
+        catch (JsonProcessingException ex) {
+            return String.valueOf(trace);
+        }
     }
 
     private RagTracing tracing() {

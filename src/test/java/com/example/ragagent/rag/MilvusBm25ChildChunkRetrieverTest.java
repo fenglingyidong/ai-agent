@@ -9,6 +9,7 @@ import io.milvus.v2.client.MilvusClientV2;
 import io.milvus.v2.service.vector.request.SearchReq;
 import io.milvus.v2.service.vector.response.SearchResp;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.milvus.MilvusVectorStore;
 
@@ -18,6 +19,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MilvusBm25ChildChunkRetrieverTest {
@@ -51,6 +53,44 @@ class MilvusBm25ChildChunkRetrieverTest {
         assertEquals("启蒙", documents.get(0).getMetadata().get("brand"));
     }
 
+    @Test
+    void retrieveShouldUseDocIdOutputWhenSearchResultIdIsMissing() {
+        MilvusClientV2 milvusClientV2 = mock(MilvusClientV2.class);
+        SearchResp.SearchResult searchResult = SearchResp.SearchResult.builder()
+                .score(1.5f)
+                .entity(Map.of(
+                        MilvusVectorStore.DOC_ID_FIELD_NAME, "child-from-doc-id",
+                        MilvusVectorStore.CONTENT_FIELD_NAME, "儿童积木套装",
+                        MilvusVectorStore.METADATA_FIELD_NAME, Map.of("docType", "rag-child")
+                ))
+                .build();
+        when(milvusClientV2.search(any(SearchReq.class))).thenReturn(SearchResp.builder()
+                .searchResults(List.of(List.of(searchResult)))
+                .build());
+        MilvusBm25ChildChunkRetriever retriever = retriever(milvusClientV2);
+
+        List<Document> documents = retriever.retrieve("儿童积木");
+
+        assertEquals(1, documents.size());
+        assertEquals("child-from-doc-id", documents.get(0).getId());
+    }
+
+    @Test
+    void retrieveShouldRequestDocIdFieldFromMilvus() {
+        MilvusClientV2 milvusClientV2 = milvusClientReturning(Map.of("docType", "rag-child"));
+        MilvusBm25ChildChunkRetriever retriever = retriever(milvusClientV2);
+
+        retriever.retrieve("儿童积木");
+
+        ArgumentCaptor<SearchReq> requestCaptor = ArgumentCaptor.forClass(SearchReq.class);
+        verify(milvusClientV2).search(requestCaptor.capture());
+        assertEquals(List.of(
+                MilvusVectorStore.DOC_ID_FIELD_NAME,
+                MilvusVectorStore.CONTENT_FIELD_NAME,
+                MilvusVectorStore.METADATA_FIELD_NAME
+        ), requestCaptor.getValue().getOutputFields());
+    }
+
     private MilvusBm25ChildChunkRetriever retriever(MilvusClientV2 milvusClientV2) {
         return new MilvusBm25ChildChunkRetriever(
                 milvusClientV2,
@@ -71,6 +111,7 @@ class MilvusBm25ChildChunkRetrieverTest {
                 .id("child-1")
                 .score(1.5f)
                 .entity(Map.of(
+                        MilvusVectorStore.DOC_ID_FIELD_NAME, "child-1",
                         MilvusVectorStore.CONTENT_FIELD_NAME, "儿童积木套装",
                         MilvusVectorStore.METADATA_FIELD_NAME, metadata
                 ))

@@ -1,0 +1,1 @@
+- {policy_id} / {policy_name}：{policy_prompt}{allowed_tools_text}{confirmation_required_text}

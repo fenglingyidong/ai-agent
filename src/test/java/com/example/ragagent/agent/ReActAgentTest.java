@@ -94,14 +94,13 @@ class ReActAgentTest {
                 .collect(Collectors.toSet());
         assertEquals(Set.of("searchProductKnowledge", "updateShoppingPreference"), toolNames);
         String systemPrompt = systemPromptCaptor.getValue();
-        assertTrue(systemPrompt.contains("知识库原文事实"));
-        assertTrue(systemPrompt.contains("导购推断"));
-        assertTrue(systemPrompt.contains("知识库未明确"));
-        assertTrue(systemPrompt.contains("不得省略"));
-        assertTrue(systemPrompt.contains("推荐、选哪个、更合适、别太复杂"));
-        assertTrue(systemPrompt.contains("不要输出“我来查询”“让我搜索”"));
-        assertTrue(systemPrompt.contains("调用完成前不要输出任何可见文字"));
-        assertTrue(systemPrompt.contains("必须使用“知识库原文事实”“导购推断”两个小节"));
+        assertTrue(systemPrompt.contains("买哪款/推荐/选哪个/对比/场景适配"));
+        assertTrue(systemPrompt.contains("办公室/静音/低噪音"));
+        assertTrue(systemPrompt.contains("先调用 searchProductKnowledge"));
+        assertTrue(systemPrompt.contains("工具调用前不要输出可见文字"));
+        assertTrue(systemPrompt.contains("不要编造"));
+        assertTrue(!systemPrompt.contains("可基于已知知识和用户条件直接回答"));
+        assertTrue(systemPrompt.length() < 900);
     }
 
     @Test

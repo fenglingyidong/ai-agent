@@ -31,7 +31,7 @@ class ShoppingPreferenceExtractorTest {
     @Test
     void extractShouldReadRouteSlotsWithHigherStructure() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "C_COMPLEX_REACT",
+                "COMPLEX_REACT",
                 "COMPLEX_RECOMMENDATION",
                 Map.of(),
                 Map.of("category", "儿童积木", "brand", "乐高", "use_scene", "生日礼物"),
@@ -56,6 +56,43 @@ class ShoppingPreferenceExtractorTest {
         assertEquals("生日礼物", patch.usageScenario());
         assertEquals(300, patch.budgetMax());
         assertEquals(ShoppingPreferenceSource.ROUTER_SLOT.name(), patch.source());
+    }
+
+    @Test
+    void extractShouldReadPreferenceDeltaFromRoute() {
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "COMPLEX_REACT",
+                "COMPLEX_RECOMMENDATION",
+                Map.of(),
+                Map.of(),
+                Map.of(
+                        "category", "跑鞋",
+                        "budget_max", 500,
+                        "usage_scenario", "通勤",
+                        "clear_fields", java.util.List.of("brand")
+                ),
+                true,
+                0.91,
+                "复杂推荐",
+                java.util.List.of("RECOMMENDATION"),
+                java.util.List.of(),
+                java.util.List.of(),
+                false,
+                "LOW"
+        );
+
+        ShoppingStateService.ShoppingPreferencePatch patch = extractor.extract(
+                "帮我推荐一下",
+                route,
+                12L
+        );
+
+        assertEquals("跑鞋", patch.category());
+        assertEquals(500, patch.budgetMax());
+        assertEquals("通勤", patch.usageScenario());
+        assertTrue(patch.clearFields().contains("brand"));
+        assertEquals(ShoppingPreferenceSource.ROUTER_SLOT.name(), patch.source());
+        assertEquals(0.91, patch.confidence());
     }
 
     @Test
@@ -98,7 +135,7 @@ class ShoppingPreferenceExtractorTest {
     @Test
     void extractShouldReadBudgetFromRouteSlots() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "C_COMPLEX_REACT",
+                "COMPLEX_REACT",
                 "COMPLEX_RECOMMENDATION",
                 Map.of(),
                 Map.of("budget", "300-500"),
@@ -177,7 +214,7 @@ class ShoppingPreferenceExtractorTest {
     @Test
     void extractShouldIgnoreReversedBudgetRangeFromRouteSlot() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "C_COMPLEX_REACT",
+                "COMPLEX_REACT",
                 "COMPLEX_RECOMMENDATION",
                 Map.of(),
                 Map.of("budget", "500-300", "category", "跑鞋"),
@@ -205,7 +242,7 @@ class ShoppingPreferenceExtractorTest {
     @Test
     void extractShouldReadVisualAliases() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "C_COMPLEX_REACT",
+                "COMPLEX_REACT",
                 "COMPLEX_RECOMMENDATION",
                 Map.of("brand_logo", "Nike", "main_color", "黑色"),
                 Map.of(),

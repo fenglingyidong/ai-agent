@@ -85,6 +85,9 @@ app:
       enabled: ${LANGFUSE_ENABLED:false}
       base-url: ${LANGFUSE_BASE_URL:http://localhost:3001}
       capture-prompt: ${LANGFUSE_CAPTURE_PROMPT:false}
+      capture-tool-payload: ${LANGFUSE_CAPTURE_TOOL_PAYLOAD:false}
+      capture-rag-content: ${LANGFUSE_CAPTURE_RAG_CONTENT:false}
+      max-capture-chars: ${LANGFUSE_MAX_CAPTURE_CHARS:8000}
   conversation-log:
     enabled: ${CONVERSATION_LOG_ENABLED:true}
     max-turns-per-session: ${CONVERSATION_LOG_MAX_TURNS_PER_SESSION:1000}
@@ -109,6 +112,10 @@ app:
     memory:
       collection-name: ${MEMORY_VECTOR_COLLECTION:memory_index}
   rag:
+    parent-cache:
+      ttl: ${RAG_PARENT_CACHE_TTL:12h}
+      ttl-jitter: ${RAG_PARENT_CACHE_TTL_JITTER:6h}
+      missing-ttl: ${RAG_PARENT_CACHE_MISSING_TTL:60s}
     retrieval:
       dense-child-top-k: ${RAG_DENSE_CHILD_TOP_K:24}
       dense-similarity-threshold: ${RAG_DENSE_SIMILARITY_THRESHOLD:0.2}

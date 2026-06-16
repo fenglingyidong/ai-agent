@@ -28,16 +28,17 @@ class ConversationControllerTest {
                 "对比黑色和灰色",
                 "黑色更耐脏"
         );
-        when(service.listRecentSessions("alice", 100)).thenReturn(List.of(summary));
+        when(service.listRecentSessions("alice", 100, 20)).thenReturn(List.of(summary));
 
         ConversationController.ConversationsResponse response = controller.sessions(
                 500,
+                20,
                 UsernamePasswordAuthenticationToken.authenticated("alice", null, List.of())
         );
 
         assertEquals(1, response.items().size());
         assertEquals("session-1", response.items().get(0).sessionId());
-        verify(service).listRecentSessions("alice", 100);
+        verify(service).listRecentSessions("alice", 100, 20);
     }
 
     @Test

@@ -1,8 +1,10 @@
 <script setup>
+import { ref } from "vue";
 import { Plus, Trash2 } from "lucide-vue-next";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 const props = defineProps({ store: { type: Object, required: true } });
+const scrollbarRef = ref(null);
 
 async function remove(session) {
   try {
@@ -30,6 +32,25 @@ async function select(sessionId) {
   }
 }
 
+async function loadMore() {
+  try {
+    await props.store.loadMoreSessions();
+  } catch (error) {
+    ElMessage.error(props.store.state.error || error?.message || "加载会话失败。");
+  }
+}
+
+function onScroll({ scrollTop }) {
+  const wrap = scrollbarRef.value?.wrapRef;
+  if (!wrap) {
+    return;
+  }
+  const remaining = wrap.scrollHeight - wrap.clientHeight - scrollTop;
+  if (remaining < 48) {
+    loadMore();
+  }
+}
+
 function formatTime(value) {
   return value ? new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 }
@@ -45,7 +66,7 @@ function formatTime(value) {
         </el-button>
       </el-tooltip>
     </div>
-    <el-scrollbar class="session-scroll">
+    <el-scrollbar ref="scrollbarRef" class="session-scroll" @scroll="onScroll">
       <el-empty v-if="!store.state.sessions.length" description="暂无历史会话" :image-size="64" />
       <div
         v-for="session in store.state.sessions"
@@ -69,6 +90,8 @@ function formatTime(value) {
           </el-button>
         </el-tooltip>
       </div>
+      <div v-if="store.state.isLoadingSessions" class="session-list-state">加载中...</div>
+      <div v-else-if="store.state.sessions.length && !store.state.hasMoreSessions" class="session-list-state">已加载全部</div>
     </el-scrollbar>
     <div class="sidebar-user">{{ store.state.auth.username }}</div>
   </aside>

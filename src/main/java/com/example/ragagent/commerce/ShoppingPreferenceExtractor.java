@@ -39,6 +39,19 @@ public class ShoppingPreferenceExtractor {
         String usageScenario = null;
         boolean hasTextSlot = false;
         boolean hasVisualSlot = false;
+        boolean hasPreferenceDelta = false;
+
+        SlotValues preferenceDelta = readSlots(route == null ? null : route.preferenceDelta(), false);
+        if (preferenceDelta.hasAny()) {
+            category = defaultIfBlank(preferenceDelta.category(), category);
+            budget = budget.overrideWith(preferenceDelta.budget());
+            brand = defaultIfBlank(preferenceDelta.brand(), brand);
+            size = defaultIfBlank(preferenceDelta.size(), size);
+            color = defaultIfBlank(preferenceDelta.color(), color);
+            style = defaultIfBlank(preferenceDelta.style(), style);
+            usageScenario = defaultIfBlank(preferenceDelta.usageScenario(), usageScenario);
+            hasPreferenceDelta = true;
+        }
 
         SlotValues textSlots = readSlots(route == null ? null : route.textSlots(), false);
         if (textSlots.hasAny()) {
@@ -79,6 +92,7 @@ public class ShoppingPreferenceExtractor {
         }
 
         Set<String> clearFields = extractClearFields(text);
+        clearFields.addAll(extractClearFieldsFromRoute(route == null ? null : route.preferenceDelta()));
         boolean hasAnyField = StringUtils.hasText(category)
                 || budget.hasAny()
                 || StringUtils.hasText(brand)
@@ -87,8 +101,8 @@ public class ShoppingPreferenceExtractor {
                 || StringUtils.hasText(style)
                 || StringUtils.hasText(usageScenario)
                 || !clearFields.isEmpty();
-        String source = resolveSource(hasTextSlot, hasVisualSlot);
-        double confidence = resolveConfidence(route, hasTextSlot || hasVisualSlot, hasAnyField);
+        String source = resolveSource(hasPreferenceDelta || hasTextSlot, hasVisualSlot);
+        double confidence = resolveConfidence(route, hasPreferenceDelta || hasTextSlot || hasVisualSlot, hasAnyField);
 
         return new ShoppingStateService.ShoppingPreferencePatch(
                 category,
@@ -153,6 +167,19 @@ public class ShoppingPreferenceExtractor {
         return max == null ? BudgetValues.empty() : new BudgetValues(null, max);
     }
 
+    private BudgetValues extractBudgetFromSlots(Map<String, Object> slots) {
+        if (slots == null || slots.isEmpty()) {
+            return BudgetValues.empty();
+        }
+        BudgetValues budget = extractBudgetFromSlot(slots.get("budget"));
+        Integer min = parsePositiveNumber(slots.get("budget_min"));
+        Integer max = parsePositiveNumber(slots.get("budget_max"));
+        if (min != null || max != null) {
+            return new BudgetValues(min, max);
+        }
+        return budget;
+    }
+
     private BudgetRangeMatch matchBudgetRange(Pattern pattern, String text) {
         Matcher matcher = pattern.matcher(text);
         if (!matcher.find()) {
@@ -203,6 +230,37 @@ public class ShoppingPreferenceExtractor {
         return clearFields;
     }
 
+    private Set<String> extractClearFieldsFromRoute(Map<String, Object> slots) {
+        Set<String> clearFields = new LinkedHashSet<>();
+        if (slots == null || slots.isEmpty()) {
+            return clearFields;
+        }
+        Object raw = slots.get("clear_fields");
+        if (raw instanceof Iterable<?> values) {
+            for (Object value : values) {
+                addClearField(clearFields, value);
+            }
+            return clearFields;
+        }
+        addClearField(clearFields, raw);
+        return clearFields;
+    }
+
+    private void addClearField(Set<String> clearFields, Object raw) {
+        if (raw == null) {
+            return;
+        }
+        String value = raw.toString().trim();
+        if (!StringUtils.hasText(value)) {
+            return;
+        }
+        switch (value) {
+            case "brand", "budget", "category", "size", "color", "style", "usage_scenario" -> clearFields.add(value);
+            default -> {
+            }
+        }
+    }
+
     private SlotValues readSlots(Map<String, Object> slots, boolean visualContext) {
         if (slots == null || slots.isEmpty()) {
             return SlotValues.empty();
@@ -210,7 +268,7 @@ public class ShoppingPreferenceExtractor {
         return new SlotValues(
                 readSlot(slots, "category"),
                 visualContext ? readSlot(slots, "brand", "brand_logo") : readSlot(slots, "brand"),
-                extractBudgetFromSlot(slots.get("budget")),
+                extractBudgetFromSlots(slots),
                 readSlot(slots, "size"),
                 visualContext ? readSlot(slots, "color", "main_color") : readSlot(slots, "color"),
                 readSlot(slots, "style"),
@@ -239,6 +297,22 @@ public class ShoppingPreferenceExtractor {
         catch (NumberFormatException ex) {
             return null;
         }
+    }
+
+    private Integer parsePositiveNumber(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof Number number) {
+            int value = number.intValue();
+            return value > 0 ? value : null;
+        }
+        String text = raw.toString().trim();
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        Matcher matcher = Pattern.compile("(\\d+)").matcher(text);
+        return matcher.find() ? parsePositiveInt(matcher.group(1)) : null;
     }
 
     private String resolveSource(boolean hasTextSlot, boolean hasVisualSlot) {

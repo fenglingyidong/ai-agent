@@ -121,7 +121,7 @@ $env:MYSQL_PASSWORD="root"
 $env:MALL_BASE_URL="http://localhost:8100"
 $env:MALL_MCP_BASE_URL="http://localhost:8120"
 $env:MCP_CONTEXT_SECRET="mall-mcp-dev-secret"
-mvn.cmd spring-boot:run
+mvn.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8"
 ```
 
 合并或拉取新代码后，必须重启 RAGAgent 后端；否则前端可能会调用到旧进程，出现新接口 404，例如 `GET /api/conversations`。
@@ -155,6 +155,10 @@ $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pair))
 
 $env:LANGFUSE_ENABLED="true"
 $env:LANGFUSE_BASE_URL="http://localhost:3001"
+$env:LANGFUSE_CAPTURE_PROMPT="false"
+$env:LANGFUSE_CAPTURE_TOOL_PAYLOAD="false"
+$env:LANGFUSE_CAPTURE_RAG_CONTENT="false"
+$env:LANGFUSE_MAX_CAPTURE_CHARS="8000"
 $env:OTEL_SERVICE_NAME="rag-agent"
 $env:OTEL_TRACES_EXPORTER="otlp"
 $env:OTEL_METRICS_EXPORTER="none"
@@ -163,8 +167,19 @@ $env:OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
 $env:OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3001/api/public/otel"
 $env:OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $auth,x-langfuse-ingestion-version=4"
 
-mvn.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-javaagent:D:/tools/opentelemetry-javaagent.jar"
+mvn.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8 -javaagent:D:/tools/opentelemetry-javaagent.jar"
 ```
+
+如果是在个人本地做 RAG/MCP 评测排查，需要查看 prompt、工具输入输出和 RAG 召回正文片段，可在启动前临时改为：
+
+```powershell
+$env:LANGFUSE_CAPTURE_PROMPT="true"
+$env:LANGFUSE_CAPTURE_TOOL_PAYLOAD="true"
+$env:LANGFUSE_CAPTURE_RAG_CONTENT="true"
+$env:LANGFUSE_MAX_CAPTURE_CHARS="20000"
+```
+
+这些字段只有在链路实际调用工具时才会出现。模型没有调用 `searchProductKnowledge` 或商城 MCP 时，Langfuse 不会产生对应的 `tool.*` / `rag.*` 业务 span。
 
 ## 健康检查
 

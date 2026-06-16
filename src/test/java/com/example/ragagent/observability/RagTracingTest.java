@@ -114,9 +114,25 @@ class RagTracingTest {
 
         assertEquals("ok", result);
         verify(tracer).spanBuilder("rag.retrieve");
+        verify(span).setAttribute("langfuse.observation.name", "rag.retrieve");
         verify(span).makeCurrent();
         verify(scope).close();
         verify(span).end();
+    }
+
+    @Test
+    void recordTraceInputAndOutputShouldWriteLangfuseTraceFields() {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCapturePrompt(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+
+        enabledTracing.recordTraceInput(span, "用户问题");
+        enabledTracing.recordTraceOutput(span, "最终回复");
+
+        verify(span).setAttribute("langfuse.trace.input", "用户问题");
+        verify(span).setAttribute("langfuse.trace.output", "最终回复");
     }
 
     @Test
@@ -181,6 +197,21 @@ class RagTracingTest {
     }
 
     @Test
+    void capturePromptTextShouldWriteLangfuseObservationInputAndOutput() {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCapturePrompt(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+
+        enabledTracing.capturePromptText(span, "llm.intent_router.input", "路由输入");
+        enabledTracing.capturePromptText(span, "llm.intent_router.output", "路由输出");
+
+        verify(span).setAttribute("langfuse.observation.input", "路由输入");
+        verify(span).setAttribute("langfuse.observation.output", "路由输出");
+    }
+
+    @Test
     void capturePromptTextShouldSkipWhenCaptureDisabled() throws Exception {
         Span span = mock(Span.class);
         LangfuseProperties properties = new LangfuseProperties();
@@ -208,5 +239,108 @@ class RagTracingTest {
         verify(span).setAttribute("llm.input", "x".repeat(8_000));
         verify(span).setAttribute("llm.input.length", 8_000L);
         verify(span).setAttribute("llm.input.truncated", true);
+    }
+
+    @Test
+    void captureToolPayloadShouldWriteSanitizedPayloadOnlyWhenEnabled() {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCaptureToolPayload(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+        String expected = "{\"skuId\":3020,\"token\":\"[REDACTED]\",\"phone\":\"[REDACTED_PHONE]\"}";
+
+        enabledTracing.captureToolPayload(span, "tool.input",
+                "{\"skuId\":3020,\"token\":\"secret-token\",\"phone\":\"13812345678\"}");
+
+        verify(span).setAttribute("tool.input", expected);
+        verify(span).setAttribute("tool.input.length", (long) expected.length());
+        verify(span).setAttribute("tool.input.truncated", false);
+    }
+
+    @Test
+    void captureToolPayloadShouldSkipWhenDisabled() {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        RagTracing disabledTracing = new RagTracing(mock(Tracer.class), properties);
+
+        disabledTracing.captureToolPayload(span, "tool.input", "{\"skuId\":3020}");
+
+        verify(span, never()).setAttribute(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void captureRagContentShouldUseRagSwitchAndMaxCaptureChars() {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCaptureRagContent(true);
+        properties.setMaxCaptureChars(12);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+
+        enabledTracing.captureRagContent(span, "rag.parent.documents", "标题\npassword=secret-token\n正文");
+
+        verify(span).setAttribute("rag.parent.documents", "标题\npassword=");
+        verify(span).setAttribute("rag.parent.documents.length", 12L);
+        verify(span).setAttribute("rag.parent.documents.truncated", true);
+    }
+
+    @Test
+    void debugParentsJsonShouldIncludeSanitizedTextAndMetadataWhenRagCaptureEnabled() {
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCaptureRagContent(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+        Document parent = Document.builder()
+                .id("parent-1")
+                .text("商品正文 token=secret-token 手机 13812345678")
+                .metadata(Map.of(
+                        "sourceId", "product-P1001",
+                        "title", "旗舰降噪耳机",
+                        "skuId", "1001",
+                        "password", "secret-password"
+                ))
+                .build();
+
+        String json = enabledTracing.debugParentsJson(List.of(parent), 10);
+
+        assertTrue(json.contains("\"id\":\"parent-1\""));
+        assertTrue(json.contains("\"sourceId\":\"product-P1001\""));
+        assertTrue(json.contains("\"skuId\":\"1001\""));
+        assertTrue(json.contains("\"text\":\"商品正文 token=[REDACTED] 手机 [REDACTED_PHONE]\""));
+        assertFalse(json.contains("secret-token"));
+        assertFalse(json.contains("secret-password"));
+    }
+
+    @Test
+    void debugChildrenJsonShouldIncludeParentMappingAndSanitizedTextWhenRagCaptureEnabled() {
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCaptureRagContent(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+        Document child = Document.builder()
+                .id("parent-1-child-0")
+                .text("子分块正文 token=secret-token 手机 13812345678")
+                .metadata(Map.of(
+                        "docType", "rag-child",
+                        "parentId", "parent-1",
+                        "sourceId", "product-P1001",
+                        "title", "旗舰降噪耳机",
+                        "productId", "P1001",
+                        "skuId", "1001",
+                        "password", "secret-password"
+                ))
+                .build();
+
+        String json = enabledTracing.debugChildrenJson(List.of(child), 10);
+
+        assertTrue(json.contains("\"id\":\"parent-1-child-0\""));
+        assertTrue(json.contains("\"parentId\":\"parent-1\""));
+        assertTrue(json.contains("\"sourceId\":\"product-P1001\""));
+        assertTrue(json.contains("\"skuId\":\"1001\""));
+        assertTrue(json.contains("\"text\":\"子分块正文 token=[REDACTED] 手机 [REDACTED_PHONE]\""));
+        assertFalse(json.contains("secret-token"));
+        assertFalse(json.contains("secret-password"));
     }
 }

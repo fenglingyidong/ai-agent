@@ -40,6 +40,23 @@ class PromptTemplateStoreTest {
 
         String text = store.text("json");
 
-        assertTrue(text.contains("{\"task_type\": \"C_COMPLEX_REACT\"}"));
+        assertTrue(text.contains("{\"task_type\": \"COMPLEX_REACT\"}"));
+    }
+
+    @Test
+    void productKnowledgePromptsShouldTreatExplicitGuideTextAsFacts() {
+        PromptTemplateStore store = new PromptTemplateStore();
+
+        String reactPrompt = store.render("react.system", Map.of(
+                "mall_rule", "mall rule",
+                "network_rule", "network rule",
+                "task_policy_prompt", ""
+        ));
+        String simpleKnowledgePrompt = store.text("simple-task.knowledge.system");
+
+        assertTrue(reactPrompt.contains("原文场景/人群/建议当事实"));
+        assertTrue(reactPrompt.contains("其余建议标为“导购推断”"));
+        assertTrue(simpleKnowledgePrompt.contains("知识库原文或元数据明确写出"));
+        assertTrue(simpleKnowledgePrompt.contains("导购说明原文已经写出适用人群、使用场景或购买建议时"));
     }
 }

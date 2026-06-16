@@ -72,6 +72,66 @@ class ParentChildHybridDocumentRetrieverTest {
     }
 
     @Test
+    void retrieveShouldNormalizeNaturalShoppingQuestionBeforeHybridSearch() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+
+        Document child = childDocument("child-1", "parent-1");
+        List<Document> parentDocuments = List.of(Document.builder().id("parent-1").text("Parent 1").build());
+
+        when(denseRetriever.retrieveChildDocuments("87键 机械键盘 轴 价格")).thenReturn(List.of(child));
+        when(bm25Retriever.retrieve("87键 机械键盘 轴 价格")).thenReturn(List.of(child));
+        when(denseRetriever.loadParentDocuments(List.of(child))).thenReturn(parentDocuments);
+
+        ParentChildHybridDocumentRetriever retriever =
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        Runnable::run,
+                        new RagTracing()
+                );
+
+        List<Document> documents = retriever.retrieve(new Query("有没有 87 键机械键盘？是什么轴，多少钱？"));
+
+        assertEquals(parentDocuments, documents);
+        verify(denseRetriever).retrieveChildDocuments("87键 机械键盘 轴 价格");
+        verify(bm25Retriever).retrieve("87键 机械键盘 轴 价格");
+    }
+
+    @Test
+    void retrieveShouldCaptureOriginalAndRewrittenQueryWhenRagCaptureEnabled() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        RecordingRagTracing tracing = new RecordingRagTracing();
+
+        when(denseRetriever.retrieveChildDocuments("87键 机械键盘 轴 价格")).thenReturn(List.of());
+        when(bm25Retriever.retrieve("87键 机械键盘 轴 价格")).thenReturn(List.of());
+
+        ParentChildHybridDocumentRetriever retriever =
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        Runnable::run,
+                        tracing
+                );
+
+        retriever.retrieve(new Query("有没有 87 键机械键盘？是什么轴，多少钱？"));
+
+        assertTrue(tracing.hasSpanAttributeContaining(
+                "rag.hybrid.retrieve",
+                "rag.query.original",
+                "有没有 87 键机械键盘？是什么轴，多少钱？"
+        ));
+        assertTrue(tracing.hasSpanAttributeContaining(
+                "rag.hybrid.retrieve",
+                "rag.query.rewritten",
+                "87键 机械键盘 轴 价格"
+        ));
+    }
+
+    @Test
     void retrieveShouldFallBackToDenseOnlyWhenBm25Fails() {
         ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
         MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
@@ -324,6 +384,73 @@ class ParentChildHybridDocumentRetrieverTest {
         assertEquals(1, tracing.countSpanAttribute("rag.bm25.retrieve", "rag.bm25.degraded", true));
     }
 
+    @Test
+    void retrieveShouldCaptureDebugParentContentWhenRagCaptureEnabled() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        Document denseChild = childDocument("child-1", "parent-1");
+        Document parent = Document.builder()
+                .id("parent-1")
+                .text("父文档正文 token=secret-token")
+                .metadata(Map.of(
+                        "sourceId", "product-P1001",
+                        "title", "旗舰降噪耳机",
+                        "skuId", "1001"
+                ))
+                .build();
+        RecordingRagTracing tracing = new RecordingRagTracing();
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
+        when(bm25Retriever.retrieve("guide")).thenReturn(List.of());
+        when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(List.of(parent));
+
+        ParentChildHybridDocumentRetriever retriever =
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        Runnable::run,
+                        tracing
+                );
+
+        retriever.retrieve(new Query("guide"));
+
+        assertTrue(tracing.hasSpanAttributeContaining(
+                "rag.parent.load",
+                "rag.result.parents.debug",
+                "父文档正文 token=[REDACTED]"
+        ));
+    }
+
+    @Test
+    void retrieveShouldCaptureDebugChildContentBeforeLoadingParents() {
+        ParentChildDocumentRetriever denseRetriever = mock(ParentChildDocumentRetriever.class);
+        MilvusBm25ChildChunkRetriever bm25Retriever = mock(MilvusBm25ChildChunkRetriever.class);
+        Document denseChild = childDocument("child-1", "missing-parent");
+        RecordingRagTracing tracing = new RecordingRagTracing();
+
+        when(denseRetriever.retrieveChildDocuments("guide")).thenReturn(List.of(denseChild));
+        when(bm25Retriever.retrieve("guide")).thenReturn(List.of());
+        when(denseRetriever.loadParentDocuments(List.of(denseChild))).thenReturn(List.of());
+
+        ParentChildHybridDocumentRetriever retriever =
+                new ParentChildHybridDocumentRetriever(
+                        denseRetriever,
+                        bm25Retriever,
+                        new RagRetrievalProperties(),
+                        Runnable::run,
+                        tracing
+                );
+
+        retriever.retrieve(new Query("guide"));
+
+        assertTrue(tracing.hasSpanAttributeContaining(
+                "rag.parent.load",
+                "rag.input.children.debug",
+                "missing-parent"
+        ));
+    }
+
     private Document childDocument(String childId, String parentId) {
         return Document.builder()
                 .id(childId)
@@ -412,6 +539,30 @@ class ParentChildHybridDocumentRetrieverTest {
             attributes.add(new SpanAttribute(spanName(span), key, value));
         }
 
+        @Override
+        public void captureRagContent(Span span, String key, String value) {
+            attributes.add(new SpanAttribute(spanName(span), key,
+                    value == null ? "" : value.replace("secret-token", "[REDACTED]")));
+        }
+
+        @Override
+        public String debugParentsJson(List<Document> parents, int limit) {
+            if (parents == null || parents.isEmpty()) {
+                return "[]";
+            }
+            Document parent = parents.get(0);
+            return "{\"text\":\"" + parent.getText() + "\"}";
+        }
+
+        @Override
+        public String debugChildrenJson(List<Document> children, int limit) {
+            if (children == null || children.isEmpty()) {
+                return "[]";
+            }
+            Document child = children.get(0);
+            return "{\"parentId\":\"" + child.getMetadata().get("parentId") + "\"}";
+        }
+
         boolean hasSpanAttribute(String spanName, String key, Object value) {
             return attributes.stream()
                     .anyMatch(attribute -> spanName.equals(attribute.spanName())
@@ -431,6 +582,13 @@ class ParentChildHybridDocumentRetrieverTest {
             return spanStarts.stream()
                     .filter(spanName::equals)
                     .count();
+        }
+
+        boolean hasSpanAttributeContaining(String spanName, String key, String text) {
+            return attributes.stream()
+                    .anyMatch(attribute -> spanName.equals(attribute.spanName())
+                            && key.equals(attribute.key())
+                            && String.valueOf(attribute.value()).contains(text));
         }
 
         private String spanName(Span span) {

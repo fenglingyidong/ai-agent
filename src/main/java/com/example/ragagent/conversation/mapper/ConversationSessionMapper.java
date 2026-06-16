@@ -60,11 +60,13 @@ public interface ConversationSessionMapper extends BaseMapper<ConversationSessio
                               WHERE ta.user_id = s.user_id AND ta.session_id = s.session_id
                               ORDER BY ta.turn_no DESC
                               LIMIT 1), '') AS latest_assistant_text
-              FROM conversation_sessions s
+             FROM conversation_sessions s
              WHERE s.user_id = #{userId} AND s.deleted_at IS NULL
              ORDER BY s.updated_at DESC
              LIMIT #{limit}
+             OFFSET #{offset}
             """)
     List<ConversationSessionSummaryRow> selectRecentSessionSummaries(@Param("userId") String userId,
-                                                                      @Param("limit") int limit);
+                                                                      @Param("limit") int limit,
+                                                                      @Param("offset") int offset);
 }

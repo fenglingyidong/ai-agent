@@ -4,8 +4,12 @@ export async function loadModels(auth) {
     return requestJson(auth, "/api/models/chat");
 }
 
-export async function listSessions(auth) {
-    const result = await requestJson(auth, "/api/conversations?limit=50");
+export async function listSessions(auth, { limit = 20, offset = 0 } = {}) {
+    const params = new URLSearchParams({
+        limit: String(limit),
+        offset: String(offset)
+    });
+    const result = await requestJson(auth, `/api/conversations?${params.toString()}`);
     return Array.isArray(result.items) ? result.items : [];
 }
 

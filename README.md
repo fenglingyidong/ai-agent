@@ -6,7 +6,7 @@
 | --- | --- |
 | 入口 | `POST /api/react` |
 | 路由 | 小模型 JSON 路由 + 快车道 |
-| 记忆 | Redis 短期偏好 + MySQL 原文流水 + Milvus 长期摘要 |
+| 记忆 / 知识 | Redis 短期偏好和父块热点缓存 + MySQL 原文流水和 RAG 父块 + Milvus 长期摘要和商品子块 |
 | 工具 | `searchProductKnowledge`、`mall_*` MCP、WebSearch MCP |
 
 ## 架构速览
@@ -28,7 +28,7 @@ flowchart LR
 
 - **分层路由架构**：在 ReAct 主链路前增加 `ShoppingIntentRouter`，用小模型 JSON 路由把请求拆成 FAQ 快车道、单步商城工具快车道和复杂 ReAct 三类，降低简单任务对主模型和工具编排的依赖。
 - **商品事实约束**：商品推荐、价格、库存、SKU 等事实信息优先来自 RAG 检索或 `mall_*` MCP 工具，避免把关键交易信息交给模型自由生成。
-- **多层记忆设计**：Redis 承接短期对话窗口和导购偏好，偏好使用 Hash 保存当前状态、List 保存最近 5 次增量变化；MySQL 记录原文会话流水，Milvus 保存长期摘要向量，把“即时上下文、可追溯日志、长期记忆”拆成不同存储职责。
+- **多层记忆与知识存储**：Redis 承接短期对话窗口、导购偏好和 RAG 父块热点缓存，偏好使用 Hash 保存当前状态、List 保存最近 5 次增量变化；MySQL 记录原文会话流水和 RAG 父块事实源，Milvus 保存长期摘要向量和商品子块向量，把“即时上下文、可追溯日志、长期记忆、商品知识”拆成不同存储职责。
 - **MCP 商城边界**：商城商品、购物车和订单能力通过独立 `mall-mcp` 服务暴露，Agent 侧只消费 MCP 工具，不直连商城 REST，便于隔离业务系统和 Agent 编排层。
 - **安全工具编排**：`PromptSecurityFilter` 前置处理注入与敏感值脱敏，`mall_create_order` 在 Java 侧设置确认门禁，确保高风险工具调用不只依赖模型自觉。
 
@@ -39,8 +39,8 @@ flowchart LR
 | 后端框架 | Spring Boot 3.4.1 / Java 17 |
 | AI 框架 | Spring AI 1.1.4，OpenAI 兼容协议（DashScope） |
 | 向量存储 | Milvus 2.5+，Dense + Sparse-BM25 |
-| 缓存 | Redis（短期记忆、父块缓存、偏好、商城 token） |
-| 关系型存储 | MySQL（原文会话流水） |
+| 缓存 | Redis（短期记忆、RAG 父块热点缓存、偏好、商城 token） |
+| 关系型存储 | MySQL（原文会话流水、RAG 父块事实源） |
 | 安全 | Spring Security Basic Auth + Form Login |
 | 前端 | Vue3 / Vite / Element Plus |
 

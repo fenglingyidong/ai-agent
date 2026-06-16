@@ -17,6 +17,7 @@ public record ShoppingIntentRoute(
         @JsonProperty("task_type") String taskType,
         @JsonProperty("visual_context") Map<String, Object> visualContext,
         @JsonProperty("text_slots") Map<String, Object> textSlots,
+        @JsonProperty("preference_delta") Map<String, Object> preferenceDelta,
         @JsonProperty("route_to_core") Boolean routeToCore,
         Double confidence,
         String reason,
@@ -32,7 +33,8 @@ public record ShoppingIntentRoute(
         taskType = normalizeTaskType(taskType, intent);
         visualContext = immutableNonNullMap(visualContext);
         textSlots = immutableNonNullMap(textSlots);
-        routeToCore = routeToCore == null ? Boolean.TRUE : routeToCore;
+        preferenceDelta = immutableNonNullMap(preferenceDelta);
+        routeToCore = routeToCore == null ? defaultRouteToCore(taskType) : routeToCore;
         confidence = confidence == null ? 0.0 : Math.max(0.0, Math.min(1.0, confidence));
         reason = StringUtils.hasText(reason) ? reason.trim() : "";
         taskPolicies = immutableStringList(taskPolicies);
@@ -49,8 +51,24 @@ public record ShoppingIntentRoute(
                                Boolean routeToCore,
                                Double confidence,
                                String reason) {
-        this(intent, taskType, visualContext, textSlots, routeToCore, confidence, reason,
+        this(intent, taskType, visualContext, textSlots, Map.of(), routeToCore, confidence, reason,
                 List.of(), List.of(), List.of(), false, "LOW");
+    }
+
+    public ShoppingIntentRoute(String intent,
+                               String taskType,
+                               Map<String, Object> visualContext,
+                               Map<String, Object> textSlots,
+                               Boolean routeToCore,
+                               Double confidence,
+                               String reason,
+                               List<String> taskPolicies,
+                               List<String> missingSlots,
+                               List<String> toolCandidates,
+                               Boolean needConfirm,
+                               String riskLevel) {
+        this(intent, taskType, visualContext, textSlots, Map.of(), routeToCore, confidence, reason,
+                taskPolicies, missingSlots, toolCandidates, needConfirm, riskLevel);
     }
 
     public ShoppingIntentRoute(String intent,
@@ -63,7 +81,8 @@ public record ShoppingIntentRoute(
     }
 
     public static ShoppingIntentRoute fallback(String reason) {
-        return new ShoppingIntentRoute("UNKNOWN", "C_COMPLEX_REACT", Map.of(), Map.of(), true, 0.0, reason);
+        return new ShoppingIntentRoute("UNKNOWN", "COMPLEX_REACT", Map.of(), Map.of(), Map.of(), true, 0.0, reason,
+                List.of(), List.of(), List.of(), false, "LOW");
     }
 
     public String normalizedIntent() {
@@ -71,7 +90,7 @@ public record ShoppingIntentRoute(
     }
 
     public String normalizedTaskType() {
-        return StringUtils.hasText(taskType) ? taskType.trim().toUpperCase(Locale.ROOT) : "C_COMPLEX_REACT";
+        return StringUtils.hasText(taskType) ? taskType.trim().toUpperCase(Locale.ROOT) : "COMPLEX_REACT";
     }
 
     public boolean isHighConfidence(double threshold) {
@@ -131,7 +150,9 @@ public record ShoppingIntentRoute(
         if (StringUtils.hasText(taskType)) {
             String normalized = taskType.trim().toUpperCase(Locale.ROOT);
             return switch (normalized) {
-                case "A_FAQ_SIMPLE_QUERY", "B_SIMPLE_SHOPPING_TOOL", "C_COMPLEX_REACT" -> normalized;
+                case "FAQ_SIMPLE_QUERY", "A_FAQ_SIMPLE_QUERY" -> "FAQ_SIMPLE_QUERY";
+                case "SIMPLE_SHOPPING_TOOL", "B_SIMPLE_SHOPPING_TOOL" -> "SIMPLE_SHOPPING_TOOL";
+                case "COMPLEX_REACT", "C_COMPLEX_REACT" -> "COMPLEX_REACT";
                 default -> deriveTaskType(intent);
             };
         }
@@ -141,9 +162,13 @@ public record ShoppingIntentRoute(
     private static String deriveTaskType(String intent) {
         String normalizedIntent = StringUtils.hasText(intent) ? intent.trim().toUpperCase(Locale.ROOT) : "UNKNOWN";
         return switch (normalizedIntent) {
-            case "FAQ_SIMPLE_QUERY", "PRODUCT_KNOWLEDGE_QUERY" -> "A_FAQ_SIMPLE_QUERY";
-            case "QUERY_ATTRIBUTE", "PRICE_STOCK_QUERY", "VIEW_CART", "ADD_TO_CART", "PREPARE_ORDER" -> "B_SIMPLE_SHOPPING_TOOL";
-            default -> "C_COMPLEX_REACT";
+            case "FAQ_SIMPLE_QUERY", "PRODUCT_KNOWLEDGE_QUERY" -> "FAQ_SIMPLE_QUERY";
+            case "QUERY_ATTRIBUTE", "PRICE_STOCK_QUERY", "VIEW_CART", "ADD_TO_CART", "PREPARE_ORDER" -> "SIMPLE_SHOPPING_TOOL";
+            default -> "COMPLEX_REACT";
         };
+    }
+
+    private static boolean defaultRouteToCore(String taskType) {
+        return "COMPLEX_REACT".equals(taskType);
     }
 }

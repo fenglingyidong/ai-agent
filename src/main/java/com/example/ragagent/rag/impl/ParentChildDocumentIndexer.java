@@ -24,6 +24,8 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Component
 public class ParentChildDocumentIndexer {
@@ -42,9 +44,10 @@ public class ParentChildDocumentIndexer {
     private final TextSplitter parentSplitter;
     private final Encoding childChunkEncoding;
     private final FilterExpressionBuilder filterExpressionBuilder = new FilterExpressionBuilder();
+    private final ConcurrentMap<String, Object> sourceIndexLocks = new ConcurrentHashMap<>();
 
     /**
-     * 创建索引器，用于切分父子文档并写入 Redis 与向量库。
+     * 创建索引器，用于切分父子文档并写入父文档存储与向量库。
      */
     @Autowired
     public ParentChildDocumentIndexer(@Qualifier(MilvusVectorStoreConfiguration.PRODUCT_VECTOR_STORE) VectorStore vectorStore,
@@ -97,27 +100,29 @@ public class ParentChildDocumentIndexer {
         }
 
         String documentHash = calculateHash(normalizedDocumentText);
-        overwriteIndexedDocument(normalizedSourceId);
+        synchronized (sourceIndexLock(normalizedSourceId)) {
+            overwriteIndexedDocument(normalizedSourceId);
 
-        List<String> parentIds = new ArrayList<>();
-        List<String> childIds = new ArrayList<>();
+            List<String> parentIds = new ArrayList<>();
+            List<String> childIds = new ArrayList<>();
 
-        List<Document> parentDocuments = splitParentDocuments(normalizedSourceId, title, normalizedDocumentText);
-        for (int parentIndex = 0; parentIndex < parentDocuments.size(); parentIndex++) {
-            Document parentDocument = parentDocuments.get(parentIndex);
-            IndexedParentChunk indexedParentChunk = indexParentChunkDetails(
-                    normalizedSourceId,
-                    title,
-                    normalizeText(parentDocument.getText()),
-                    parentIndex,
-                    documentHash,
-                    sanitizeExtraMetadata(extraMetadata)
-            );
-            parentIds.add(indexedParentChunk.parentId());
-            childIds.addAll(indexedParentChunk.childIds());
+            List<Document> parentDocuments = splitParentDocuments(normalizedSourceId, title, normalizedDocumentText);
+            for (int parentIndex = 0; parentIndex < parentDocuments.size(); parentIndex++) {
+                Document parentDocument = parentDocuments.get(parentIndex);
+                IndexedParentChunk indexedParentChunk = indexParentChunkDetails(
+                        normalizedSourceId,
+                        title,
+                        normalizeText(parentDocument.getText()),
+                        parentIndex,
+                        documentHash,
+                        sanitizeExtraMetadata(extraMetadata)
+                );
+                parentIds.add(indexedParentChunk.parentId());
+                childIds.addAll(indexedParentChunk.childIds());
+            }
+
+            return new DocumentIndexingResult(List.copyOf(parentIds), List.copyOf(childIds));
         }
-
-        return new DocumentIndexingResult(List.copyOf(parentIds), List.copyOf(childIds));
     }
 
     /**
@@ -137,14 +142,16 @@ public class ParentChildDocumentIndexer {
             throw new IllegalArgumentException("parentText must not be blank");
         }
 
-        overwriteIndexedDocument(normalizedSourceId);
-        return indexParentChunkDetails(
-                normalizedSourceId,
-                title,
-                normalizedParentText,
-                0,
-                calculateHash(normalizedParentText)
-        );
+        synchronized (sourceIndexLock(normalizedSourceId)) {
+            overwriteIndexedDocument(normalizedSourceId);
+            return indexParentChunkDetails(
+                    normalizedSourceId,
+                    title,
+                    normalizedParentText,
+                    0,
+                    calculateHash(normalizedParentText)
+            );
+        }
     }
 
     /**
@@ -345,6 +352,10 @@ public class ParentChildDocumentIndexer {
         parentDocumentStore.deleteBySourceId(normalizedSourceId);
     }
 
+    private Object sourceIndexLock(String normalizedSourceId) {
+        return sourceIndexLocks.computeIfAbsent(normalizedSourceId, ignored -> new Object());
+    }
+
     /**
      * 规范化输入文本，统一换行和前后空白。
      */
@@ -353,7 +364,7 @@ public class ParentChildDocumentIndexer {
     }
 
     /**
-     * 规范化 sourceId，确保元数据与 Redis 键使用同一来源标识。
+     * 规范化 sourceId，确保元数据与父文档存储使用同一来源标识。
      */
     private String normalizeSourceId(String sourceId) {
         return StringUtils.hasText(sourceId) ? sourceId.trim() : RagDocumentConstants.DEFAULT_SOURCE_ID;

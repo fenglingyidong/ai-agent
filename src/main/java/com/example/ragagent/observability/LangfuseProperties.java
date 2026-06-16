@@ -14,4 +14,10 @@ public class LangfuseProperties {
     private String baseUrl = "http://localhost:3001";
 
     private boolean capturePrompt = false;
+
+    private boolean captureToolPayload = false;
+
+    private boolean captureRagContent = false;
+
+    private int maxCaptureChars = 8_000;
 }

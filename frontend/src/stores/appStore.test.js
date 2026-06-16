@@ -322,4 +322,28 @@ describe("appStore", () => {
         expect(store.state.isAuthenticated).toBe(true);
         expect(store.state.selectedModelId).toBe("default");
     });
+
+    it("loads more sessions by appending the next page", async () => {
+        const api = {
+            listSessions: vi.fn()
+                .mockResolvedValueOnce(Array.from({ length: 20 }, (_, index) => ({
+                    sessionId: `session-${index + 1}`,
+                    title: `Session ${index + 1}`
+                })))
+                .mockResolvedValueOnce([
+                    { sessionId: "session-21", title: "Session 21" }
+                ])
+        };
+        const store = createAppStore(api, memoryStorage());
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+
+        await store.refreshSessions();
+        await store.loadMoreSessions();
+
+        expect(api.listSessions).toHaveBeenNthCalledWith(1, store.state.auth, { limit: 20, offset: 0 });
+        expect(api.listSessions).toHaveBeenNthCalledWith(2, store.state.auth, { limit: 20, offset: 20 });
+        expect(store.state.sessions).toHaveLength(21);
+        expect(store.state.sessions.at(-1).sessionId).toBe("session-21");
+        expect(store.state.hasMoreSessions).toBe(false);
+    });
 });

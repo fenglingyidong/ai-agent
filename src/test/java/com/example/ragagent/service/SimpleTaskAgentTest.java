@@ -49,7 +49,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_KNOWLEDGE_QUERY",
-                "A_FAQ_SIMPLE_QUERY",
+                "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("product_name", "儿童积木套装"),
                 false,
@@ -66,13 +66,12 @@ class SimpleTaskAgentTest {
         assertEquals("searchProductKnowledge", callbacks.get(0).getToolDefinition().name());
         String systemPrompt = systemPromptCaptor.getValue();
         assertTrue(systemPrompt.contains("知识库原文事实"));
-        assertTrue(systemPrompt.contains("导购推断"));
         assertTrue(systemPrompt.contains("知识库未明确"));
-        assertTrue(systemPrompt.contains("适配/推荐类问题必须标注推断"));
+        assertTrue(systemPrompt.contains("年龄、人群、场景、购买建议"));
         assertTrue(!systemPrompt.contains("推荐、选哪个、更合适、别太复杂"));
         assertTrue(!systemPrompt.contains("不要输出“我来查询”“让我搜索”"));
         assertTrue(systemPrompt.contains("调用完成前不要输出任何可见文字"));
-        assertTrue(systemPrompt.contains("涉及建议时用“知识库原文事实”“导购推断”"));
+        assertTrue(systemPrompt.contains("纯中文文本"));
     }
 
     @Test
@@ -83,7 +82,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_KNOWLEDGE_QUERY",
-                "A_FAQ_SIMPLE_QUERY",
+                "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("category", "跑鞋"),
                 false,
@@ -114,7 +113,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null, tracing);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_KNOWLEDGE_QUERY",
-                "A_FAQ_SIMPLE_QUERY",
+                "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("category", "跑鞋"),
                 false,
@@ -147,7 +146,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRICE_STOCK_QUERY",
-                "B_SIMPLE_SHOPPING_TOOL",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "儿童积木套装 300片"),
                 false,
@@ -181,6 +180,30 @@ class SimpleTaskAgentTest {
     }
 
     @Test
+    void shouldWrapSimpleMallToolsWithTracingCallback() {
+        AgentMocks mocks = agentMocks("购物车为空。");
+        MallMcpClient mallMcpClient = mallMcpClientWithTools("mall_view_cart");
+        RecordingTracing tracing = new RecordingTracing();
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient, tracing);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "VIEW_CART",
+                "SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of(),
+                false,
+                0.95,
+                "查购物车"
+        );
+
+        FastLaneResult result = agent.tryRun(route, "查看购物车", "session-1", 0.7);
+
+        assertTrue(result.handled());
+        List<ToolCallback> callbacks = capturedToolCallbacks(mocks);
+        assertEquals(1, callbacks.size());
+        assertTrue(callbacks.get(0) instanceof LoggingToolCallback);
+    }
+
+    @Test
     void shouldFallbackToCoreWhenKnowledgeToolReturnsEmpty() {
         BuiltInTools builtInTools = mock(BuiltInTools.class);
         SimpleTaskAgent.KnowledgeFastLaneTools tools = new SimpleTaskAgent.KnowledgeFastLaneTools(builtInTools);
@@ -197,7 +220,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "VIEW_CART",
-                "B_SIMPLE_SHOPPING_TOOL",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
                 false,
@@ -217,7 +240,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools());
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "VIEW_CART",
-                "B_SIMPLE_SHOPPING_TOOL",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
                 false,
@@ -238,7 +261,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "VIEW_CART",
-                "B_SIMPLE_SHOPPING_TOOL",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
                 false,
@@ -263,7 +286,7 @@ class SimpleTaskAgentTest {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "VIEW_CART",
-                "B_SIMPLE_SHOPPING_TOOL",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
                 false,
@@ -286,7 +309,7 @@ class SimpleTaskAgentTest {
             SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
             ShoppingIntentRoute route = new ShoppingIntentRoute(
                     "VIEW_CART",
-                    "B_SIMPLE_SHOPPING_TOOL",
+                    "SIMPLE_SHOPPING_TOOL",
                     Map.of(),
                     Map.of(),
                     false,
@@ -317,7 +340,7 @@ class SimpleTaskAgentTest {
             SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
             ShoppingIntentRoute route = new ShoppingIntentRoute(
                     "VIEW_CART",
-                    "B_SIMPLE_SHOPPING_TOOL",
+                    "SIMPLE_SHOPPING_TOOL",
                     Map.of(),
                     Map.of(),
                     false,

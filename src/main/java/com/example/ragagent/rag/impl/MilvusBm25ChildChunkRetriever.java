@@ -63,6 +63,7 @@ public class MilvusBm25ChildChunkRetriever {
                 .filter("metadata[\"" + RagDocumentConstants.METADATA_DOC_TYPE + "\"] == \""
                         + RagDocumentConstants.CHILD_DOCUMENT_TYPE + "\"")
                 .outputFields(List.of(
+                        MilvusVectorStore.DOC_ID_FIELD_NAME,
                         MilvusVectorStore.CONTENT_FIELD_NAME,
                         MilvusVectorStore.METADATA_FIELD_NAME
                 ))
@@ -84,8 +85,12 @@ public class MilvusBm25ChildChunkRetriever {
         if (searchResult.getScore() != null) {
             metadata.put("bm25Score", searchResult.getScore());
         }
+        String documentId = readString(searchResult.getId());
+        if (!StringUtils.hasText(documentId)) {
+            documentId = readString(entity.get(MilvusVectorStore.DOC_ID_FIELD_NAME));
+        }
         return Document.builder()
-                .id(searchResult.getId() == null ? "" : searchResult.getId().toString())
+                .id(documentId)
                 .text(readString(entity.get(MilvusVectorStore.CONTENT_FIELD_NAME)))
                 .metadata(metadata)
                 .score(searchResult.getScore() == null ? null : searchResult.getScore().doubleValue())

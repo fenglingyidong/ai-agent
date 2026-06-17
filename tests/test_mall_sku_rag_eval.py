@@ -9,11 +9,16 @@ from pathlib import Path
 
 from scripts.mall_sku_rag_eval_lib import (
     collect_trace_summaries,
+    EvalResult,
     export_questions_file,
     extract_questions,
     query_clickhouse_json_rows,
     post_react,
     query_trace_summaries,
+    QuestionSpec,
+    score_question,
+    score_run,
+    TraceSummary,
     write_trace_summary_jsonl,
 )
 
@@ -264,6 +269,99 @@ class MallSkuRagEvalTest(unittest.TestCase):
         rows = query_clickhouse_json_rows("SELECT 1", run_command=run_command)
 
         self.assertEqual([{"a": 1}, {"a": 2}], rows)
+
+    def test_score_question_gives_high_score_for_expected_hit_and_trace(self):
+        question = QuestionSpec(
+            id="Q08",
+            title="推荐办公室安静鼠标",
+            category="单场景推荐题",
+            difficulty="简单",
+            question="办公室用鼠标，希望点击声音小一点，买哪款？",
+            expected_hits=["3004_无线鼠标 静音版", "89.00 元", "500 件"],
+            answer_points=["首推无线鼠标静音版。", "说明适合办公室、点击声音小、预算友好。"],
+        )
+        result = EvalResult(
+            question_id="Q08",
+            question=question.question,
+            session_id="unit-Q08",
+            status=200,
+            duration_seconds=1.2,
+            answer="Mall Labs 无线鼠标 静音版 (SKU: 3004) 价格 89.00 元，库存 500 件，适合办公室静音使用。",
+        )
+        trace = TraceSummary(
+            session_id="unit-Q08",
+            trace_id="trace-1",
+            observation_names=["llm.intent_router", "rag.hybrid.retrieve", "tool.mall_search_products"],
+            rag_count=7,
+            mall_enrich_count=1,
+            tool_count=1,
+            router_output='{"task_type":"COMPLEX_REACT"}',
+        )
+
+        scored = score_question(question, result, trace)
+
+        self.assertGreaterEqual(scored.score, 8)
+        self.assertFalse(scored.manual_review_required)
+        self.assertEqual("COMPLEX_REACT", scored.route_task_type)
+
+    def test_score_question_marks_generic_followup_low_and_manual(self):
+        question = QuestionSpec(
+            id="Q25",
+            title="模糊需求：桌面效率升级",
+            category="复杂导购题",
+            difficulty="较难",
+            question="我想把办公桌面升级一下，预算 400 左右，能不能给我配一套实用的？",
+            expected_hits=["3002_机械键盘 红轴 87键", "3004_无线鼠标 静音版", "4009_桌面显示器挂灯 标准版"],
+            answer_points=["给出一套预算内组合，不只是推荐一个商品。", "合计价格应接近且不超过 400 元。"],
+        )
+        result = EvalResult(
+            question_id="Q25",
+            question=question.question,
+            session_id="unit-Q25",
+            status=200,
+            duration_seconds=1.0,
+            answer="为了给您提供最精准的配置清单，我需要先确认主要用途、现有设备和风格偏好。",
+        )
+        trace = TraceSummary(
+            session_id="unit-Q25",
+            trace_id="trace-2",
+            observation_names=["llm.react"],
+            rag_count=0,
+            tool_count=0,
+            router_output='{"task_type":"COMPLEX_REACT"}',
+        )
+
+        scored = score_question(question, result, trace)
+
+        self.assertLessEqual(scored.score, 3)
+        self.assertTrue(scored.manual_review_required)
+        self.assertIn("只追问", scored.reason)
+
+    def test_score_run_summarizes_categories(self):
+        question = QuestionSpec(
+            id="Q08",
+            title="推荐办公室安静鼠标",
+            category="单场景推荐题",
+            difficulty="简单",
+            question="办公室用鼠标，希望点击声音小一点，买哪款？",
+            expected_hits=["3004_无线鼠标 静音版"],
+            answer_points=[],
+        )
+        result = EvalResult(
+            question_id="Q08",
+            question=question.question,
+            session_id="unit-Q08",
+            status=200,
+            duration_seconds=1.0,
+            answer="无线鼠标 静音版 3004",
+        )
+
+        scored = score_run("unit", [question], [result], [])
+
+        self.assertEqual("unit", scored["runId"])
+        self.assertEqual(10, scored["maxScore"])
+        self.assertEqual("单场景推荐题", scored["categoryScores"][0]["category"])
+        self.assertEqual("Q08", scored["results"][0]["id"])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import time
 from base64 import b64encode
 from dataclasses import dataclass
@@ -52,6 +53,36 @@ class EvalResult:
             "status": self.status,
             "durationSeconds": round(self.duration_seconds, 3),
             "answer": self.answer,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
+class TraceSummary:
+    session_id: str
+    trace_id: str = ""
+    input: str = ""
+    output: str = ""
+    observation_names: list[str] | None = None
+    rag_count: int = 0
+    mall_enrich_count: int = 0
+    tool_count: int = 0
+    output_has_why: int = 0
+    router_output: str = ""
+    error: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "trace_id": self.trace_id,
+            "input": self.input,
+            "output": self.output,
+            "observation_names": self.observation_names or [],
+            "rag_count": self.rag_count,
+            "mall_enrich_count": self.mall_enrich_count,
+            "tool_count": self.tool_count,
+            "output_has_why": self.output_has_why,
+            "router_output": self.router_output,
             "error": self.error,
         }
 
@@ -153,6 +184,131 @@ def build_multipart_form(fields: dict[str, str]) -> tuple[bytes, str]:
         chunks.append(b"\r\n")
     chunks.append(f"--{boundary}--\r\n".encode("ascii"))
     return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def collect_trace_summaries(rows: list[dict]) -> list[TraceSummary]:
+    summaries: list[TraceSummary] = []
+    for row in rows:
+        summaries.append(
+            TraceSummary(
+                session_id=str(row.get("session_id", "")),
+                trace_id=str(row.get("trace_id", "")),
+                input=str(row.get("input", "")),
+                output=str(row.get("output", "")),
+                observation_names=_as_string_list(row.get("observation_names", [])),
+                rag_count=int(row.get("rag_count") or 0),
+                mall_enrich_count=int(row.get("mall_enrich_count") or 0),
+                tool_count=int(row.get("tool_count") or 0),
+                output_has_why=int(row.get("output_has_why") or 0),
+                router_output=str(row.get("router_output", "")),
+                error=row.get("error"),
+            )
+        )
+    return summaries
+
+
+def write_trace_summary_jsonl(summaries: list[TraceSummary], output: Path) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    lines = [json.dumps(summary.to_dict(), ensure_ascii=False) for summary in summaries]
+    output.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
+def query_trace_summaries(session_ids: list[str], runner=None) -> list[TraceSummary]:
+    if not session_ids:
+        return []
+    sql = build_trace_summary_sql(session_ids)
+    rows = runner(sql) if runner else query_clickhouse_json_rows(sql)
+    return collect_trace_summaries(rows)
+
+
+def build_trace_summary_sql(session_ids: list[str]) -> str:
+    values = ", ".join(_sql_string(session_id) for session_id in session_ids)
+    return f"""
+WITH target_traces AS (
+    SELECT
+        id,
+        session_id,
+        input,
+        output
+    FROM default.traces
+    WHERE is_deleted = 0
+      AND session_id IN ({values})
+),
+obs AS (
+    SELECT
+        trace_id,
+        groupUniqArray(name) AS observation_names,
+        countIf(startsWith(name, 'rag.')) AS rag_count,
+        countIf(name = 'rag.mall_enrich') AS mall_enrich_count,
+        countIf(startsWith(name, 'tool.')) AS tool_count,
+        maxIf(output, name = 'llm.intent_router') AS router_output
+    FROM default.observations
+    WHERE is_deleted = 0
+      AND trace_id IN (SELECT id FROM target_traces)
+    GROUP BY trace_id
+)
+SELECT
+    t.session_id AS session_id,
+    t.id AS trace_id,
+    ifNull(t.input, '') AS input,
+    ifNull(t.output, '') AS output,
+    ifNull(o.observation_names, []) AS observation_names,
+    ifNull(o.rag_count, 0) AS rag_count,
+    ifNull(o.mall_enrich_count, 0) AS mall_enrich_count,
+    ifNull(o.tool_count, 0) AS tool_count,
+    if(position(ifNull(t.output, ''), '为什么') > 0, 1, 0) AS output_has_why,
+    ifNull(o.router_output, '') AS router_output
+FROM target_traces t
+LEFT JOIN obs o ON o.trace_id = t.id
+ORDER BY t.session_id
+FORMAT JSONEachRow
+""".strip()
+
+
+def query_clickhouse_json_rows(sql: str, run_command=None) -> list[dict]:
+    command = [
+        "docker",
+        "compose",
+        "-f",
+        "observability/langfuse/docker-compose.yml",
+        "exec",
+        "-T",
+        "clickhouse",
+        "clickhouse-client",
+        "--query",
+        sql,
+        "--format",
+        "JSONEachRow",
+    ]
+    if run_command:
+        stdout = run_command(command)
+    else:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True, encoding="utf-8")
+        stdout = completed.stdout
+    return [json.loads(line) for line in stdout.splitlines() if line.strip()]
+
+
+def _as_string_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return []
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return [stripped]
+        if isinstance(parsed, list):
+            return [str(item) for item in parsed]
+        return [str(parsed)]
+    return [str(value)]
+
+
+def _sql_string(value: str) -> str:
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def _before_browser_record(markdown: str) -> str:

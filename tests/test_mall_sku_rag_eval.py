@@ -7,7 +7,15 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from scripts.mall_sku_rag_eval_lib import export_questions_file, extract_questions, post_react
+from scripts.mall_sku_rag_eval_lib import (
+    collect_trace_summaries,
+    export_questions_file,
+    extract_questions,
+    query_clickhouse_json_rows,
+    post_react,
+    query_trace_summaries,
+    write_trace_summary_jsonl,
+)
 
 
 class MallSkuRagEvalTest(unittest.TestCase):
@@ -170,6 +178,92 @@ class MallSkuRagEvalTest(unittest.TestCase):
         self.assertIn(b"qwen", captured["body"])
         self.assertIn(b'name="webSearchEnabled"', captured["body"])
         self.assertIn(b"false", captured["body"])
+
+    def test_collect_trace_summaries_merges_json_rows(self):
+        rows = [
+            {
+                "session_id": "api-20260617-092529-why-summary-Q08",
+                "trace_id": "0d5983d9b875516ecfb5f246adcc2d42",
+                "input": "办公室用鼠标，希望点击声音小一点，买哪款？",
+                "output": "Mall Labs 无线鼠标 静音版",
+                "observation_names": ["llm.intent_router", "rag.hybrid.retrieve", "tool.mall_search_products"],
+                "rag_count": 14,
+                "mall_enrich_count": 2,
+                "tool_count": 1,
+                "output_has_why": 0,
+                "router_output": '{"task_type":"COMPLEX_REACT"}',
+            }
+        ]
+
+        summaries = collect_trace_summaries(rows)
+
+        self.assertEqual("api-20260617-092529-why-summary-Q08", summaries[0].session_id)
+        self.assertEqual("0d5983d9b875516ecfb5f246adcc2d42", summaries[0].trace_id)
+        self.assertEqual(14, summaries[0].rag_count)
+        self.assertEqual(1, summaries[0].tool_count)
+        self.assertIn("tool.mall_search_products", summaries[0].observation_names)
+
+    def test_write_trace_summary_jsonl_writes_one_json_per_line(self):
+        summaries = collect_trace_summaries(
+            [
+                {
+                    "session_id": "unit-Q08",
+                    "trace_id": "trace-1",
+                    "input": "问题",
+                    "output": "答案",
+                    "observation_names": ["llm.intent_router"],
+                    "rag_count": 0,
+                    "mall_enrich_count": 0,
+                    "tool_count": 0,
+                    "output_has_why": 0,
+                    "router_output": '{"task_type":"FAQ_SIMPLE_QUERY"}',
+                }
+            ]
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "trace.jsonl"
+
+            write_trace_summary_jsonl(summaries, output)
+
+            lines = output.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(1, len(lines))
+            self.assertEqual("unit-Q08", json.loads(lines[0])["session_id"])
+
+    def test_query_trace_summaries_uses_requested_sessions(self):
+        captured = {}
+
+        def runner(sql):
+            captured["sql"] = sql
+            return [
+                {
+                    "session_id": "unit-Q08",
+                    "trace_id": "trace-1",
+                    "input": "问题",
+                    "output": "答案",
+                    "observation_names": '["rag.hybrid.retrieve"]',
+                    "rag_count": 1,
+                    "mall_enrich_count": 0,
+                    "tool_count": 0,
+                    "output_has_why": 0,
+                    "router_output": "",
+                }
+            ]
+
+        summaries = query_trace_summaries(["unit-Q08", "quote's"], runner=runner)
+
+        self.assertEqual(1, len(summaries))
+        self.assertIn("'unit-Q08'", captured["sql"])
+        self.assertIn("'quote\\'s'", captured["sql"])
+        self.assertEqual(["rag.hybrid.retrieve"], summaries[0].observation_names)
+
+    def test_query_clickhouse_json_rows_parses_json_each_row(self):
+        def run_command(command):
+            self.assertIn("--format", command)
+            return '{"a":1}\n{"a":2}\n'
+
+        rows = query_clickhouse_json_rows("SELECT 1", run_command=run_command)
+
+        self.assertEqual([{"a": 1}, {"a": 2}], rows)
 
 
 if __name__ == "__main__":

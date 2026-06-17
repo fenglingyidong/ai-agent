@@ -117,6 +117,7 @@ Content-Type: application/json
 - [运行说明](docs/runtime.md)
 - [本地完整部署教程](docs/deployment.md)
 - [Langfuse 本地可观测环境](observability/langfuse/README.md)
+- [电商导购 RAG 评测集](docs/evaluation/2026-06-10-mall-sku-rag-guide-eval.md)
 - [测试说明](TESTING.md)
 
 ## 测试概览
@@ -130,5 +131,15 @@ Content-Type: application/json
 | `PromptSecurityFilterTest` | 注入过滤与敏感值恢复 |
 | `ParentChildHybridDocumentRetrieverTest` | Dense + BM25 融合与截断 |
 | `LongTermMemoryAdvisorTest` / `RedisChatMemoryRepositoryTest` | 短期窗口淘汰、长期摘要触发 |
+| `tests/test_mall_sku_rag_eval.py` | 评测题库导出、部分题号评测、Langfuse ClickHouse 摘要和评分草稿 |
 
 完整自动化与手工测试命令见 [TESTING.md](TESTING.md)。
+
+## 评测工具
+
+```powershell
+python scripts/run_mall_sku_rag_eval.py export-questions
+python scripts/run_mall_sku_rag_eval.py run --ids Q08,Q25
+```
+
+`run` 命令默认调用 `http://localhost:18082/api/react`，账号 `alice / demo123`，并从本地 Langfuse ClickHouse 汇总链路，输出到 `docs/evaluation/artifacts/`。

@@ -4,7 +4,9 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stdout
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import StringIO
 from pathlib import Path
 
 from scripts.mall_sku_rag_eval_lib import (
@@ -21,6 +23,7 @@ from scripts.mall_sku_rag_eval_lib import (
     TraceSummary,
     write_trace_summary_jsonl,
 )
+from scripts.run_mall_sku_rag_eval import main
 
 
 class MallSkuRagEvalTest(unittest.TestCase):
@@ -362,6 +365,81 @@ class MallSkuRagEvalTest(unittest.TestCase):
         self.assertEqual(10, scored["maxScore"])
         self.assertEqual("单场景推荐题", scored["categoryScores"][0]["category"])
         self.assertEqual("Q08", scored["results"][0]["id"])
+
+    def test_main_run_keeps_requested_subset_order(self):
+        questions_payload = {
+            "source": "unit",
+            "count": 2,
+            "questions": [
+                {
+                    "id": "Q07",
+                    "title": "推荐通勤降噪耳机",
+                    "category": "单场景推荐题",
+                    "difficulty": "中等",
+                    "question": "我每天坐地铁通勤，想买个降噪耳机，推荐哪款？",
+                    "expectedHits": ["1001_旗舰降噪耳机 黑色"],
+                    "answerPoints": [],
+                },
+                {
+                    "id": "Q08",
+                    "title": "推荐办公室安静鼠标",
+                    "category": "单场景推荐题",
+                    "difficulty": "简单",
+                    "question": "办公室用鼠标，希望点击声音小一点，买哪款？",
+                    "expectedHits": ["3004_无线鼠标 静音版"],
+                    "answerPoints": [],
+                },
+            ],
+        }
+        captured = {}
+
+        def fake_post(**kwargs):
+            captured.setdefault("ids", []).append(kwargs["question_id"])
+            return EvalResult(
+                question_id=kwargs["question_id"],
+                question=kwargs["message"],
+                session_id=kwargs["session_id"],
+                status=200,
+                duration_seconds=0.1,
+                answer=f"answer {kwargs['question_id']}",
+            )
+
+        def fake_trace(session_ids):
+            captured["session_ids"] = session_ids
+            return [
+                TraceSummary(session_id=session_id, trace_id=f"trace-{session_id}")
+                for session_id in session_ids
+            ]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            questions = Path(temp_dir) / "questions.json"
+            output_dir = Path(temp_dir) / "out"
+            questions.write_text(json.dumps(questions_payload, ensure_ascii=False), encoding="utf-8")
+
+            with redirect_stdout(StringIO()):
+                code = main(
+                    [
+                        "run",
+                        "--ids",
+                        "Q08,Q07",
+                        "--run-id",
+                        "unit",
+                        "--questions",
+                        str(questions),
+                        "--output-dir",
+                        str(output_dir),
+                    ],
+                    post_func=fake_post,
+                    trace_func=fake_trace,
+                )
+
+            self.assertEqual(0, code)
+            self.assertEqual(["Q08", "Q07"], captured["ids"])
+            self.assertEqual(["unit-Q08", "unit-Q07"], captured["session_ids"])
+            results = json.loads((output_dir / "unit-mall-sku-rag-eval-results.json").read_text(encoding="utf-8"))
+            self.assertEqual(["Q08", "Q07"], [item["id"] for item in results["results"]])
+            self.assertTrue((output_dir / "unit-langfuse-trace-summary.jsonl").exists())
+            self.assertTrue((output_dir / "unit-mall-sku-rag-eval-scored.json").exists())
 
 
 if __name__ == "__main__":

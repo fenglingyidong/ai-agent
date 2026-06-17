@@ -301,7 +301,7 @@ def score_question(question: QuestionSpec, result: EvalResult, trace: TraceSumma
     only_followup = _is_followup_only(answer)
     external_generic = _has_external_generic_brand(answer)
     route_task_type = _route_task_type(trace.router_output if trace else "")
-    observation_names = trace.observation_names if trace else []
+    observation_names = (trace.observation_names or []) if trace else []
     mall_tools = [name for name in observation_names if name.startswith("tool.mall_") or name == "tool.searchProductKnowledge"]
     rag_count = trace.rag_count if trace else 0
     tool_count = trace.tool_count if trace else 0

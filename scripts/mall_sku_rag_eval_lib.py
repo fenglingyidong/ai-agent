@@ -1,7 +1,12 @@
 import json
 import re
+import time
+from base64 import b64encode
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+from uuid import uuid4
 
 
 QUESTION_HEADING = re.compile(r"^####\s+(Q\d{2})\.\s*(.+?)\s*$", re.MULTILINE)
@@ -26,6 +31,28 @@ class QuestionSpec:
             "question": self.question,
             "expectedHits": self.expected_hits,
             "answerPoints": self.answer_points,
+        }
+
+
+@dataclass(frozen=True)
+class EvalResult:
+    question_id: str
+    question: str
+    session_id: str
+    status: int
+    duration_seconds: float
+    answer: str
+    error: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.question_id,
+            "question": self.question,
+            "sessionId": self.session_id,
+            "status": self.status,
+            "durationSeconds": round(self.duration_seconds, 3),
+            "answer": self.answer,
+            "error": self.error,
         }
 
 
@@ -61,6 +88,71 @@ def export_questions_file(source: Path, output: Path) -> int:
     }
     output.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return len(questions)
+
+
+def post_react(
+    endpoint: str,
+    username: str,
+    password: str,
+    message: str,
+    session_id: str,
+    model_id: str,
+    web_search_enabled: bool,
+    question_id: str = "",
+) -> EvalResult:
+    fields = {
+        "message": message,
+        "sessionId": session_id,
+        "modelId": model_id,
+        "webSearchEnabled": "true" if web_search_enabled else "false",
+    }
+    body, content_type = build_multipart_form(fields)
+    auth = b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+    request = Request(
+        endpoint,
+        data=body,
+        headers={
+            "Authorization": f"Basic {auth}",
+            "Content-Type": content_type,
+        },
+        method="POST",
+    )
+    started = time.perf_counter()
+    try:
+        with urlopen(request, timeout=180) as response:
+            answer = response.read().decode("utf-8", errors="replace")
+            status = response.status
+            error = None
+    except HTTPError as ex:
+        answer = ex.read().decode("utf-8", errors="replace")
+        status = ex.code
+        error = f"HTTP {ex.code}"
+    except URLError as ex:
+        answer = ""
+        status = 0
+        error = str(ex.reason)
+    duration = time.perf_counter() - started
+    return EvalResult(
+        question_id=question_id,
+        question=message,
+        session_id=session_id,
+        status=status,
+        duration_seconds=duration,
+        answer=answer,
+        error=error,
+    )
+
+
+def build_multipart_form(fields: dict[str, str]) -> tuple[bytes, str]:
+    boundary = f"----ragagent-{uuid4().hex}"
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.append(f"--{boundary}\r\n".encode("ascii"))
+        chunks.append(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("ascii"))
+        chunks.append(value.encode("utf-8"))
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("ascii"))
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
 
 
 def _before_browser_record(markdown: str) -> str:

@@ -2,10 +2,12 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from scripts.mall_sku_rag_eval_lib import export_questions_file, extract_questions
+from scripts.mall_sku_rag_eval_lib import export_questions_file, extract_questions, post_react
 
 
 class MallSkuRagEvalTest(unittest.TestCase):
@@ -117,6 +119,57 @@ class MallSkuRagEvalTest(unittest.TestCase):
             self.assertEqual("", completed.stderr)
             self.assertEqual(0, completed.returncode)
             self.assertTrue(output.exists())
+
+    def test_post_react_builds_multipart_and_basic_auth(self):
+        captured = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                captured["path"] = self.path
+                captured["auth"] = self.headers.get("Authorization")
+                captured["content_type"] = self.headers.get("Content-Type")
+                content_length = int(self.headers.get("Content-Length", "0"))
+                captured["body"] = self.rfile.read(content_length)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write("工具结果事实：静音鼠标。".encode("utf-8"))
+
+            def log_message(self, format, *args):
+                return
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever)
+        thread.daemon = True
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/api/react"
+            result = post_react(
+                endpoint=url,
+                username="alice",
+                password="demo123",
+                message="办公室用鼠标，希望点击声音小一点，买哪款？",
+                session_id="unit-Q08",
+                model_id="qwen",
+                web_search_enabled=False,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+
+        self.assertEqual(200, result.status)
+        self.assertEqual("工具结果事实：静音鼠标。", result.answer)
+        self.assertEqual("/api/react", captured["path"])
+        self.assertEqual("Basic YWxpY2U6ZGVtbzEyMw==", captured["auth"])
+        self.assertTrue(captured["content_type"].startswith("multipart/form-data; boundary="))
+        self.assertIn(b'name="message"', captured["body"])
+        self.assertIn("办公室用鼠标，希望点击声音小一点，买哪款？".encode("utf-8"), captured["body"])
+        self.assertIn(b'name="sessionId"', captured["body"])
+        self.assertIn(b"unit-Q08", captured["body"])
+        self.assertIn(b'name="modelId"', captured["body"])
+        self.assertIn(b"qwen", captured["body"])
+        self.assertIn(b'name="webSearchEnabled"', captured["body"])
+        self.assertIn(b"false", captured["body"])
 
 
 if __name__ == "__main__":

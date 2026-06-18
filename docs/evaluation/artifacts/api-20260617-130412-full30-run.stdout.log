@@ -1,0 +1,4 @@
+runId=api-20260617-130412-full30
+results=docs/evaluation/artifacts/api-20260617-130412-full30-mall-sku-rag-eval-results.json
+traceSummary=docs/evaluation/artifacts/api-20260617-130412-full30-langfuse-trace-summary.jsonl
+scored=docs/evaluation/artifacts/api-20260617-130412-full30-mall-sku-rag-eval-scored.json

@@ -1,0 +1,49 @@
+{
+  "runId": "api-20260617-110343-why-summary-rerun",
+  "source": "docs\\evaluation\\artifacts\\api-20260617-092529-why-summary-mall-sku-rag-target-results.json",
+  "targetIds": [
+    "Q07",
+    "Q08",
+    "Q09",
+    "Q10",
+    "Q11",
+    "Q12",
+    "Q17",
+    "Q22",
+    "Q23",
+    "Q24",
+    "Q25",
+    "Q26",
+    "Q27",
+    "Q30"
+  ],
+  "startedAt": "2026-06-17T11:04:26+0800",
+  "modelId": "qwen",
+  "webSearchEnabled": false,
+  "endpoint": "http://localhost:18082/api/react",
+  "results": [
+    {
+      "id": "Q07",
+      "question": "我每天坐地铁通勤，想买个降噪耳机，推荐哪款？",
+      "sessionId": "api-20260617-110343-why-summary-rerun-Q07",
+      "status": 401,
+      "durationSeconds": 1.803,
+      "answer": "{\"timestamp\":\"2026-06-17T03:04:28.121+00:00\",\"status\":401,\"error\":\"Unauthorized\",\"path\":\"/api/react\"}",
+      "hasWhySummary": false,
+      "whySummary": "",
+      "error": "HTTP Error 401: "
+    },
+    {
+      "id": "Q08",
+      "question": "办公室用鼠标，希望点击声音小一点，买哪款？",
+      "sessionId": "api-20260617-110343-why-summary-rerun-Q08",
+      "status": 401,
+      "durationSeconds": 0.115,
+      "answer": "{\"timestamp\":\"2026-06-17T03:04:28.251+00:00\",\"status\":401,\"error\":\"Unauthorized\",\"path\":\"/api/react\"}",
+      "hasWhySummary": false,
+      "whySummary": "",
+      "error": "HTTP Error 401: "
+    }
+  ],
+  "finishedAtPartial": "2026-06-17T11:04:28+0800"
+}

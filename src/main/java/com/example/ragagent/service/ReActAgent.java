@@ -14,11 +14,23 @@ import io.opentelemetry.context.Scope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.ChatClientRequest;
+import org.springframework.ai.chat.client.ChatClientResponse;
+import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
+import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.content.Media;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
@@ -33,6 +45,9 @@ import reactor.core.publisher.SignalType;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Comparator;
+import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -62,7 +77,7 @@ public class ReActAgent {
     private final ShoppingRouteExecutor shoppingRouteExecutor;
     private final List<ToolCallbackProvider> externalToolCallbackProviders;
     private final MallMcpToolCallback mallMcpToolCallback;
-    private final ChatClient reactChatClient;
+    private final ChatModel reactChatModel;
     private final List<ToolCallback> builtInToolCallbacks;
     private final RagTracing tracing;
     private final PromptTemplateStore promptTemplateStore;
@@ -80,6 +95,7 @@ public class ReActAgent {
                       ConversationLogService conversationLogService) {
         this(
                 builder,
+                chatModelFromBuilder(builder),
                 builtInTools,
                 longTermMemoryAdvisor,
                 messageChatMemoryAdvisor,
@@ -95,8 +111,40 @@ public class ReActAgent {
         );
     }
 
+    public ReActAgent(ChatClient.Builder builder,
+                      BuiltInTools builtInTools,
+                      LongTermMemoryAdvisor longTermMemoryAdvisor,
+                      MessageChatMemoryAdvisor messageChatMemoryAdvisor,
+                      ConversationMemoryService conversationMemoryService,
+                      PromptSecurityFilter promptSecurityFilter,
+                      ChatModelRegistry chatModelRegistry,
+                      ShoppingRouteExecutor shoppingRouteExecutor,
+                      List<ToolCallbackProvider> externalToolCallbackProviders,
+                      MallMcpClient mallMcpClient,
+                      ConversationLogService conversationLogService,
+                      RagTracing tracing,
+                      PromptTemplateStore promptTemplateStore) {
+        this(
+                builder,
+                chatModelFromBuilder(builder),
+                builtInTools,
+                longTermMemoryAdvisor,
+                messageChatMemoryAdvisor,
+                conversationMemoryService,
+                promptSecurityFilter,
+                chatModelRegistry,
+                shoppingRouteExecutor,
+                externalToolCallbackProviders,
+                mallMcpClient,
+                conversationLogService,
+                tracing,
+                promptTemplateStore
+        );
+    }
+
     @Autowired
     public ReActAgent(ChatClient.Builder builder,
+                      ChatModel chatModel,
                       BuiltInTools builtInTools,
                       LongTermMemoryAdvisor longTermMemoryAdvisor,
                       MessageChatMemoryAdvisor messageChatMemoryAdvisor,
@@ -123,7 +171,7 @@ public class ReActAgent {
         this.mallMcpToolCallback = mallMcpClient == null
                 ? null
                 : new MallMcpToolCallback(mallMcpClient);
-        this.reactChatClient = builder.clone().build();
+        this.reactChatModel = chatModel;
         this.builtInToolCallbacks = loadBuiltInToolCallbacks();
         this.tracing = tracing == null ? new RagTracing() : tracing;
         this.promptTemplateStore = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
@@ -143,6 +191,7 @@ public class ReActAgent {
                       RagTracing tracing) {
         this(
                 builder,
+                chatModelFromBuilder(builder),
                 builtInTools,
                 longTermMemoryAdvisor,
                 messageChatMemoryAdvisor,
@@ -170,6 +219,7 @@ public class ReActAgent {
                       ConversationLogService conversationLogService) {
         this(
                 builder,
+                chatModelFromBuilder(builder),
                 builtInTools,
                 longTermMemoryAdvisor,
                 messageChatMemoryAdvisor,
@@ -244,6 +294,7 @@ public class ReActAgent {
                     routedRequest.mallToolsAllowed(),
                     routedRequest.taskPolicies(),
                     routedRequest.orderCreationAllowed(),
+                    routedRequest.trustedContext(),
                     securedPrompt,
                     conversationTurn,
                     rootSpan
@@ -294,7 +345,7 @@ public class ReActAgent {
             StringBuilder visibleAnswerBuilder = new StringBuilder();
             AtomicBoolean persisted = new AtomicBoolean(false);
             Flux<String> restoredStream = shortCircuitStream
-                    .handle((chunk, sink) -> {
+                    .<String>handle((chunk, sink) -> {
                         memoryAnswerBuilder.append(chunk);
                         String restoredChunk = restorer.accept(chunk);
                         if (restoredChunk != null && !restoredChunk.isEmpty()) {
@@ -309,8 +360,7 @@ public class ReActAgent {
                                 }
                                 visibleAnswerBuilder.append(remaining);
                                 return Flux.just(remaining);
-                            }))
-                    .cast(String.class);
+                            }));
             return restoredStream
                     .doOnComplete(() -> {
                         conversationMemoryService.rememberTurn(
@@ -352,6 +402,7 @@ public class ReActAgent {
                                          boolean mallToolsAllowed,
                                          List<ShoppingTaskPolicy> taskPolicies,
                                          boolean orderCreationAllowed,
+                                         String trustedContext,
                                          PromptSecurityFilter.SecuredPrompt securedPrompt,
                                          ConversationTurnRecord conversationTurn,
                                          Span rootSpan) {
@@ -390,6 +441,7 @@ public class ReActAgent {
                 activeTools,
                 webSearchEnabled,
                 taskPolicies,
+                trustedContext,
                 securedPrompt,
                 conversationTurn,
                 rootSpan
@@ -454,60 +506,45 @@ public class ReActAgent {
                                            ActiveToolCallbacks activeTools,
                                            boolean webSearchEnabled,
                                            List<ShoppingTaskPolicy> taskPolicies,
+                                           String trustedContext,
                                            PromptSecurityFilter.SecuredPrompt securedPrompt,
                                            ConversationTurnRecord conversationTurn,
                                            Span rootSpan) {
-        ChatClient.ChatClientRequestSpec requestSpec = applyModelOptions(reactChatClient.prompt(), modelId);
-        String reactSystemPrompt = buildReactSystemPrompt(
+        String reactSystemPrompt = withTrustedSystemContext(buildReactSystemPrompt(
                 activeTools.hasExternalTools(),
                 activeTools.hasMallTools(),
                 webSearchEnabled,
-                taskPolicies
-        );
-        ChatClient.ChatClientRequestSpec requestWithSystem =
-                requestSpec.system(reactSystemPrompt);
-        if (requestWithSystem == null) {
-            requestWithSystem = requestSpec;
-        }
-
-        ChatClient.ChatClientRequestSpec requestWithTools = requestWithSystem.toolCallbacks(activeTools.callbacks());
-        if (requestWithTools == null) {
-            requestWithTools = requestWithSystem;
-        }
-        ChatClient.ChatClientRequestSpec requestWithToolContext = requestWithTools.toolContext(
-                buildToolContext(userId, sessionId)
-        );
-        if (requestWithToolContext == null) {
-            requestWithToolContext = requestWithTools;
-        }
+                taskPolicies,
+                activeTools.toolNameSet()
+        ), trustedContext);
         String conversationId = conversationMemoryService.buildConversationId(userId, sessionId);
-        ChatClient.ChatClientRequestSpec requestWithMemory = requestWithToolContext.advisors(advisorSpec -> advisorSpec
-                .param(ChatMemory.CONVERSATION_ID, conversationId)
-                .param(LongTermMemoryAdvisor.USER_ID_KEY, userId)
-                .param(LongTermMemoryAdvisor.SESSION_ID_KEY, sessionId)
-                .advisors(longTermMemoryAdvisor, messageChatMemoryAdvisor));
-        if (requestWithMemory == null) {
-            requestWithMemory = requestWithToolContext;
-        }
-        ChatClient.ChatClientRequestSpec finalRequestWithMemory = requestWithMemory;
+        Map<String, Object> toolContext = buildToolContext(userId, sessionId);
+        ChatClientRequest baseRequest = buildChatClientRequest(
+                modelId,
+                reactSystemPrompt,
+                currentUserMessage,
+                activeTools,
+                toolContext,
+                buildAdvisorContext(userId, sessionId, conversationId)
+        );
 
         return Flux.defer(() -> {
+            Scope rootScope = tracing.makeCurrent(rootSpan);
             Span span = tracing.startSpan("llm.react");
             Scope scope = tracing.makeCurrent(span);
-            tracing.capturePromptText(span, "llm.react.input", reactInput(reactSystemPrompt, currentUserMessage, activeTools));
             StreamingSensitiveValueRestorer restorer =
                     new StreamingSensitiveValueRestorer(securedPrompt.sensitiveValues());
             StringBuilder rawAnswerBuilder = new StringBuilder();
             StringBuilder restoredAnswerBuilder = new StringBuilder();
             AtomicBoolean fallbackUsed = new AtomicBoolean(false);
             AtomicBoolean persisted = new AtomicBoolean(false);
-
             try {
-                Flux<String> restoredStream = finalRequestWithMemory
-                        .messages(List.of(currentUserMessage))
-                        .stream()
-                        .content()
-                        .handle((chunk, sink) -> {
+                ChatClientRequest advisedRequest = applyAdvisorBefore(baseRequest);
+                tracing.capturePromptText(span, "llm.react.input", reactInput(advisedRequest.prompt(), activeTools));
+                printFinalPrompt(modelId, advisedRequest, activeTools);
+
+                Flux<String> restoredStream = streamModelContent(advisedRequest)
+                        .<String>handle((chunk, sink) -> {
                             rawAnswerBuilder.append(chunk);
                             String restoredChunk = restorer.accept(chunk);
                             if (restoredChunk != null && !restoredChunk.isEmpty()) {
@@ -522,8 +559,7 @@ public class ReActAgent {
                                     }
                                     restoredAnswerBuilder.append(remaining);
                                     return Flux.just(remaining);
-                                }))
-                        .cast(String.class);
+                                }));
 
                 return restoredStream
                         .onErrorResume(ex -> resumeWithModelStreamFallback(
@@ -547,6 +583,7 @@ public class ReActAgent {
                                 );
                             }
                             else {
+                                applyAdvisorAfter(advisedRequest, rawAnswerBuilder.toString().trim());
                                 conversationLogService.completeTurn(
                                         conversationTurn,
                                         visibleAnswer
@@ -582,6 +619,7 @@ public class ReActAgent {
                             }
                             scope.close();
                             tracing.endSpan(span);
+                            rootScope.close();
                         });
             }
             catch (RuntimeException ex) {
@@ -592,9 +630,20 @@ public class ReActAgent {
                 persisted.set(true);
                 scope.close();
                 tracing.endSpan(span);
+                rootScope.close();
                 return Flux.error(ex);
             }
         });
+    }
+
+    private String withTrustedSystemContext(String systemPrompt, String trustedContext) {
+        if (!StringUtils.hasText(trustedContext)) {
+            return systemPrompt;
+        }
+        return systemPrompt
+                + System.lineSeparator()
+                + System.lineSeparator()
+                + trustedContext.trim();
     }
 
     private Flux<String> resumeWithModelStreamFallback(Throwable ex,
@@ -621,12 +670,132 @@ public class ReActAgent {
         return Flux.just(fallback);
     }
 
-    private ChatClient.ChatClientRequestSpec applyModelOptions(ChatClient.ChatClientRequestSpec requestSpec, String modelId) {
-        if (chatModelRegistry == null) {
-            return requestSpec;
+    private ChatClientRequest buildChatClientRequest(String modelId,
+                                                     String systemPrompt,
+                                                     Message currentUserMessage,
+                                                     ActiveToolCallbacks activeTools,
+                                                     Map<String, Object> toolContext,
+                                                     Map<String, Object> advisorContext) {
+        Prompt prompt = Prompt.builder()
+                .messages(List.of(new SystemMessage(systemPrompt), currentUserMessage))
+                .chatOptions(buildModelOptions(modelId, activeTools, toolContext))
+                .build();
+        return ChatClientRequest.builder()
+                .prompt(prompt)
+                .context(advisorContext)
+                .build();
+    }
+
+    private OpenAiChatOptions buildModelOptions(String modelId,
+                                                ActiveToolCallbacks activeTools,
+                                                Map<String, Object> toolContext) {
+        OpenAiChatOptions selectedOptions = chatModelRegistry == null
+                ? null
+                : chatModelRegistry.createOptions(modelId);
+        OpenAiChatOptions options = selectedOptions == null ? OpenAiChatOptions.builder().build() : selectedOptions;
+        options.setToolCallbacks(activeTools.callbacks());
+        options.setToolContext(toolContext);
+        options.setInternalToolExecutionEnabled(true);
+        return options;
+    }
+
+    private Map<String, Object> buildAdvisorContext(String userId, String sessionId, String conversationId) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put(ChatMemory.CONVERSATION_ID, conversationId);
+        context.put(LongTermMemoryAdvisor.USER_ID_KEY, userId);
+        context.put(LongTermMemoryAdvisor.SESSION_ID_KEY, sessionId);
+        return context;
+    }
+
+    private ChatClientRequest applyAdvisorBefore(ChatClientRequest request) {
+        ChatClientRequest current = request;
+        for (BaseAdvisor advisor : memoryAdvisors()) {
+            ChatClientRequest updated = advisor.before(current, NoopAdvisorChain.INSTANCE);
+            if (updated != null) {
+                current = updated;
+            }
         }
-        OpenAiChatOptions options = chatModelRegistry.createOptions(modelId);
-        return options == null ? requestSpec : requestSpec.options(options);
+        return current;
+    }
+
+    private void applyAdvisorAfter(ChatClientRequest request, String rawFinalAnswer) {
+        if (!StringUtils.hasLength(rawFinalAnswer)) {
+            return;
+        }
+        ChatClientResponse response = ChatClientResponse.builder()
+                .chatResponse(new ChatResponse(List.of(
+                        new Generation(new AssistantMessage(rawFinalAnswer))
+                )))
+                .context(request.context())
+                .build();
+        List<BaseAdvisor> advisors = memoryAdvisors();
+        for (int i = advisors.size() - 1; i >= 0; i--) {
+            ChatClientResponse updated = advisors.get(i).after(response, NoopAdvisorChain.INSTANCE);
+            if (updated != null) {
+                response = updated;
+            }
+        }
+    }
+
+    private List<BaseAdvisor> memoryAdvisors() {
+        return java.util.stream.Stream.of(longTermMemoryAdvisor, messageChatMemoryAdvisor)
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingInt(BaseAdvisor::getOrder))
+                .toList();
+    }
+
+    private Flux<String> streamModelContent(ChatClientRequest request) {
+        if (reactChatModel == null) {
+            return Flux.error(new IllegalStateException("ReActAgent ChatModel is not configured"));
+        }
+        return reactChatModel.stream(request.prompt())
+                .map(this::responseContent)
+                .filter(StringUtils::hasLength);
+    }
+
+    private void printFinalPrompt(String requestedModelId,
+                                  ChatClientRequest request,
+                                  ActiveToolCallbacks activeTools) {
+        Prompt prompt = request.prompt();
+        System.out.println();
+        System.out.println("========== ReActAgent FINAL PROMPT ==========");
+        System.out.println("requestedModelId: " + displayDebugValue(requestedModelId, "<default>"));
+        System.out.println("resolvedModelId: " + displayDebugValue(resolveModelIdForDebug(requestedModelId), "<none>"));
+        System.out.println("resolvedModelName: " + displayDebugValue(resolveModelNameForDebug(requestedModelId, prompt), "<provider-default>"));
+        System.out.println("toolNames: " + activeTools.toolNames());
+        System.out.println();
+        System.out.println(reactInput(prompt, activeTools));
+        System.out.println("======== END ReActAgent FINAL PROMPT ========");
+        System.out.println();
+    }
+
+    private String resolveModelIdForDebug(String requestedModelId) {
+        return chatModelRegistry == null ? "" : chatModelRegistry.resolveModelId(requestedModelId);
+    }
+
+    private String resolveModelNameForDebug(String requestedModelId, Prompt prompt) {
+        if (chatModelRegistry != null) {
+            String modelName = chatModelRegistry.resolveModelName(requestedModelId);
+            if (StringUtils.hasText(modelName)) {
+                return modelName;
+            }
+        }
+        ChatOptions options = prompt == null ? null : prompt.getOptions();
+        if (options instanceof OpenAiChatOptions openAiOptions) {
+            return openAiOptions.getModel();
+        }
+        return "";
+    }
+
+    private String displayDebugValue(String value, String fallback) {
+        return StringUtils.hasText(value) ? value : fallback;
+    }
+
+    private String responseContent(ChatResponse response) {
+        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
+            return "";
+        }
+        return response.getResult().getOutput().getText();
     }
 
     private Map<String, Object> buildToolContext(String userId, String sessionId) {
@@ -811,7 +980,6 @@ public class ReActAgent {
 
     private boolean isShoppingControlledTool(String toolName) {
         return "searchProductKnowledge".equals(toolName)
-                || "updateShoppingPreference".equals(toolName)
                 || MallMcpToolCallback.isMallTool(toolName);
     }
 
@@ -857,14 +1025,15 @@ public class ReActAgent {
     private String buildReactSystemPrompt(boolean hasExternalTools,
                                           boolean hasMallTools,
                                           boolean webSearchEnabled,
-                                          List<ShoppingTaskPolicy> taskPolicies) {
+                                          List<ShoppingTaskPolicy> taskPolicies,
+                                          Set<String> activeToolNames) {
         String mallRule = hasMallTools
                 ? promptTemplateStore.text(REACT_MALL_RULE_ENABLED)
                 : promptTemplateStore.text(REACT_MALL_RULE_DISABLED);
         String networkRule = webSearchEnabled && hasExternalTools
                 ? promptTemplateStore.text(REACT_NETWORK_RULE_ENABLED)
                 : promptTemplateStore.text(REACT_NETWORK_RULE_DISABLED);
-        String policyPrompt = renderTaskPolicyPrompt(taskPolicies);
+        String policyPrompt = renderTaskPolicyPrompt(taskPolicies, activeToolNames);
         return promptTemplateStore.render(REACT_SYSTEM_PROMPT, Map.of(
                 "mall_rule", mallRule,
                 "network_rule", networkRule,
@@ -874,16 +1043,43 @@ public class ReActAgent {
         ));
     }
 
-    private String reactInput(String systemPrompt, Message currentUserMessage, ActiveToolCallbacks activeTools) {
-        return "system:\n" + systemPrompt
-                + "\n\nuser:\n" + messageText(currentUserMessage)
-                + "\n\nmedia_count: " + mediaCountFromMessage(currentUserMessage)
-                + "\ntools: " + activeTools.toolNames();
+    private String reactInput(Prompt prompt, ActiveToolCallbacks activeTools) {
+        StringBuilder builder = new StringBuilder();
+        List<Message> messages = prompt == null ? List.of() : prompt.getInstructions();
+        for (Message message : messages) {
+            if (!builder.isEmpty()) {
+                builder.append(System.lineSeparator()).append(System.lineSeparator());
+            }
+            builder.append(messageRole(message)).append(":").append(System.lineSeparator())
+                    .append(messageText(message));
+            if (message instanceof UserMessage) {
+                builder.append(System.lineSeparator())
+                        .append("media_count: ")
+                        .append(mediaCountFromMessage(message));
+            }
+        }
+        builder.append(System.lineSeparator())
+                .append("tools: ")
+                .append(activeTools.toolNames());
+        return builder.toString();
+    }
+
+    private String messageRole(Message message) {
+        if (message == null || message.getMessageType() == null) {
+            return "message";
+        }
+        return message.getMessageType().name().toLowerCase(java.util.Locale.ROOT);
     }
 
     private String messageText(Message message) {
         if (message instanceof UserMessage userMessage) {
             return userMessage.getText();
+        }
+        if (message instanceof SystemMessage systemMessage) {
+            return systemMessage.getText();
+        }
+        if (message instanceof AssistantMessage assistantMessage) {
+            return assistantMessage.getText();
         }
         return message == null ? "" : String.valueOf(message);
     }
@@ -895,36 +1091,64 @@ public class ReActAgent {
         return 0;
     }
 
-    private String renderTaskPolicyPrompt(List<ShoppingTaskPolicy> taskPolicies) {
+    private String renderTaskPolicyPrompt(List<ShoppingTaskPolicy> taskPolicies, Set<String> activeToolNames) {
         if (taskPolicies == null || taskPolicies.isEmpty()) {
             return "";
         }
 
         StringBuilder builder = new StringBuilder(promptTemplateStore.text(REACT_TASK_POLICY_HEADER));
+        boolean hasRenderablePolicy = false;
         for (ShoppingTaskPolicy policy : taskPolicies) {
+            if (!isRenderableTaskPolicy(policy)) {
+                continue;
+            }
             builder.append(System.lineSeparator())
-                    .append(renderTaskPolicyItem(policy));
+                    .append(renderTaskPolicyItem(policy, activeToolNames));
+            hasRenderablePolicy = true;
         }
-        return builder.toString();
+        return hasRenderablePolicy ? builder.toString() : "";
     }
 
-    private String renderTaskPolicyItem(ShoppingTaskPolicy policy) {
+    private boolean isRenderableTaskPolicy(ShoppingTaskPolicy policy) {
+        return policy != null
+                && (StringUtils.hasText(policy.promptFragment())
+                || !policy.allowedToolNames().isEmpty()
+                || policy.confirmationRequired());
+    }
+
+    private String renderTaskPolicyItem(ShoppingTaskPolicy policy, Set<String> activeToolNames) {
         return promptTemplateStore.render(REACT_TASK_POLICY_ITEM, Map.of(
                 "policy_id", policy.id(),
                 "policy_name", policy.name(),
                 "policy_prompt", policy.promptFragment(),
-                "allowed_tools_text", renderAllowedToolsText(policy),
+                "allowed_tools_text", renderAllowedToolsText(policy, activeToolNames),
                 "confirmation_required_text", renderConfirmationRequiredText(policy)
         ));
     }
 
-    private String renderAllowedToolsText(ShoppingTaskPolicy policy) {
+    private String renderAllowedToolsText(ShoppingTaskPolicy policy, Set<String> activeToolNames) {
         if (policy.allowedToolNames().isEmpty()) {
             return "";
         }
+        Set<String> renderedToolNames = visibleAllowedToolNames(policy, activeToolNames);
+        if (renderedToolNames.isEmpty()) {
+            return "";
+        }
         return promptTemplateStore.render(REACT_TASK_POLICY_ALLOWED_TOOLS, Map.of(
-                "allowed_tools", String.join(", ", policy.allowedToolNames())
+                "allowed_tools", String.join(", ", renderedToolNames)
         ));
+    }
+
+    private Set<String> visibleAllowedToolNames(ShoppingTaskPolicy policy, Set<String> activeToolNames) {
+        if (activeToolNames == null) {
+            return policy.allowedToolNames();
+        }
+        if (activeToolNames.isEmpty()) {
+            return Set.of();
+        }
+        return policy.allowedToolNames().stream()
+                .filter(activeToolNames::contains)
+                .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
     }
 
     private String renderConfirmationRequiredText(ShoppingTaskPolicy policy) {
@@ -957,6 +1181,90 @@ public class ReActAgent {
                     .filter(StringUtils::hasText)
                     .toList();
         }
+
+        private Set<String> toolNameSet() {
+            if (callbacks == null || callbacks.isEmpty()) {
+                return Set.of();
+            }
+            return callbacks.stream()
+                    .filter(callback -> callback != null && callback.getToolDefinition() != null)
+                    .map(callback -> callback.getToolDefinition().name())
+                    .filter(StringUtils::hasText)
+                    .collect(java.util.stream.Collectors.toCollection(java.util.LinkedHashSet::new));
+        }
+    }
+
+    private static ChatModel chatModelFromBuilder(ChatClient.Builder builder) {
+        if (builder == null) {
+            return null;
+        }
+        return new ChatClientBackedChatModel(builder.clone().build());
+    }
+
+    private static final class ChatClientBackedChatModel implements ChatModel {
+
+        private final ChatClient chatClient;
+
+        private ChatClientBackedChatModel(ChatClient chatClient) {
+            this.chatClient = chatClient;
+        }
+
+        @Override
+        public ChatResponse call(Prompt prompt) {
+            if (chatClient == null) {
+                throw new IllegalStateException("ReActAgent ChatClient is not configured");
+            }
+            return prepareRequest(prompt).call().chatResponse();
+        }
+
+        @Override
+        public Flux<ChatResponse> stream(Prompt prompt) {
+            if (chatClient == null) {
+                return Flux.error(new IllegalStateException("ReActAgent ChatClient is not configured"));
+            }
+            return prepareRequest(prompt).stream()
+                    .content()
+                    .map(this::chatResponse);
+        }
+
+        private ChatResponse chatResponse(String content) {
+            return new ChatResponse(List.of(new Generation(new AssistantMessage(content))));
+        }
+
+        private ChatClient.ChatClientRequestSpec prepareRequest(Prompt prompt) {
+            ChatClient.ChatClientRequestSpec request = chatClient.prompt();
+            if (prompt == null) {
+                return request;
+            }
+            ChatOptions options = prompt.getOptions();
+            if (options != null) {
+                ChatClient.ChatClientRequestSpec updated = request.options(options);
+                request = updated == null ? request : updated;
+                if (options instanceof ToolCallingChatOptions toolOptions) {
+                    updated = request.toolCallbacks(toolOptions.getToolCallbacks());
+                    request = updated == null ? request : updated;
+                    updated = request.toolContext(toolOptions.getToolContext());
+                    request = updated == null ? request : updated;
+                }
+            }
+            SystemMessage systemMessage = prompt.getSystemMessage();
+            if (systemMessage != null) {
+                ChatClient.ChatClientRequestSpec updated = request.system(systemMessage.getText());
+                request = updated == null ? request : updated;
+            }
+            ChatClient.ChatClientRequestSpec advised = request.advisors(advisorSpec -> {
+            });
+            request = advised == null ? request : advised;
+            List<Message> nonSystemMessages = prompt.getInstructions().stream()
+                    .filter(message -> !(message instanceof SystemMessage))
+                    .toList();
+            ChatClient.ChatClientRequestSpec updated = request.messages(nonSystemMessages);
+            return updated == null ? request : updated;
+        }
+    }
+
+    private enum NoopAdvisorChain implements AdvisorChain {
+        INSTANCE
     }
 
     private static final class MallMcpToolResolutionException extends RuntimeException {

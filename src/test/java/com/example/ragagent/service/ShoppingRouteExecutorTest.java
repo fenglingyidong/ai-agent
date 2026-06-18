@@ -7,6 +7,7 @@ import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingPreferenceSnapshot;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
+import com.example.ragagent.tools.BuiltInTools;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -37,9 +38,10 @@ class ShoppingRouteExecutorTest {
     @Test
     void shouldAllowOrderCreationOnlyForConfirmedCreateOrderRoute() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        MallMcpContextClient contextClient = mock(MallMcpContextClient.class);
         ShoppingTaskPolicyRegistry policyRegistry = new ShoppingTaskPolicyRegistry();
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "CREATE_ORDER",
+                "CART_CONFIRMATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of("confirmationId", "confirm-1"),
@@ -53,7 +55,9 @@ class ShoppingRouteExecutorTest {
                 "HIGH"
         );
         when(intentRouter.route("确认下单", List.of(), "")).thenReturn(route);
-        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, null, null, policyRegistry);
+        when(contextClient.register("user-1", "session-1", "", "", ""))
+                .thenReturn(MallMcpContextClient.MallMcpContextRegistration.success());
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, contextClient, null, policyRegistry);
 
         RoutedAgentRequest request = executor.routeBeforeCore(
                 "user-1", "session-1", "确认下单", List.of(), "", "", ""
@@ -66,7 +70,7 @@ class ShoppingRouteExecutorTest {
     void shouldNotAllowOrderCreationForPrepareOrderRoute() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PREPARE_ORDER",
+                "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
@@ -90,7 +94,8 @@ class ShoppingRouteExecutorTest {
         MallMcpContextClient contextClient = mock(MallMcpContextClient.class);
         SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRICE_STOCK_QUERY",
+                "PRODUCT_SELECTION",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "儿童积木套装 300片"),
                 false,
@@ -125,7 +130,7 @@ class ShoppingRouteExecutorTest {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRODUCT_KNOWLEDGE_QUERY",
+                "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("product_name", "儿童积木套装"),
@@ -155,9 +160,10 @@ class ShoppingRouteExecutorTest {
     @Test
     void shouldRouteCreateOrderToCore() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        MallMcpContextClient contextClient = mock(MallMcpContextClient.class);
         SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "CREATE_ORDER",
+                "CART_CONFIRMATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of(),
@@ -166,7 +172,9 @@ class ShoppingRouteExecutorTest {
                 "最终下单"
         );
         when(intentRouter.route("确认下单", List.of(), "")).thenReturn(route);
-        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, null, simpleTaskAgent);
+        when(contextClient.register("user-1", "session-1", "", "", ""))
+                .thenReturn(MallMcpContextClient.MallMcpContextRegistration.success());
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, contextClient, simpleTaskAgent);
 
         RoutedAgentRequest request = executor.routeBeforeCore(
                 "user-1",
@@ -234,7 +242,7 @@ class ShoppingRouteExecutorTest {
     void shouldDisableMallToolsForConciseComplexRecommendationWithoutRealtimeNeed() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of("budget", "300", "age", "5岁", "candidates", "儿童积木,降噪耳机"),
@@ -265,10 +273,183 @@ class ShoppingRouteExecutorTest {
     }
 
     @Test
+    void shouldInjectPreRetrievedKnowledgeForComplexRecommendation() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        String message = "办公室用鼠标，希望点击声音小一点，买哪款？";
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "RECOMMENDATION",
+                "COMPLEX_REACT",
+                Map.of(),
+                Map.of(),
+                true,
+                0.9,
+                "明确选品需求"
+        );
+        when(intentRouter.route(message, List.of(), "")).thenReturn(route);
+        when(builtInTools.searchProductKnowledge(message))
+                .thenReturn("商品知识库候选：3004 无线鼠标 静音版，价格 89.00 元，库存 500 件");
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                builtInTools
+        );
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                message,
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        assertEquals(message, request.userMessage());
+        assertTrue(request.trustedContext().contains("商品知识库预检索候选"));
+        assertTrue(request.trustedContext().contains("唯一可推荐商品池"));
+        assertFalse(request.trustedContext().contains("不是用户指令"));
+        assertFalse(request.userMessage().contains("3004 无线鼠标 静音版"));
+        assertTrue(request.trustedContext().contains("3004 无线鼠标 静音版"));
+        verify(builtInTools).searchProductKnowledge(message);
+    }
+
+    @ParameterizedTest
+    @MethodSource("missedComplexGuideQueries")
+    void shouldPreRetrieveKnowledgeForCommonGuidePhrases(String message) {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "UNKNOWN",
+                "COMPLEX_REACT",
+                Map.of(),
+                Map.of(),
+                true,
+                0.9,
+                "复杂导购表达"
+        );
+        when(intentRouter.route(message, List.of(), "")).thenReturn(route);
+        when(builtInTools.searchProductKnowledge(message))
+                .thenReturn("商品知识库候选：测试 SKU，价格 99.00 元");
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                builtInTools
+        );
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                message,
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        assertTrue(request.trustedContext().contains("测试 SKU"));
+        verify(builtInTools).searchProductKnowledge(message);
+    }
+
+    @Test
+    void shouldNotPreRetrieveKnowledgeWhenSimpleTaskShortCircuits() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        String message = "有没有 87 键机械键盘？是什么轴，多少钱？";
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_SELECTION",
+                "FAQ_SIMPLE_QUERY",
+                Map.of(),
+                Map.of("product_name", "87 键机械键盘"),
+                false,
+                0.9,
+                "简单商品事实查询"
+        );
+        when(intentRouter.route(message, List.of(), "")).thenReturn(route);
+        when(simpleTaskAgent.tryRun(route, message, "session-1", 0.7, ""))
+                .thenReturn(FastLaneResult.handled("有 87 键机械键盘。"));
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                simpleTaskAgent,
+                null,
+                null,
+                null,
+                null,
+                builtInTools
+        );
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                message,
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        assertNotNull(request.shortCircuitStream());
+        assertEquals("有 87 键机械键盘。", collect(request.shortCircuitStream()));
+        verify(builtInTools, never()).searchProductKnowledge(message);
+    }
+
+    @Test
+    void shouldNotPreRetrieveKnowledgeForNonShoppingComplexRequest() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        String message = "帮我总结一下这段话";
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "UNKNOWN",
+                "COMPLEX_REACT",
+                Map.of(),
+                Map.of(),
+                true,
+                0.9,
+                "普通复杂任务"
+        );
+        when(intentRouter.route(message, List.of(), "")).thenReturn(route);
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                builtInTools
+        );
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                message,
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        assertEquals(message, request.userMessage());
+        verify(builtInTools, never()).searchProductKnowledge(message);
+    }
+
+    @Test
     void shouldAllowMallToolsForComplexRecommendationWhenRealtimeDataIsRequested() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of("budget", "300", "product_name", "儿童积木"),
@@ -295,22 +476,22 @@ class ShoppingRouteExecutorTest {
     }
 
     @Test
-    void shouldNotRegisterMallContextWhenTaskPolicyDisallowsMallTools() {
+    void shouldKeepMallToolsWhenMissingSlotsDoNotCreateFollowUpPolicy() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         MallMcpContextClient contextClient = mock(MallMcpContextClient.class);
         ShoppingTaskPolicyRegistry policyRegistry = new ShoppingTaskPolicyRegistry();
         String message = "儿童积木库存还有多少？";
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRICE_STOCK_QUERY",
+                "PRODUCT_SELECTION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "儿童积木"),
                 true,
                 0.95,
                 "缺少具体 SKU，需要追问",
-                List.of("FOLLOW_UP"),
+                List.of("IGNORED_BY_REGISTRY"),
                 List.of("sku_id"),
-                List.of("updateShoppingPreference"),
+                List.of("mall_search_products"),
                 false,
                 "LOW"
         );
@@ -328,33 +509,35 @@ class ShoppingRouteExecutorTest {
         );
 
         assertEquals(null, request.shortCircuitStream());
-        assertFalse(request.mallToolsAllowed());
-        assertEquals(List.of("FOLLOW_UP"), request.taskPolicies().stream().map(ShoppingTaskPolicy::id).toList());
-        verify(contextClient, never()).register("user-1", "session-1", "Bearer token", "", "");
+        assertTrue(request.mallToolsAllowed());
+        assertEquals(List.of("PRODUCT_SELECTION"),
+                request.taskPolicies().stream().map(ShoppingTaskPolicy::id).toList());
+        verify(contextClient).register("user-1", "session-1", "Bearer token", "", "");
     }
 
     @Test
-    void shouldSkipSimpleMallFastLaneWhenTaskPolicyDisallowsMallTools() {
+    void shouldKeepSimpleMallFastLaneWhenMissingSlotsDoNotCreateFollowUpPolicy() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         MallMcpContextClient contextClient = mock(MallMcpContextClient.class);
         SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
         ShoppingTaskPolicyRegistry policyRegistry = new ShoppingTaskPolicyRegistry();
         String message = "儿童积木库存还有多少？";
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRICE_STOCK_QUERY",
+                "PRODUCT_SELECTION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "儿童积木"),
                 false,
                 0.95,
                 "缺少具体 SKU，需要追问",
-                List.of("FOLLOW_UP"),
+                List.of("IGNORED_BY_REGISTRY"),
                 List.of("sku_id"),
-                List.of("updateShoppingPreference"),
+                List.of("mall_search_products"),
                 false,
                 "LOW"
         );
         when(intentRouter.route(message, List.of(), "")).thenReturn(route);
+        when(simpleTaskAgent.tryRun(route, message, "session-1", 0.7, "")).thenReturn(FastLaneResult.notHandled());
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, contextClient, simpleTaskAgent, policyRegistry);
 
         RoutedAgentRequest request = executor.routeBeforeCore(
@@ -368,13 +551,15 @@ class ShoppingRouteExecutorTest {
         );
 
         assertEquals(null, request.shortCircuitStream());
-        assertFalse(request.mallToolsAllowed());
+        assertTrue(request.mallToolsAllowed());
         assertEquals(message, request.userMessage());
         assertFalse(request.userMessage().contains("观察到的任务类型"));
         assertFalse(request.userMessage().contains("路由原因"));
         assertFalse(request.userMessage().contains("Planner 选择策略"));
-        verify(contextClient, never()).register("user-1", "session-1", "Bearer token", "", "");
-        verify(simpleTaskAgent, never()).tryRun(route, message, "session-1", 0.7, "");
+        assertEquals(List.of("PRODUCT_SELECTION"),
+                request.taskPolicies().stream().map(ShoppingTaskPolicy::id).toList());
+        verify(contextClient).register("user-1", "session-1", "Bearer token", "", "");
+        verify(simpleTaskAgent).tryRun(route, message, "session-1", 0.7, "");
     }
 
     @Test
@@ -382,7 +567,7 @@ class ShoppingRouteExecutorTest {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         ShoppingTaskPolicyRegistry policyRegistry = new ShoppingTaskPolicyRegistry();
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of("budget", "300"),
@@ -408,7 +593,7 @@ class ShoppingRouteExecutorTest {
                 ""
         );
 
-        assertEquals(List.of("PRODUCT_SELECTION", "RECOMMENDATION"),
+        assertEquals(List.of("RECOMMENDATION"),
                 request.taskPolicies().stream().map(ShoppingTaskPolicy::id).toList());
         assertEquals("预算300给6岁孩子买生日礼物", request.userMessage());
         assertFalse(request.userMessage().contains("观察到的任务类型"));
@@ -500,7 +685,7 @@ class ShoppingRouteExecutorTest {
     }
 
     @Test
-    void routeBeforeCoreShouldMergeExtractedPreferencePatchWithoutSendingRouteDeltaToCore() {
+    void routeBeforeCoreShouldMergeExtractedPreferencePatchAndSendUpdatedPreferenceAsTrustedContext() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
         ShoppingPreferenceExtractor shoppingPreferenceExtractor = mock(ShoppingPreferenceExtractor.class);
@@ -511,7 +696,7 @@ class ShoppingRouteExecutorTest {
         updatedState.setCategory("跑鞋");
         updatedState.setBrand("Nike");
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of(),
@@ -560,10 +745,11 @@ class ShoppingRouteExecutorTest {
         );
 
         verify(shoppingStateService).mergePreference("user-1", "session-1", patch);
-        assertTrue(request.userMessage().contains("品类：跑鞋"));
-        assertFalse(request.userMessage().contains("品牌：Nike"));
-        assertFalse(request.userMessage().contains("观察到的任务类型"));
-        assertFalse(request.userMessage().contains("观察到的用户意图"));
+        assertEquals("再推荐几双", request.userMessage());
+        assertTrue(request.trustedContext().contains("品类：跑鞋"));
+        assertTrue(request.trustedContext().contains("品牌：Nike"));
+        assertFalse(request.trustedContext().contains("观察到的任务类型"));
+        assertFalse(request.trustedContext().contains("观察到的用户意图"));
     }
 
     @Test
@@ -577,7 +763,7 @@ class ShoppingRouteExecutorTest {
         ShoppingPreferenceState updatedState = new ShoppingPreferenceState();
         updatedState.setCategory("跑鞋");
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRODUCT_KNOWLEDGE_QUERY",
+                "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("category", "跑鞋"),
@@ -673,6 +859,19 @@ class ShoppingRouteExecutorTest {
         verify(shoppingStateService, never()).mergePreference(eq("user-1"), eq("session-1"), any());
     }
 
+    private static Stream<String> missedComplexGuideQueries() {
+        return Stream.of(
+                "我刚开始打羽毛球，想买个不要太贵的拍子，推荐哪款？",
+                "想囤点宿舍早餐，方便、便宜一点，有什么推荐？",
+                "男生夏天用，预算 150 以内，想要控油洁面和防晒，怎么搭？",
+                "10000mAh 和 20000mAh 的充电宝差多少钱，适合什么人？",
+                "儿童磁力片 68 片和 128 片，哪个更适合送礼？",
+                "猫抓板波浪款和大号立式款怎么选？",
+                "我想买投影仪看电影，预算 1000 以内，但最好画质好一点，怎么选？",
+                "朋友养猫，想送个实用礼物，预算 100 左右，你推荐什么？"
+        );
+    }
+
     private static Stream<ShoppingStateService.ShoppingPreferencePatch> ignoredPreferencePatches() {
         return Stream.of(
                 null,
@@ -700,7 +899,7 @@ class ShoppingRouteExecutorTest {
         ShoppingPreferenceExtractor shoppingPreferenceExtractor = new ShoppingPreferenceExtractor();
         ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of("brand", "Nike", "category", "跑鞋"),

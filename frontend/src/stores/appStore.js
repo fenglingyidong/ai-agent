@@ -341,6 +341,7 @@ export function createAppStore(api = defaultApi, storage) {
             mediaUrls: []
         };
         state.messages.push(userMessage, assistantMessage);
+        const pendingAssistantMessage = state.messages[state.messages.length - 1];
         state.isStreaming = true;
         state.error = "";
         abortController = new AbortController();
@@ -356,11 +357,11 @@ export function createAppStore(api = defaultApi, storage) {
                     imageUrl
                 },
                 (chunk) => {
-                    assistantMessage.content += chunk;
+                    pendingAssistantMessage.content += chunk;
                 },
                 abortController.signal
             );
-            assistantMessage.status = "completed";
+            pendingAssistantMessage.status = "completed";
             try {
                 await refreshSessions();
             }
@@ -370,8 +371,8 @@ export function createAppStore(api = defaultApi, storage) {
         }
         catch (error) {
             state.error = resolveErrorMessage(error, "请求失败。", { networkFallback: true });
-            assistantMessage.status = error?.name === "AbortError" ? "partial" : "failed";
-            assistantMessage.errorMessage = error?.name === "AbortError"
+            pendingAssistantMessage.status = error?.name === "AbortError" ? "partial" : "failed";
+            pendingAssistantMessage.errorMessage = error?.name === "AbortError"
                 ? "请求已停止。"
                 : state.error;
             if (error instanceof ApiError && [401, 403].includes(error.status)) {

@@ -196,7 +196,7 @@ public class ShoppingIntentRouter {
             return null;
         }
         return new ShoppingIntentRoute(
-                "UNKNOWN",
+                route.normalizedIntent(),
                 route.normalizedTaskType(),
                 route.visualContext(),
                 Map.of(),
@@ -217,7 +217,7 @@ public class ShoppingIntentRouter {
             return true;
         }
         return "SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType()) && switch (route.normalizedIntent()) {
-            case "QUERY_ATTRIBUTE", "PRICE_STOCK_QUERY", "VIEW_CART", "ADD_TO_CART", "PREPARE_ORDER" -> true;
+            case "PRODUCT_SELECTION", "CART_CONFIRMATION" -> true;
             default -> false;
         };
     }
@@ -234,6 +234,7 @@ public class ShoppingIntentRouter {
             return "null";
         }
         Map<String, Object> trace = Map.of(
+                "intent", route.normalizedIntent(),
                 "task_type", route.normalizedTaskType(),
                 "visual_context", route.visualContext(),
                 "preference_delta", route.preferenceDelta(),

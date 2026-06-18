@@ -7,6 +7,9 @@ import com.example.ragagent.commerce.ShoppingPreferenceSnapshot;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
 import com.example.ragagent.mall.MallMcpContextClient;
+import com.example.ragagent.observability.RagTracing;
+import com.example.ragagent.tools.BuiltInTools;
+import io.opentelemetry.api.trace.Span;
 import org.springframework.ai.content.Media;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,10 +25,14 @@ import java.util.regex.Pattern;
 public class ShoppingRouteExecutor {
 
     private static final double DEFAULT_CONFIDENCE_THRESHOLD = 0.7;
+    private static final String EMPTY_KNOWLEDGE_MESSAGE = "商品知识库中没有检索到相关内容。";
     private static final Pattern MALL_KEYWORD_TEXT = Pattern.compile(".*(商品|价格|多少钱|库存|SKU|购物车|加购|加入购物车|下单|订单|确认订单|买|相似款|推荐).*");
     private static final Pattern HARD_MALL_OPERATION_TEXT = Pattern.compile(".*(购物车|加购|加入购物车|下单|订单|确认订单|创建订单|购买这|买这|买它).*");
+    private static final Pattern ORDER_CREATION_TEXT = Pattern.compile(".*(确认下单|提交订单|创建订单|立即下单|直接下单|下单吧|买这|买它|购买这).*");
     private static final Pattern REALTIME_MALL_TOOL_TEXT = Pattern.compile(".*(实时|价格|多少钱|库存|现货|SKU|sku|商品详情|详情|评价|优惠|促销|这款|这个商品|相似款).*");
     private static final Pattern NO_REALTIME_MALL_TOOL_TEXT = Pattern.compile(".*(不需要|不用|无需|不要).*?(实时|价格|库存|商城|搜索|查价).*");
+    private static final Pattern PRE_RETRIEVAL_ACTION_TEXT = Pattern.compile(".*(想买|买个|买哪款|买哪个|买什么|推荐|选哪个|怎么选|怎么搭|对比|比较|区别|差多少钱|适合|合适|送礼|礼物|配一套|搭配|组合|添几样|预算|不要太贵|便宜|实用).*");
+    private static final Pattern PRE_RETRIEVAL_PRODUCT_TEXT = Pattern.compile(".*(商品|SKU|sku|办公室|桌面|厨房|收纳|做饭|鼠标|键盘|机械键盘|台灯|护眼|静音|低噪音|人体工学|跑步|鞋|耳机|猫|猫粮|猫砂|猫抓板|露营|户外|徒步|装备|水杯|纸巾|书架|笔|充电宝|磁力片|羽毛球|拍子|早餐|宿舍|燕麦|洁面|防晒|控油|投影仪|投影|空气炸锅|电热水壶|置物架).*");
 
     @Autowired(required = false)
     private ShoppingIntentRouter intentRouter;
@@ -50,6 +57,12 @@ public class ShoppingRouteExecutor {
 
     @Autowired(required = false)
     private ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer;
+
+    @Autowired(required = false)
+    private BuiltInTools builtInTools;
+
+    @Autowired(required = false)
+    private RagTracing tracing;
 
     public ShoppingRouteExecutor() {
     }
@@ -84,6 +97,24 @@ public class ShoppingRouteExecutor {
                                  ShoppingStateService shoppingStateService,
                                  ShoppingPreferenceExtractor shoppingPreferenceExtractor,
                                  ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer) {
+        this(intentRouter,
+                mallMcpContextClient,
+                simpleTaskAgent,
+                taskPolicyRegistry,
+                shoppingStateService,
+                shoppingPreferenceExtractor,
+                shoppingPreferencePromptRenderer,
+                null);
+    }
+
+    public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
+                                 MallMcpContextClient mallMcpContextClient,
+                                 SimpleTaskAgent simpleTaskAgent,
+                                 ShoppingTaskPolicyRegistry taskPolicyRegistry,
+                                 ShoppingStateService shoppingStateService,
+                                 ShoppingPreferenceExtractor shoppingPreferenceExtractor,
+                                 ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer,
+                                 BuiltInTools builtInTools) {
         this.intentRouter = intentRouter;
         this.mallMcpContextClient = mallMcpContextClient;
         this.simpleTaskAgent = simpleTaskAgent;
@@ -91,6 +122,8 @@ public class ShoppingRouteExecutor {
         this.shoppingStateService = shoppingStateService;
         this.shoppingPreferenceExtractor = shoppingPreferenceExtractor;
         this.shoppingPreferencePromptRenderer = shoppingPreferencePromptRenderer;
+        this.builtInTools = builtInTools;
+        this.tracing = new RagTracing();
     }
 
     RoutedAgentRequest routeBeforeCore(String userId,
@@ -171,13 +204,20 @@ public class ShoppingRouteExecutor {
                         Flux.just("商城 MCP 调用失败：" + registration.message()));
             }
         }
+        boolean mallToolsAllowedForCore = mallToolsAllowedByPolicy && allowMallToolsForCore(route, normalizedMessage, safeMedia.size());
+        String coreAgentMessage = buildCoreAgentMessage(normalizedMessage, safeMedia.size());
+        String trustedContext = buildTrustedContext(
+                preferenceContextAfterRoute,
+                maybePreRetrieveKnowledge(route, normalizedMessage)
+        );
         return new RoutedAgentRequest(
-                buildCoreAgentMessage(normalizedMessage, safeMedia.size(), preferenceContextBeforeRoute),
+                coreAgentMessage,
                 resolveCoreMedia(route, safeMedia),
                 null,
-                mallToolsAllowedByPolicy && allowMallToolsForCore(route, normalizedMessage, safeMedia.size()),
+                mallToolsAllowedForCore,
                 taskPolicies,
-                isOrderCreationAllowed(route)
+                isOrderCreationAllowed(route, normalizedMessage),
+                trustedContext
         );
     }
 
@@ -246,11 +286,12 @@ public class ShoppingRouteExecutor {
         return StringUtils.hasText(rendered) ? rendered : "";
     }
 
-    private boolean isOrderCreationAllowed(ShoppingIntentRoute route) {
+    private boolean isOrderCreationAllowed(ShoppingIntentRoute route, String message) {
         return route != null
                 && route.isHighConfidence(confidenceThreshold())
-                && "CREATE_ORDER".equals(route.normalizedIntent())
-                && Boolean.TRUE.equals(route.needConfirm());
+                && "CART_CONFIRMATION".equals(route.normalizedIntent())
+                && Boolean.TRUE.equals(route.needConfirm())
+                && isExplicitOrderCreationText(message);
     }
 
     private List<ShoppingTaskPolicy> resolveTaskPolicies(ShoppingIntentRoute route) {
@@ -279,7 +320,7 @@ public class ShoppingRouteExecutor {
                 return true;
             }
             return switch (route.normalizedIntent()) {
-                case "QUERY_ATTRIBUTE", "PRICE_STOCK_QUERY", "FIND_SIMILAR", "VIEW_CART", "ADD_TO_CART", "PREPARE_ORDER" -> true;
+                case "PRODUCT_SELECTION", "CART_CONFIRMATION" -> true;
                 default -> false;
             };
         }
@@ -305,8 +346,7 @@ public class ShoppingRouteExecutor {
     private boolean hasRealtimeMallNeed(ShoppingIntentRoute route, String message) {
         String normalizedIntent = route == null ? "UNKNOWN" : route.normalizedIntent();
         if (switch (normalizedIntent) {
-            case "QUERY_ATTRIBUTE", "PRICE_STOCK_QUERY", "FIND_SIMILAR", "VIEW_CART",
-                    "ADD_TO_CART", "PREPARE_ORDER", "CREATE_ORDER" -> true;
+            case "PRODUCT_SELECTION", "CART_CONFIRMATION" -> true;
             default -> false;
         }) {
             return true;
@@ -331,6 +371,12 @@ public class ShoppingRouteExecutor {
         }
         return HARD_MALL_OPERATION_TEXT.matcher(normalizedMessage).matches()
                 || REALTIME_MALL_TOOL_TEXT.matcher(normalizedMessage).matches();
+    }
+
+    private boolean isExplicitOrderCreationText(String message) {
+        String normalizedMessage = StringUtils.hasText(message) ? message.trim() : "";
+        return StringUtils.hasText(normalizedMessage)
+                && ORDER_CREATION_TEXT.matcher(normalizedMessage).matches();
     }
 
     private boolean hasSpecificSkuSlot(ShoppingIntentRoute route) {
@@ -363,15 +409,95 @@ public class ShoppingRouteExecutor {
     }
 
     private String buildCoreAgentMessage(String message, int mediaCount) {
-        return buildCoreAgentMessage(message, mediaCount, "");
+        return appendMultimodalInstruction(message, mediaCount);
     }
 
-    private String buildCoreAgentMessage(String message, int mediaCount, String preferenceContext) {
-        String coreMessage = appendMultimodalInstruction(message, mediaCount);
-        if (!StringUtils.hasText(preferenceContext)) {
-            return coreMessage;
+    private String buildTrustedContext(String preferenceContext, String knowledgeContext) {
+        StringBuilder builder = new StringBuilder();
+        appendTrustedContextSection(builder, preferenceContext);
+        appendTrustedContextSection(builder, knowledgeContext);
+        return builder.toString();
+    }
+
+    private void appendTrustedContextSection(StringBuilder builder, String section) {
+        if (!StringUtils.hasText(section)) {
+            return;
         }
-        return preferenceContext.trim() + System.lineSeparator() + System.lineSeparator() + coreMessage;
+        if (!builder.isEmpty()) {
+            builder.append(System.lineSeparator()).append(System.lineSeparator());
+        }
+        builder.append(section.trim());
+    }
+
+    private String maybePreRetrieveKnowledge(ShoppingIntentRoute route, String message) {
+        if (!shouldPreRetrieveKnowledge(route, message)) {
+            setTraceAttribute("rag.pre_retrieval.required", false);
+            return "";
+        }
+        setTraceAttribute("rag.pre_retrieval.required", true);
+
+        try {
+            String knowledge = builtInTools == null ? "" : builtInTools.searchProductKnowledge(message);
+            if (!StringUtils.hasText(knowledge) || knowledge.contains(EMPTY_KNOWLEDGE_MESSAGE)) {
+                setTraceAttribute("rag.pre_retrieval.hit", false);
+                return "";
+            }
+            setTraceAttribute("rag.pre_retrieval.hit", true);
+            setTraceAttribute("rag.pre_retrieval.context_length", knowledge.length());
+            return """
+                    商品知识库预检索候选：
+                    %s
+
+                    使用规则：
+                    - 以上候选是本轮唯一可推荐商品池。
+                    - 推荐、选哪个、怎么选、对比和组合题必须从以上候选中给结论。
+                    - 禁止推荐候选外商品；候选全不适合时逐个说明不适合原因。
+                    """.formatted(knowledge.trim()).trim();
+        }
+        catch (RuntimeException ex) {
+            setTraceAttribute("rag.pre_retrieval.hit", false);
+            setTraceAttribute("rag.pre_retrieval.error", ex.getClass().getSimpleName());
+            return "";
+        }
+    }
+
+    private void setTraceAttribute(String key, boolean value) {
+        RagTracing activeTracing = tracing == null ? new RagTracing() : tracing;
+        Span span = activeTracing.currentSpan();
+        activeTracing.setAttribute(span, key, value);
+    }
+
+    private void setTraceAttribute(String key, long value) {
+        RagTracing activeTracing = tracing == null ? new RagTracing() : tracing;
+        Span span = activeTracing.currentSpan();
+        activeTracing.setAttribute(span, key, value);
+    }
+
+    private void setTraceAttribute(String key, String value) {
+        RagTracing activeTracing = tracing == null ? new RagTracing() : tracing;
+        Span span = activeTracing.currentSpan();
+        activeTracing.setAttribute(span, key, value);
+    }
+
+    private boolean shouldPreRetrieveKnowledge(ShoppingIntentRoute route, String message) {
+        return builtInTools != null
+                && route != null
+                && route.isHighConfidence(confidenceThreshold())
+                && "COMPLEX_REACT".equals(route.normalizedTaskType())
+                && isShoppingKnowledgeRequest(route, message);
+    }
+
+    private boolean isShoppingKnowledgeRequest(ShoppingIntentRoute route, String message) {
+        if (switch (route.normalizedIntent()) {
+            case "PRODUCT_SELECTION", "PRODUCT_COMPARE", "RECOMMENDATION" -> true;
+            default -> false;
+        }) {
+            return true;
+        }
+        String normalizedMessage = StringUtils.hasText(message) ? message.trim() : "";
+        return StringUtils.hasText(normalizedMessage)
+                && PRE_RETRIEVAL_ACTION_TEXT.matcher(normalizedMessage).matches()
+                && PRE_RETRIEVAL_PRODUCT_TEXT.matcher(normalizedMessage).matches();
     }
 
     private List<Media> resolveCoreMedia(ShoppingIntentRoute route, List<Media> media) {
@@ -379,7 +505,7 @@ public class ShoppingRouteExecutor {
             return List.of();
         }
         if (route != null && route.isHighConfidence(confidenceThreshold())
-                && (route.hasVisualContext() || "COMPLEX_RECOMMENDATION".equals(route.normalizedIntent()))) {
+                && (route.hasVisualContext() || "RECOMMENDATION".equals(route.normalizedIntent()))) {
             return List.of();
         }
         return media;

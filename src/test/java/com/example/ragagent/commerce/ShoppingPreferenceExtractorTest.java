@@ -32,7 +32,7 @@ class ShoppingPreferenceExtractorTest {
     void extractShouldReadRouteSlotsWithHigherStructure() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "COMPLEX_REACT",
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 Map.of(),
                 Map.of("category", "儿童积木", "brand", "乐高", "use_scene", "生日礼物"),
                 true,
@@ -62,7 +62,7 @@ class ShoppingPreferenceExtractorTest {
     void extractShouldReadPreferenceDeltaFromRoute() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "COMPLEX_REACT",
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 Map.of(),
                 Map.of(),
                 Map.of(
@@ -136,7 +136,7 @@ class ShoppingPreferenceExtractorTest {
     void extractShouldReadBudgetFromRouteSlots() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "COMPLEX_REACT",
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 Map.of(),
                 Map.of("budget", "300-500"),
                 true,
@@ -215,7 +215,7 @@ class ShoppingPreferenceExtractorTest {
     void extractShouldIgnoreReversedBudgetRangeFromRouteSlot() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "COMPLEX_REACT",
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 Map.of(),
                 Map.of("budget", "500-300", "category", "跑鞋"),
                 true,
@@ -243,7 +243,7 @@ class ShoppingPreferenceExtractorTest {
     void extractShouldReadVisualAliases() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "COMPLEX_REACT",
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 Map.of("brand_logo", "Nike", "main_color", "黑色"),
                 Map.of(),
                 true,

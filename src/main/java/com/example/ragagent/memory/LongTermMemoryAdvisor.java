@@ -5,6 +5,7 @@ import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Component;
@@ -34,8 +35,12 @@ public class LongTermMemoryAdvisor implements BaseAdvisor {
             return request;
         }
 
+        String longTermMemoryPrompt = longTermMemoryService.renderLongTermMemoryPrompt(longTermMemory);
         Prompt updatedPrompt = request.prompt()
-                .augmentSystemMessage(longTermMemoryService.renderLongTermMemoryPrompt(longTermMemory));
+                .augmentSystemMessage(systemMessage -> new SystemMessage(appendSystemMessage(
+                        systemMessage == null ? "" : systemMessage.getText(),
+                        longTermMemoryPrompt
+                )));
         return request.mutate().prompt(updatedPrompt).build();
     }
 
@@ -62,5 +67,18 @@ public class LongTermMemoryAdvisor implements BaseAdvisor {
     private String resolveUserId(Map<String, Object> context) {
         Object userId = context.get(USER_ID_KEY);
         return userId instanceof String id && StringUtils.hasText(id) ? id : DEFAULT_USER_ID;
+    }
+
+    private String appendSystemMessage(String currentSystemText, String extraSystemText) {
+        if (!StringUtils.hasText(currentSystemText)) {
+            return StringUtils.hasText(extraSystemText) ? extraSystemText.trim() : "";
+        }
+        if (!StringUtils.hasText(extraSystemText)) {
+            return currentSystemText.trim();
+        }
+        return currentSystemText.trim()
+                + System.lineSeparator()
+                + System.lineSeparator()
+                + extraSystemText.trim();
     }
 }

@@ -162,8 +162,7 @@ public record ShoppingIntentRoute(
     private static String deriveTaskType(String intent) {
         String normalizedIntent = StringUtils.hasText(intent) ? intent.trim().toUpperCase(Locale.ROOT) : "UNKNOWN";
         return switch (normalizedIntent) {
-            case "FAQ_SIMPLE_QUERY", "PRODUCT_KNOWLEDGE_QUERY" -> "FAQ_SIMPLE_QUERY";
-            case "QUERY_ATTRIBUTE", "PRICE_STOCK_QUERY", "VIEW_CART", "ADD_TO_CART", "PREPARE_ORDER" -> "SIMPLE_SHOPPING_TOOL";
+            case "CART_CONFIRMATION" -> "SIMPLE_SHOPPING_TOOL";
             default -> "COMPLEX_REACT";
         };
     }

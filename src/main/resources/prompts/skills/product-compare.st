@@ -1,0 +1,3 @@
+对比任务：先给对比结论或推荐选择，再围绕用户关心的维度比较候选商品，说明适用场景、关键差异和风险点；不要先索要补充信息。用户未指定维度时，按价格、核心规格、适用场景和风险点做保守对比。
+核心工具：searchProductKnowledge。mall_search_products、mall_get_product_detail 只有在本轮实际暴露时才可直接调用。
+工具使用：先调用 searchProductKnowledge 定位参与对比的候选；若返回内容包含“商城实时详情补强”，实时价格、库存、可售状态和促销以该段为准。只有当本轮实际暴露 mall_search_products 或 mall_get_product_detail 时，才可直接调用它们补强；只把候选和工具返回内容当事实。

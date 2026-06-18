@@ -1,0 +1,34 @@
+{
+  "runId": "local-smoke",
+  "totalScore": 8,
+  "maxScore": 10,
+  "categoryScores": [
+    {
+      "category": "单场景推荐题",
+      "score": 8,
+      "max": 10,
+      "count": 1
+    }
+  ],
+  "results": [
+    {
+      "id": "Q08",
+      "category": "单场景推荐题",
+      "question": "办公室用鼠标，希望点击声音小一点，买哪款？",
+      "answer": "针对您在办公室环境对“点击声音小”的核心需求，目前知识库中有一款非常匹配的静音鼠标推荐：\n\n**推荐型号：Mall Labs 无线鼠标 静音版 (SKU: 3004)**\n\n*   **核心优势**：\n    *   **专为静音设计**：商品名称直接标注“静音版”，且最新用户评价反馈明确指出“**按键安静**”，完全符合您降低点击噪音的诉求。\n    *   **办公场景适配**：适合通勤上班、居家办公等场景，连接稳定且操作顺手。\n    *   **续航表现**：评价中也提到了“续航表现不错”，减少频繁更换电池的麻烦。\n*   **价格与库存**：\n    *   当前价格：**89.00元**。\n    *   库存状态：现货充足（可售500件）。\n    *   优惠活动：参与“满199减20”活动（如果您需要凑单购买其他办公用品，如之前关注的键盘，可享受此优惠）。\n\n**对比参考**：\n同品牌还有一款“无线鼠标 人体工学版”（159元），虽然握持更舒适，但其评价主要集中在外观和手感上，未特别强调“静音”特性。因此，若您首要考虑的是**低噪音**，**89元的静音版**是性价比更高且更精准的选择。\n\n您可以直接下单这款静音版鼠标，它能有效解决办公室点击声打扰同事或自己的问题。",
+      "score": 8,
+      "reason": "命中部分期望商品/规格/数字；链路包含 RAG 或工具证据",
+      "diagnosis": "COMPLEX_REACT",
+      "manualReviewRequired": false,
+      "routeTaskType": "COMPLEX_REACT",
+      "mallToolCount": 1,
+      "ragSpanCount": 14,
+      "mallEnrichCount": 2,
+      "mallTools": [
+        "tool.searchProductKnowledge"
+      ]
+    }
+  ],
+  "sourceResults": "docs/evaluation/artifacts/local-smoke-mall-sku-rag-eval-results.json",
+  "langfuseTraceSummary": "docs/evaluation/artifacts/local-smoke-langfuse-trace-summary.jsonl"
+}

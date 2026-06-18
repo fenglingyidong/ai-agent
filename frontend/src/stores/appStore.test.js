@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { nextTick, watch } from "vue";
 import { ApiError } from "../api/http.js";
 import { createAppStore, turnsToMessages } from "./appStore.js";
 
@@ -69,6 +70,37 @@ describe("appStore", () => {
 
         expect(store.state.messages[1].content).toBe("推荐结果");
         expect(store.state.messages[1].status).toBe("completed");
+    });
+
+    it("notifies watchers when streamed chunks update the assistant message", async () => {
+        const api = {
+            streamReactChat: vi.fn(async (_auth, _payload, onChunk) => {
+                onChunk("推荐");
+                await nextTick();
+                onChunk("结果");
+                await nextTick();
+            }),
+            listSessions: vi.fn().mockResolvedValue([])
+        };
+        const store = createAppStore(api, memoryStorage());
+        const observedContents = [];
+        const stopWatching = watch(
+            () => store.state.messages[1]?.content || "",
+            (content) => observedContents.push(content)
+        );
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+        store.state.currentSessionId = "session-1";
+
+        try {
+            await store.sendMessage({ message: "推荐跑鞋", files: [], imageUrl: "" });
+            await nextTick();
+        }
+        finally {
+            stopWatching();
+        }
+
+        expect(observedContents).toContain("推荐");
+        expect(observedContents).toContain("推荐结果");
     });
 
     it("keeps assistant completed when session refresh fails after streaming", async () => {

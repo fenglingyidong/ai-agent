@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -46,16 +48,22 @@ class MallMcpToolCallbackTest {
                 tool("mall_get_product_detail")
         ), null));
         when(syncClient.callTool(any(McpSchema.CallToolRequest.class))).thenReturn(new McpSchema.CallToolResult(
-                List.of(new McpSchema.TextContent("{\"ok\":true}")),
+                List.of(new McpSchema.TextContent("""
+                        {"ok":true,"data":{"skuId":3020,"skuName":"静音鼠标","price":89.00,"stock":500}}
+                        """)),
                 false
         ));
         MallMcpToolCallback mallToolCallback = new MallMcpToolCallback(mallMcpClient);
 
-        mallToolCallback.getToolCallbacks().get(0).call(
+        String result = mallToolCallback.getToolCallbacks().get(0).call(
                 "{\"skuId\":3020}",
                 new ToolContext(Map.of("sessionId", "session-1"))
         );
 
+        assertTrue(result.contains("工具结果事实：商城返回商品详情。"));
+        assertTrue(result.contains("商品：静音鼠标"));
+        assertTrue(result.contains("价格：89.00 元"));
+        assertFalse(result.contains("{\"ok\""));
         ArgumentCaptor<McpSchema.CallToolRequest> captor = ArgumentCaptor.forClass(McpSchema.CallToolRequest.class);
         verify(syncClient).callTool(captor.capture());
         assertEquals("mall_get_product_detail", captor.getValue().name());

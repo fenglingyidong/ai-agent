@@ -13,16 +13,16 @@ class ShoppingTaskPolicyRegistryTest {
     private final ShoppingTaskPolicyRegistry registry = new ShoppingTaskPolicyRegistry();
 
     @Test
-    void shouldResolvePlannerSelectedPoliciesInOrder() {
+    void shouldResolveComplexRecommendationSkillsFromIntent() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "COMPLEX_RECOMMENDATION",
+                "RECOMMENDATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of("budget", "300"),
                 true,
                 0.9,
                 "复杂推荐",
-                List.of("PRODUCT_SELECTION", "FOLLOW_UP", "RECOMMENDATION"),
+                List.of("IGNORED_BY_REGISTRY"),
                 List.of(),
                 List.of("searchProductKnowledge"),
                 false,
@@ -31,21 +31,48 @@ class ShoppingTaskPolicyRegistryTest {
 
         List<ShoppingTaskPolicy> policies = registry.resolve(route);
 
-        assertEquals(List.of("PRODUCT_SELECTION", "FOLLOW_UP", "RECOMMENDATION"),
+        assertEquals(List.of("RECOMMENDATION"),
                 policies.stream().map(ShoppingTaskPolicy::id).toList());
-        assertTrue(policies.get(1).promptFragment().contains("先追问缺失参数"));
+        assertEquals("推荐", policies.get(0).name());
+        assertTrue(policies.get(0).promptFragment().contains("推荐任务"));
+        assertTrue(policies.get(0).promptFragment().contains("先调用 searchProductKnowledge"));
+        assertTrue(policies.get(0).promptFragment().contains("不得请求用户先补充信息"));
+    }
+
+    @Test
+    void shouldResolveProductCompareSkillFromIntent() {
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_COMPARE",
+                "COMPLEX_REACT",
+                Map.of(),
+                Map.of(),
+                true,
+                0.9,
+                "商品对比"
+        );
+
+        List<ShoppingTaskPolicy> policies = registry.resolve(route);
+
+        assertEquals(List.of("PRODUCT_COMPARE"),
+                policies.stream().map(ShoppingTaskPolicy::id).toList());
+        assertTrue(policies.get(0).promptFragment().contains("对比任务"));
     }
 
     @Test
     void shouldFallbackToCartConfirmationForCreateOrder() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "CREATE_ORDER",
+                "CART_CONFIRMATION",
                 "COMPLEX_REACT",
                 Map.of(),
                 Map.of(),
                 true,
                 0.95,
-                "最终下单"
+                "最终下单",
+                List.of(),
+                List.of(),
+                List.of("mall_create_order"),
+                true,
+                "HIGH"
         );
 
         List<ShoppingTaskPolicy> policies = registry.resolve(route);
@@ -56,9 +83,9 @@ class ShoppingTaskPolicyRegistryTest {
     }
 
     @Test
-    void shouldPrependFollowUpWhenRouteHasMissingSlots() {
+    void shouldNotAddFollowUpWhenRouteHasMissingSlots() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRICE_STOCK_QUERY",
+                "PRODUCT_SELECTION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "儿童积木"),
@@ -74,7 +101,26 @@ class ShoppingTaskPolicyRegistryTest {
 
         List<ShoppingTaskPolicy> policies = registry.resolve(route);
 
-        assertEquals(List.of("FOLLOW_UP", "PRODUCT_SELECTION"),
+        assertEquals(List.of("PRODUCT_SELECTION"),
                 policies.stream().map(ShoppingTaskPolicy::id).toList());
+    }
+
+    @Test
+    void shouldResolveEmptyUnknownSkillWithoutFallbackPolicies() {
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "UNKNOWN",
+                "COMPLEX_REACT",
+                Map.of(),
+                Map.of(),
+                true,
+                0.8,
+                "未知复杂任务"
+        );
+
+        List<ShoppingTaskPolicy> policies = registry.resolve(route);
+
+        assertEquals(List.of("UNKNOWN"), policies.stream().map(ShoppingTaskPolicy::id).toList());
+        assertEquals("前置路由未能识别用户意图，请自行判断。", policies.get(0).promptFragment());
+        assertTrue(policies.get(0).allowedToolNames().isEmpty());
     }
 }

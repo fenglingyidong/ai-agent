@@ -65,7 +65,7 @@ flowchart LR
 
 - 商城业务（商品、购物车、普通订单）不直连商城 REST，全部通过独立的 `mall-mcp` 服务暴露：MCP endpoint `http://localhost:8120/mcp`，上下文接口 `http://localhost:8120/internal/mcp/mall/context`。
 - 工具集合：`mall_search_products`、`mall_get_product_detail`、`mall_add_to_cart`、`mall_view_cart`、`mall_prepare_order`、`mall_create_order`。
-- `mall_create_order` 设有 Java 侧硬门禁：路由类型必须为 `CREATE_ORDER`，且参数必须包含有效 `confirmationId` 和 `userConfirmed=true`，否则在 `ReActAgent` 层直接拒绝放行。
+- `mall_create_order` 设有 Java 侧硬门禁：路由意图必须为 `CART_CONFIRMATION`，路由必须标记 `need_confirm=true`，用户本轮文本必须有明确下单语义，且工具参数必须包含有效 `confirmationId` 和 `userConfirmed=true`，否则在 `ReActAgent` 层直接拒绝放行。
 - 可选 WebSearch MCP 通过 `ToolCallbackProvider` 自动注册，不在默认链路上。
 
 ## RAG 检索

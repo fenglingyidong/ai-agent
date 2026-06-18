@@ -1,0 +1,61 @@
+{
+    "runId":  "simplefact-20260616-185101",
+    "startedAt":  "2026-06-16T10:51:01.0503023Z",
+    "finishedAt":  "2026-06-16T10:51:34.4322490Z",
+    "modelId":  "qwen",
+    "webSearchEnabled":  false,
+    "endpoint":  "http://localhost:18082/api/react",
+    "total":  6,
+    "completed":  6,
+    "done":  true,
+    "results":  [
+                    {
+                        "id":  "Q01",
+                        "question":  "轻量跑步鞋 42 码现在多少钱？库存够不够？",
+                        "sessionId":  "simplefact-20260616-185101-Q01",
+                        "status":  "ok",
+                        "totalMs":  10046,
+                        "answer":  "工具结果事实：轻量跑步鞋 42码售价399.00元，库存300双，足够购买。"
+                    },
+                    {
+                        "id":  "Q02",
+                        "question":  "有没有 87 键的机械键盘？是什么轴，多少钱？",
+                        "sessionId":  "simplefact-20260616-185101-Q02",
+                        "status":  "ok",
+                        "totalMs":  7048,
+                        "answer":  "有87键机械键盘，红轴款价格129元。其他款式如青轴299元、无线矮轴259元，具体选择可根据使用偏好决定。"
+                    },
+                    {
+                        "id":  "Q03",
+                        "question":  "Aster 的黑色保温杯是多大容量，价格是多少？",
+                        "sessionId":  "simplefact-20260616-185101-Q03",
+                        "status":  "ok",
+                        "totalMs":  4279,
+                        "answer":  "工具调用失败：未返回商品详情，无法确认容量与价格。"
+                    },
+                    {
+                        "id":  "Q04",
+                        "question":  "猫粮 10kg 的那款还有多少库存？",
+                        "sessionId":  "simplefact-20260616-185101-Q04",
+                        "status":  "ok",
+                        "totalMs":  4542,
+                        "answer":  "您询问的“猫粮全价粮 10kg”目前库存为200件。"
+                    },
+                    {
+                        "id":  "Q05",
+                        "question":  "彩色中性笔套装有多少支？价格和库存是多少？",
+                        "sessionId":  "simplefact-20260616-185101-Q05",
+                        "status":  "ok",
+                        "totalMs":  3767,
+                        "answer":  "商城 MCP 调用失败。"
+                    },
+                    {
+                        "id":  "Q06",
+                        "question":  "婴儿湿巾 80 抽 12 包这款多少钱？",
+                        "sessionId":  "simplefact-20260616-185101-Q06",
+                        "status":  "ok",
+                        "totalMs":  3633,
+                        "answer":  "这款婴儿湿巾 80抽 12包的价格是99.00元。"
+                    }
+                ]
+}

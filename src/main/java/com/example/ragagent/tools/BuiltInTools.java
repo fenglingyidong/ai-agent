@@ -1,8 +1,12 @@
 package com.example.ragagent.tools;
 
 import com.example.ragagent.commerce.ShoppingPreferenceState;
-import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingStateService;
+import com.example.ragagent.mall.MallMcpClient;
+import com.example.ragagent.observability.RagTracing;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.opentelemetry.api.trace.Span;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
@@ -13,56 +17,69 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
 
 @Component
 public class BuiltInTools {
 
-    private static final String TOOL_CONTEXT_USER_ID = "userId";
     private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
     public static final String TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE = "searchProductKnowledgeCache";
-    private static final String DEFAULT_USER_ID = "anonymous";
-    private static final String DEFAULT_SESSION_ID = "default";
+    private static final int MAX_MALL_DETAIL_SKUS = 3;
 
     @Autowired
     private DocumentRetriever documentRetriever;
 
+    @Autowired(required = false)
+    private MallMcpClient mallMcpClient;
+
     @Autowired
-    private ShoppingStateService shoppingStateService;
+    private ObjectMapper objectMapper;
+
+    @Autowired
+    private RagTracing tracing;
 
     public BuiltInTools() {
     }
 
     public BuiltInTools(DocumentRetriever documentRetriever, ShoppingStateService shoppingStateService) {
+        this(documentRetriever, shoppingStateService, null, new ObjectMapper());
+    }
+
+    public BuiltInTools(DocumentRetriever documentRetriever,
+                        ShoppingStateService shoppingStateService,
+                        MallMcpClient mallMcpClient,
+                        ObjectMapper objectMapper) {
         this.documentRetriever = documentRetriever;
-        this.shoppingStateService = shoppingStateService;
+        this.mallMcpClient = mallMcpClient;
+        this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
+        this.tracing = new RagTracing();
     }
 
     public String searchProductKnowledge(String query) {
         return searchProductKnowledge(query, null);
     }
 
-    @Tool(description = "检索商品知识库、商品详情、规格参数、评价摘要和导购话术。适合回答已入库的商品事实、选品建议和对比依据；实时价格、库存、购物车和订单必须使用 mall_* MCP 工具。")
+    @Tool(description = "检索商品知识库、商品详情、规格参数、评价摘要和导购话术。适合回答已入库的商品事实、选品建议和对比依据；返回内容可能包含商城实时详情补强，若未包含，实时价格、库存、购物车和订单必须使用 mall_* MCP 工具。")
     public String searchProductKnowledge(@ToolParam(description = "用户商品需求或需要核验的商品事实") String query,
                                          ToolContext toolContext) {
         String normalizedQuery = normalizeQuery(query);
         ConcurrentMap<String, String> cache = searchProductKnowledgeCache(toolContext);
         if (cache == null) {
-            return renderProductKnowledge(normalizedQuery);
+            return renderProductKnowledge(normalizedQuery, toolContext);
         }
-        return cache.computeIfAbsent(normalizedQuery, this::renderProductKnowledge);
+        return cache.computeIfAbsent(normalizedQuery, key -> renderProductKnowledge(key, toolContext));
     }
 
-    private String renderProductKnowledge(String query) {
+    private String renderProductKnowledge(String query, ToolContext toolContext) {
         List<Document> documents = documentRetriever.retrieve(new Query(query));
         if (documents == null || documents.isEmpty()) {
             return "商品知识库中没有检索到相关内容。";
         }
 
         StringBuilder builder = new StringBuilder("""
-                回答约束：以下内容来自商品知识库原文和元数据；商品名、SKU、品牌、类目、价格快照、库存快照、促销快照、评价摘要可作为知识库事实。年龄、适用人群、使用场景、购买建议等没有明确字段时不要当作知识库事实，需要标注为导购推断或说明知识库未明确。价格和库存是导入快照，不代表实时商城状态。
+                回答约束：以下内容来自当前商品知识库原文和元数据；商品名、SKU、品牌、类目、规格、适用场景、评价摘要、价格桶和导购说明可作为商品知识库事实。价格桶只用于预算召回和初筛，不是精确价格。精确价格、库存、可售数和促销优惠必须以后续商城实时详情或 mall_* 工具结果为准。不要引用或保留已废弃的历史快照口径。
                 """.trim());
         for (int index = 0; index < documents.size(); index++) {
             Document document = documents.get(index);
@@ -78,7 +95,91 @@ public class BuiltInTools {
             appendMetadata(builder, document, "attributes", "属性");
             builder.append(System.lineSeparator()).append(document.getText());
         }
+        appendMallRealtimeDetails(builder, documents, toolContext);
         return builder.toString();
+    }
+
+    private void appendMallRealtimeDetails(StringBuilder builder, List<Document> documents, ToolContext toolContext) {
+        List<String> skuIds = uniqueSkuIds(documents);
+        if (skuIds.isEmpty() || mallMcpClient == null) {
+            return;
+        }
+
+        RagTracing activeTracing = tracing == null ? new RagTracing() : tracing;
+        activeTracing.inSpan("rag.mall_enrich", () -> {
+            Span span = activeTracing.currentSpan();
+            activeTracing.setAttribute(span, "rag.mall_enrich.sku_count", skuIds.size());
+            int successCount = 0;
+            int failedCount = 0;
+            builder.append(System.lineSeparator()).append(System.lineSeparator());
+            builder.append("商城实时详情补强：以下内容来自 mall_get_product_detail；价格、库存、可售数和促销优惠等实时字段以本段为准。商品知识库只提供价格桶和非实时商品知识，不提供实时交易字段。");
+            for (int index = 0; index < skuIds.size(); index++) {
+                String skuId = skuIds.get(index);
+                builder.append(System.lineSeparator()).append(System.lineSeparator());
+                builder.append("[商城实时详情 ").append(index + 1).append("]");
+                builder.append(System.lineSeparator()).append("SKU: ").append(skuId);
+                try {
+                    String detail = mallMcpClient.callTool("mall_get_product_detail", mallDetailArguments(skuId, toolContext));
+                    builder.append(System.lineSeparator()).append("查询状态: 成功");
+                    builder.append(System.lineSeparator()).append(detail);
+                    successCount++;
+                }
+                catch (RuntimeException ex) {
+                    builder.append(System.lineSeparator()).append("查询状态: 失败");
+                    builder.append(System.lineSeparator()).append("说明: 保留上方商品知识库结果；商城实时详情暂不可用。");
+                    builder.append(System.lineSeparator()).append("错误类型: ").append(ex.getClass().getSimpleName());
+                    failedCount++;
+                }
+            }
+            activeTracing.setAttribute(span, "rag.mall_enrich.success_count", successCount);
+            activeTracing.setAttribute(span, "rag.mall_enrich.failed_count", failedCount);
+            activeTracing.setAttribute(span, "rag.mall_enrich.sku_ids", String.join(",", skuIds));
+            return null;
+        });
+    }
+
+    private List<String> uniqueSkuIds(List<Document> documents) {
+        LinkedHashSet<String> skuIds = new LinkedHashSet<>();
+        if (documents == null) {
+            return List.of();
+        }
+        for (Document document : documents) {
+            String skuId = readSkuId(document);
+            if (StringUtils.hasText(skuId)) {
+                skuIds.add(skuId.trim());
+            }
+            if (skuIds.size() >= MAX_MALL_DETAIL_SKUS) {
+                break;
+            }
+        }
+        return List.copyOf(skuIds);
+    }
+
+    private String readSkuId(Document document) {
+        String directSkuId = readMetadataValue(document, "skuId");
+        if (StringUtils.hasText(directSkuId)) {
+            return directSkuId;
+        }
+        if (document == null || document.getMetadata() == null) {
+            return "";
+        }
+        Object attributes = document.getMetadata().get("attributes");
+        if (attributes instanceof java.util.Map<?, ?> map) {
+            Object value = map.get("skuId");
+            return value == null ? "" : value.toString();
+        }
+        return "";
+    }
+
+    private ObjectNode mallDetailArguments(String skuId, ToolContext toolContext) {
+        ObjectNode arguments = objectMapper == null ? new ObjectMapper().createObjectNode() : objectMapper.createObjectNode();
+        long numericSkuId = Long.parseLong(skuId.trim());
+        arguments.put("skuId", numericSkuId);
+        String sessionId = readToolContextValue(toolContext, TOOL_CONTEXT_SESSION_ID);
+        if (StringUtils.hasText(sessionId)) {
+            arguments.put("sessionId", sessionId);
+        }
+        return arguments;
     }
 
     @SuppressWarnings("unchecked")
@@ -97,37 +198,6 @@ public class BuiltInTools {
         return query == null ? "" : query.trim().replace("\r\n", "\n").replace('\r', '\n');
     }
 
-    @Tool(description = "内部更新用户短期导购偏好状态，包括品类、预算、品牌、尺码、颜色、风格和使用场景。偏好写入对用户透明，最终回答中不要提及已记录、已更新或已保存偏好。不要把 token、密码、手机号等敏感信息写入偏好状态。")
-    public String updateShoppingPreference(String category,
-                                           Integer budgetMin,
-                                           Integer budgetMax,
-                                           String brand,
-                                           String size,
-                                           String color,
-                                           String style,
-                                           String usageScenario,
-                                           ToolContext toolContext) {
-        shoppingStateService.mergePreference(
-                resolveCurrentUserId(toolContext),
-                resolveCurrentSessionId(toolContext),
-                new ShoppingStateService.ShoppingPreferencePatch(
-                        category,
-                        budgetMin,
-                        budgetMax,
-                        brand,
-                        size,
-                        color,
-                        style,
-                        usageScenario,
-                        Set.of(),
-                        ShoppingPreferenceSource.MODEL_TOOL.name(),
-                        1.0,
-                        null
-                )
-        );
-        return "PREFERENCE_STATE_UPDATED_FOR_INTERNAL_USE_ONLY";
-    }
-
     private void appendMetadata(StringBuilder builder, Document document, String key, String label) {
         String value = readMetadataValue(document, key);
         if (StringUtils.hasText(value)) {
@@ -141,22 +211,6 @@ public class BuiltInTools {
         }
         Object value = document.getMetadata().get(key);
         return value == null ? "" : value.toString();
-    }
-
-    private String resolveCurrentUserId(ToolContext toolContext) {
-        String contextUserId = readToolContextValue(toolContext, TOOL_CONTEXT_USER_ID);
-        if (StringUtils.hasText(contextUserId)) {
-            return contextUserId;
-        }
-        return DEFAULT_USER_ID;
-    }
-
-    private String resolveCurrentSessionId(ToolContext toolContext) {
-        String contextSessionId = readToolContextValue(toolContext, TOOL_CONTEXT_SESSION_ID);
-        if (StringUtils.hasText(contextSessionId)) {
-            return contextSessionId;
-        }
-        return DEFAULT_SESSION_ID;
     }
 
     private String readToolContextValue(ToolContext toolContext, String key) {

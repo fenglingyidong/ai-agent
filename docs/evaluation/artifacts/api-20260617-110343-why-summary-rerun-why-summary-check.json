@@ -1,0 +1,25 @@
+{
+  "runId": "api-20260617-110343-why-summary-rerun",
+  "resultFile": "docs\\evaluation\\artifacts\\api-20260617-110343-why-summary-rerun-mall-sku-rag-target-results.json",
+  "totalCompleted": 2,
+  "withWhySummary": 0,
+  "withoutWhySummary": 2,
+  "rows": [
+    {
+      "id": "Q07",
+      "status": 401,
+      "durationSeconds": 1.803,
+      "hasWhySummary": false,
+      "whySummary": "",
+      "answerPreview": "{\"timestamp\":\"2026-06-17T03:04:28.121+00:00\",\"status\":401,\"error\":\"Unauthorized\",\"path\":\"/api/react\"}"
+    },
+    {
+      "id": "Q08",
+      "status": 401,
+      "durationSeconds": 0.115,
+      "hasWhySummary": false,
+      "whySummary": "",
+      "answerPreview": "{\"timestamp\":\"2026-06-17T03:04:28.251+00:00\",\"status\":401,\"error\":\"Unauthorized\",\"path\":\"/api/react\"}"
+    }
+  ]
+}

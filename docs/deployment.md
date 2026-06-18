@@ -159,16 +159,14 @@ $env:LANGFUSE_CAPTURE_PROMPT="false"
 $env:LANGFUSE_CAPTURE_TOOL_PAYLOAD="false"
 $env:LANGFUSE_CAPTURE_RAG_CONTENT="false"
 $env:LANGFUSE_MAX_CAPTURE_CHARS="8000"
-$env:OTEL_SERVICE_NAME="rag-agent"
-$env:OTEL_TRACES_EXPORTER="otlp"
-$env:OTEL_METRICS_EXPORTER="none"
-$env:OTEL_LOGS_EXPORTER="none"
-$env:OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
-$env:OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:3001/api/public/otel"
-$env:OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic $auth,x-langfuse-ingestion-version=4"
+$env:LANGFUSE_OTLP_TRACING_ENABLED="true"
+$env:LANGFUSE_OTLP_TRACES_ENDPOINT="http://localhost:3001/api/public/otel/v1/traces"
+$env:LANGFUSE_OTLP_AUTHORIZATION="Basic $auth"
 
-mvn.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8 -javaagent:D:/tools/opentelemetry-javaagent.jar"
+mvn.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8"
 ```
+
+当前项目通过 Spring Boot OTLP tracing 导出到 Langfuse，不需要再挂 OpenTelemetry Java Agent，也不要和旧的 `OTEL_*` / `-javaagent` 启动方式混用，避免重复 trace 或 HTTP 自动采集噪音。
 
 如果是在个人本地做 RAG/MCP 评测排查，需要查看 prompt、工具输入输出和 RAG 召回正文片段，可在启动前临时改为：
 
@@ -180,6 +178,8 @@ $env:LANGFUSE_MAX_CAPTURE_CHARS="20000"
 ```
 
 这些字段只有在链路实际调用工具时才会出现。模型没有调用 `searchProductKnowledge` 或商城 MCP 时，Langfuse 不会产生对应的 `tool.*` / `rag.*` 业务 span。
+
+开启 `LANGFUSE_CAPTURE_PROMPT=true` 后，除了项目手工记录的 `llm.react.input`，Spring AI 内建的 chat model observation 也会把每轮 Prompt 写入 `langfuse.observation.input`。如果 Langfuse 里看不到这些内建 observation，先确认 `LANGFUSE_OTLP_TRACING_ENABLED=true`、`LANGFUSE_OTLP_AUTHORIZATION` 已设置，并且后端是在上述命令启动后重新运行的。
 
 ## 健康检查
 
@@ -215,3 +215,4 @@ $owners | ForEach-Object { Stop-Process -Id $_ }
 - **MySQL 连接失败**：确认 `mall-mysql` 在运行，且 `3307` 映射正常。
 - **商城工具不可用**：确认 `mall-gateway` 在 `8100`，`mall-mcp` 在 `8120`，并且 `MCP_CONTEXT_SECRET` 两边一致。
 - **Langfuse 页面打不开**：确认 `langfuse-langfuse-web-1` 已启动，且 `observability/langfuse/docker-compose.yml` 中 Web 服务监听 `0.0.0.0`。
+- **`Failed to export spans` / `HTTP status code 401`**：Langfuse OTLP 鉴权失败。重新从 Langfuse 项目设置复制同一项目的 public key 和 secret key，确认 `$pair` 形如 `pk-lf-...:sk-lf-...`，重新生成 `$auth`，并在同一个 PowerShell 窗口里重启后端。不要继续使用占位值 `pk-lf-xxx:sk-lf-xxx`，也不要混用旧的 `OTEL_EXPORTER_OTLP_HEADERS`。

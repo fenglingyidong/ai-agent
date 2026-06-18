@@ -104,7 +104,7 @@ docker compose up -d prometheus grafana
 - **Milvus collection 不存在**：首次启动会按 `MILVUS_INITIALIZE_SCHEMA=true` 自动建集合，确认 `MILVUS_HOST/PORT` 可达且账号有建库权限。
 - **MySQL 连接失败**：默认端口 `3307`（非 3306），如本机 MySQL 装在 3306，需用 `MYSQL_URL` 覆盖。
 - **`mall_*` 工具不可用**：检查 `MALL_MCP_BASE_URL` 指向的 `mall-mcp` 服务和 `MCP_CONTEXT_SECRET` 是否与 `mall-mcp` 侧一致；`mall-mcp` 未启动时商城 B 类快车道会直接降级。
-- **`mall_create_order` 被拒绝**：这是 Java 侧硬门禁，需要路由为 `CREATE_ORDER` 且参数包含有效 `confirmationId` 与 `userConfirmed=true`，详见 [architecture.md#mcp-边界](architecture.md#mcp-边界)。
+- **`mall_create_order` 被拒绝**：这是 Java 侧硬门禁，需要路由意图为 `CART_CONFIRMATION`、路由标记 `need_confirm=true`、本轮文本有明确下单语义，且参数包含有效 `confirmationId` 与 `userConfirmed=true`，详见 [architecture.md#mcp-边界](architecture.md#mcp-边界)。
 - **前端启动提示 `EADDRINUSE: 4173`**：已有旧前端或 Vite 进程占用端口，按上方端口释放命令停止后重新执行 `npm run dev`。
 - **流式请求中途断开**：调大 `SPRING_MVC_ASYNC_REQUEST_TIMEOUT`。
 

@@ -48,20 +48,20 @@ class ReActAgentTaskPolicyTest {
         ConversationMemoryService conversationMemoryService = mock(ConversationMemoryService.class);
         List<String> systemPrompts = new ArrayList<>();
         List<ToolCallback> registeredCallbacks = new ArrayList<>();
-        ShoppingTaskPolicy followUpOnly = new ShoppingTaskPolicy(
-                "FOLLOW_UP",
-                "追问补槽",
-                Set.of("COMPLEX_RECOMMENDATION"),
+        ShoppingTaskPolicy noMallPolicy = new ShoppingTaskPolicy(
+                "NO_MALL_TEST",
+                "无商城工具测试",
+                Set.of("RECOMMENDATION"),
                 Set.of(),
-                Set.of("updateShoppingPreference"),
+                Set.of("searchProductKnowledge"),
                 false,
-                "追问补槽阶段：先追问缺失参数，一次最多问 2 个关键问题。"
+                "测试策略：只允许检索商品知识。"
         );
 
         when(conversationMemoryService.buildConversationId(anyString(), anyString()))
                 .thenAnswer(invocation -> invocation.getArgument(0) + "::" + invocation.getArgument(1));
         when(routeExecutor.routeBeforeCore("user-1", "session-1", "帮我推荐", List.of(), "", "", ""))
-                .thenReturn(new RoutedAgentRequest("帮我推荐", List.of(), null, false, List.of(followUpOnly)));
+                .thenReturn(new RoutedAgentRequest("帮我推荐", List.of(), null, false, List.of(noMallPolicy)));
         when(reactChatClient.prompt()).thenReturn(requestSpec);
         when(requestSpec.system(anyString())).thenAnswer(invocation -> {
             systemPrompts.add(invocation.getArgument(0));
@@ -95,13 +95,13 @@ class ReActAgentTaskPolicyTest {
                 List.of(), "", "", ""));
 
         assertTrue(systemPrompts.get(0).contains("当前导购任务策略"));
-        assertTrue(systemPrompts.get(0).contains("追问补槽阶段"));
+        assertTrue(systemPrompts.get(0).contains("测试策略：只允许检索商品知识。"));
         assertTrue(registeredCallbacks.stream()
                 .map(callback -> callback.getToolDefinition().name())
-                .anyMatch("updateShoppingPreference"::equals));
+                .anyMatch("searchProductKnowledge"::equals));
         assertFalse(registeredCallbacks.stream()
                 .map(callback -> callback.getToolDefinition().name())
-                .anyMatch("searchProductKnowledge"::equals));
+                .anyMatch("updateShoppingPreference"::equals));
     }
 
     @Test
@@ -178,21 +178,21 @@ class ReActAgentTaskPolicyTest {
         MallMcpClient mallMcpClient = mock(MallMcpClient.class);
         McpSyncClient syncClient = mock(McpSyncClient.class);
         List<ToolCallback> registeredCallbacks = new ArrayList<>();
-        ShoppingTaskPolicy followUpOnly = new ShoppingTaskPolicy(
-                "FOLLOW_UP",
-                "追问补槽",
-                Set.of("PRICE_STOCK_QUERY"),
+        ShoppingTaskPolicy noMallPolicy = new ShoppingTaskPolicy(
+                "NO_MALL_TEST",
+                "无商城工具测试",
+                Set.of("PRODUCT_SELECTION"),
                 Set.of(),
-                Set.of("updateShoppingPreference"),
+                Set.of("searchProductKnowledge"),
                 false,
-                "追问补槽阶段：先追问缺失参数。"
+                "测试策略：只允许检索商品知识。"
         );
 
         when(mallMcpClient.syncClient()).thenReturn(syncClient);
         when(conversationMemoryService.buildConversationId(anyString(), anyString()))
                 .thenAnswer(invocation -> invocation.getArgument(0) + "::" + invocation.getArgument(1));
         when(routeExecutor.routeBeforeCore("user-1", "session-1", "查库存", List.of(), "", "", ""))
-                .thenReturn(new RoutedAgentRequest("查库存", List.of(), null, true, List.of(followUpOnly)));
+                .thenReturn(new RoutedAgentRequest("查库存", List.of(), null, true, List.of(noMallPolicy)));
         when(reactChatClient.prompt()).thenReturn(requestSpec);
         when(requestSpec.system(anyString())).thenReturn(requestSpec);
         when(requestSpec.toolCallbacks(org.mockito.ArgumentMatchers.<List<ToolCallback>>any())).thenAnswer(invocation -> {
@@ -226,6 +226,9 @@ class ReActAgentTaskPolicyTest {
         verify(mallMcpClient, never()).ensureInitialized();
         verify(syncClient, never()).listTools();
         assertTrue(registeredCallbacks.stream()
+                .map(callback -> callback.getToolDefinition().name())
+                .anyMatch("searchProductKnowledge"::equals));
+        assertFalse(registeredCallbacks.stream()
                 .map(callback -> callback.getToolDefinition().name())
                 .anyMatch("updateShoppingPreference"::equals));
         assertFalse(registeredCallbacks.stream()
@@ -354,7 +357,7 @@ class ReActAgentTaskPolicyTest {
 
         String result = createOrderCallback.call("{\"confirmationId\":\"confirm-1\",\"userConfirmed\":true}");
 
-        assertTrue(result.contains("ok"));
+        assertTrue(result.contains("商城返回下单结果"));
         assertTrue(result.contains("order-1"));
         var requestCaptor = forClass(McpSchema.CallToolRequest.class);
         verify(syncClient).callTool(requestCaptor.capture());
@@ -387,7 +390,7 @@ class ReActAgentTaskPolicyTest {
         return new ShoppingTaskPolicy(
                 "CART_CONFIRMATION",
                 "订单确认",
-                Set.of("CREATE_ORDER"),
+                Set.of("CART_CONFIRMATION"),
                 Set.of(),
                 Set.of("mall_create_order"),
                 true,

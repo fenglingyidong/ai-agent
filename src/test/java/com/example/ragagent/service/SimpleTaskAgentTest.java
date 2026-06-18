@@ -48,7 +48,7 @@ class SimpleTaskAgentTest {
         when(mocks.requestSpec.system(systemPromptCaptor.capture())).thenReturn(mocks.requestSpec);
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRODUCT_KNOWLEDGE_QUERY",
+                "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("product_name", "儿童积木套装"),
@@ -81,7 +81,7 @@ class SimpleTaskAgentTest {
         when(mocks.requestSpec.user(userPromptCaptor.capture())).thenReturn(mocks.requestSpec);
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRODUCT_KNOWLEDGE_QUERY",
+                "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("category", "跑鞋"),
@@ -112,7 +112,7 @@ class SimpleTaskAgentTest {
         RecordingTracing tracing = new RecordingTracing();
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null, tracing);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRODUCT_KNOWLEDGE_QUERY",
+                "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
                 Map.of(),
                 Map.of("category", "跑鞋"),
@@ -145,7 +145,7 @@ class SimpleTaskAgentTest {
         );
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRICE_STOCK_QUERY",
+                "PRODUCT_SELECTION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "儿童积木套装 300片"),
@@ -186,7 +186,7 @@ class SimpleTaskAgentTest {
         RecordingTracing tracing = new RecordingTracing();
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient, tracing);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "VIEW_CART",
+                "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
@@ -219,7 +219,7 @@ class SimpleTaskAgentTest {
         AgentMocks mocks = agentMocks("不会返回");
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "VIEW_CART",
+                "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
@@ -239,7 +239,7 @@ class SimpleTaskAgentTest {
         AgentMocks mocks = agentMocks("不会返回");
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools());
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "VIEW_CART",
+                "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
@@ -260,7 +260,7 @@ class SimpleTaskAgentTest {
         when(mocks.requestSpec.call()).thenThrow(new SimpleTaskAgent.McpUnavailableException("mall-mcp 服务未启动或不可访问"));
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "VIEW_CART",
+                "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
@@ -285,7 +285,7 @@ class SimpleTaskAgentTest {
         when(mocks.requestSpec.call()).thenThrow(exception);
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "VIEW_CART",
+                "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of(),
@@ -308,7 +308,7 @@ class SimpleTaskAgentTest {
                     "mall-mcp 服务未启动或不可访问 token=secret-token input={\"skuId\":3020}"));
             SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
             ShoppingIntentRoute route = new ShoppingIntentRoute(
-                    "VIEW_CART",
+                    "CART_CONFIRMATION",
                     "SIMPLE_SHOPPING_TOOL",
                     Map.of(),
                     Map.of(),
@@ -339,7 +339,7 @@ class SimpleTaskAgentTest {
                     "discovery failed token=secret-token input={\"skuId\":3020}"));
             SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
             ShoppingIntentRoute route = new ShoppingIntentRoute(
-                    "VIEW_CART",
+                    "CART_CONFIRMATION",
                     "SIMPLE_SHOPPING_TOOL",
                     Map.of(),
                     Map.of(),

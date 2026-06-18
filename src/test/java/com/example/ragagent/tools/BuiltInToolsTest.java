@@ -1,8 +1,9 @@
 package com.example.ragagent.tools;
 
-import com.example.ragagent.commerce.ShoppingPreferenceState;
-import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingStateService;
+import com.example.ragagent.mall.MallMcpClient;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
@@ -21,6 +22,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 class BuiltInToolsTest {
@@ -39,11 +41,94 @@ class BuiltInToolsTest {
         String result = tools.searchProductKnowledge("儿童积木");
 
         assertTrue(result.contains("回答约束"));
-        assertTrue(result.contains("没有明确字段时不要当作知识库事实"));
+        assertTrue(result.contains("价格桶只用于预算召回和初筛"));
+        assertTrue(result.contains("不要引用或保留已废弃的历史快照口径"));
         assertTrue(result.contains("[商品知识 1]"));
         assertTrue(result.contains("标题: 儿童积木"));
         assertTrue(result.contains("SKU: 3020"));
         assertTrue(result.contains("儿童积木套装 300片"));
+        assertTrue(!result.contains("导入快照"));
+    }
+
+    @Test
+    void searchProductKnowledgeShouldAppendRealtimeMallDetailsForRetrievedSkus() {
+        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
+        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
+        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        BuiltInTools tools = new BuiltInTools(
+                documentRetriever,
+                shoppingStateService,
+                mallMcpClient,
+                new ObjectMapper()
+        );
+        Document document = Document.builder()
+                .text("机械键盘 红轴 87键，价格桶：100-200 元。")
+                .metadata(Map.of("title", "机械键盘 红轴 87键", "skuId", "3002", "brand", "Mall Labs"))
+                .build();
+        when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
+        when(mallMcpClient.callTool(eq("mall_get_product_detail"), any(ObjectNode.class)))
+                .thenReturn("{\"ok\":true,\"data\":{\"skuId\":3002,\"skuName\":\"机械键盘 红轴 87键\",\"price\":129.00,\"stock\":260}}");
+
+        String result = tools.searchProductKnowledge("87键机械键盘");
+
+        assertTrue(result.contains("[商城实时详情 1]"));
+        assertTrue(result.contains("SKU: 3002"));
+        assertTrue(result.contains("\"price\":129.00"));
+        assertTrue(result.contains("商品知识库只提供价格桶和非实时商品知识"));
+        assertTrue(!result.contains("仍只是导入快照"));
+        ArgumentCaptor<ObjectNode> argumentCaptor = ArgumentCaptor.forClass(ObjectNode.class);
+        verify(mallMcpClient).callTool(eq("mall_get_product_detail"), argumentCaptor.capture());
+        assertEquals(3002, argumentCaptor.getValue().get("skuId").asInt());
+    }
+
+    @Test
+    void searchProductKnowledgeShouldKeepRagResultWhenMallDetailFails() {
+        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
+        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
+        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        BuiltInTools tools = new BuiltInTools(
+                documentRetriever,
+                shoppingStateService,
+                mallMcpClient,
+                new ObjectMapper()
+        );
+        Document document = Document.builder()
+                .text("彩色中性笔套装 24支，价格桶：0-50 元。")
+                .metadata(Map.of("title", "中性笔套装 彩色 24支", "skuId", "4072"))
+                .build();
+        when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
+        when(mallMcpClient.callTool(eq("mall_get_product_detail"), any(ObjectNode.class)))
+                .thenThrow(new IllegalStateException("mall-mcp 服务未启动或不可访问"));
+
+        String result = tools.searchProductKnowledge("彩色中性笔套装");
+
+        assertTrue(result.contains("彩色中性笔套装 24支"));
+        assertTrue(result.contains("[商城实时详情 1]"));
+        assertTrue(result.contains("查询状态: 失败"));
+        assertTrue(result.contains("保留上方商品知识库结果"));
+    }
+
+    @Test
+    void searchProductKnowledgeShouldNotCallMallWhenRetrievedDocumentHasNoSku() {
+        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
+        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
+        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        BuiltInTools tools = new BuiltInTools(
+                documentRetriever,
+                shoppingStateService,
+                mallMcpClient,
+                new ObjectMapper()
+        );
+        Document document = Document.builder()
+                .text("没有 SKU 的导购知识。")
+                .metadata(Map.of("title", "导购知识"))
+                .build();
+        when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
+
+        String result = tools.searchProductKnowledge("导购知识");
+
+        assertTrue(result.contains("没有 SKU 的导购知识。"));
+        verify(mallMcpClient, never()).callTool(eq("mall_get_product_detail"), any(ObjectNode.class));
     }
 
     @Test
@@ -68,36 +153,4 @@ class BuiltInToolsTest {
         verify(documentRetriever, times(1)).retrieve(any(Query.class));
     }
 
-    @Test
-    void updateShoppingPreferenceShouldUseSpringAiToolContext() {
-        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
-        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
-        BuiltInTools tools = new BuiltInTools(documentRetriever, shoppingStateService);
-        ToolContext toolContext = new ToolContext(Map.of("userId", "demo-user", "sessionId", "front-session"));
-        ShoppingPreferenceState state = new ShoppingPreferenceState();
-        state.setCategory("玩具");
-        state.setBudgetMin(100);
-        state.setBudgetMax(200);
-        state.setBrand("启蒙");
-        when(shoppingStateService.mergePreference(
-                eq("demo-user"),
-                eq("front-session"),
-                any(ShoppingStateService.ShoppingPreferencePatch.class)
-        )).thenReturn(state);
-
-        String result = tools.updateShoppingPreference("玩具", 100, 200, "启蒙", "", "", "", "", toolContext);
-
-        assertEquals("PREFERENCE_STATE_UPDATED_FOR_INTERNAL_USE_ONLY", result);
-        ArgumentCaptor<ShoppingStateService.ShoppingPreferencePatch> patchCaptor =
-                ArgumentCaptor.forClass(ShoppingStateService.ShoppingPreferencePatch.class);
-        verify(shoppingStateService).mergePreference(
-                eq("demo-user"),
-                eq("front-session"),
-                patchCaptor.capture()
-        );
-        assertEquals(ShoppingPreferenceSource.MODEL_TOOL.name(), patchCaptor.getValue().source());
-        assertEquals(1.0, patchCaptor.getValue().confidence());
-        assertEquals(null, patchCaptor.getValue().turnNo());
-        assertTrue(patchCaptor.getValue().clearFields().isEmpty());
-    }
 }

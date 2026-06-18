@@ -20,7 +20,7 @@ record ShoppingTaskPolicy(String id,
         intents = immutableTextSet(intents);
         requiredSlots = immutableTextSet(requiredSlots);
         allowedToolNames = immutableTextSet(allowedToolNames);
-        promptFragment = normalizeRequired(promptFragment, "policy prompt");
+        promptFragment = promptFragment == null ? "" : promptFragment.trim();
     }
 
     private static String normalizeRequired(String value, String fieldName) {

@@ -1,5 +1,6 @@
 package com.example.ragagent.observability;
 
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.GlobalOpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
@@ -36,6 +37,11 @@ public class RagTracing {
     }
 
     @Autowired
+    public RagTracing(OpenTelemetry openTelemetry, LangfuseProperties properties) {
+        this((openTelemetry == null ? GlobalOpenTelemetry.get() : openTelemetry).getTracer("com.example.ragagent"),
+                properties);
+    }
+
     public RagTracing(LangfuseProperties properties) {
         this(GlobalOpenTelemetry.getTracer("com.example.ragagent"), properties);
     }

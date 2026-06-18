@@ -3,6 +3,7 @@ package com.example.ragagent.observability;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
 
+import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanBuilder;
 import io.opentelemetry.api.trace.Tracer;
@@ -95,6 +96,29 @@ class RagTracingTest {
 
         assertEquals("ok", result);
         verify(tracer, never()).spanBuilder("rag.retrieve");
+    }
+
+    @Test
+    void springConstructorShouldUseInjectedOpenTelemetryTracer() {
+        OpenTelemetry openTelemetry = mock(OpenTelemetry.class);
+        Tracer tracer = mock(Tracer.class);
+        SpanBuilder spanBuilder = mock(SpanBuilder.class);
+        Span span = mock(Span.class);
+        Scope scope = mock(Scope.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        when(openTelemetry.getTracer("com.example.ragagent")).thenReturn(tracer);
+        when(tracer.spanBuilder("rag.retrieve")).thenReturn(spanBuilder);
+        when(spanBuilder.startSpan()).thenReturn(span);
+        when(span.makeCurrent()).thenReturn(scope);
+        RagTracing enabledTracing = new RagTracing(openTelemetry, properties);
+
+        String result = enabledTracing.inSpan("rag.retrieve", () -> "ok");
+
+        assertEquals("ok", result);
+        verify(openTelemetry).getTracer("com.example.ragagent");
+        verify(tracer).spanBuilder("rag.retrieve");
+        verify(span).end();
     }
 
     @Test

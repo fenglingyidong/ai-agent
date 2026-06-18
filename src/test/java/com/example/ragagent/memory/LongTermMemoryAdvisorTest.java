@@ -42,6 +42,10 @@ class LongTermMemoryAdvisorTest {
                 .filter(SystemMessage.class::isInstance)
                 .map(message -> ((SystemMessage) message).getText())
                 .anyMatch(text -> text.contains("LONG_TERM_MEMORY: user prefers Java")));
+        assertTrue(messages.stream()
+                .filter(SystemMessage.class::isInstance)
+                .map(message -> ((SystemMessage) message).getText())
+                .anyMatch(text -> text.contains("base system")));
     }
 
     @Test

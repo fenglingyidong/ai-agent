@@ -41,7 +41,8 @@ class ReActAgentShortCircuitMemoryTest {
         MallMcpContextClient mallMcpContextClient = mock(MallMcpContextClient.class);
         SimpleTaskAgent simpleTaskAgent = mock(SimpleTaskAgent.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "PRICE_STOCK_QUERY",
+                "PRODUCT_SELECTION",
+                "SIMPLE_SHOPPING_TOOL",
                 Map.of(),
                 Map.of("product_name", "blocks"),
                 false,

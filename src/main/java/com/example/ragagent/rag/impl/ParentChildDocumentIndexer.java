@@ -30,8 +30,8 @@ import java.util.concurrent.ConcurrentMap;
 @Component
 public class ParentChildDocumentIndexer {
 
-    private static final int CHILD_CHUNK_SIZE = 120;
-    private static final int CHILD_CHUNK_OVERLAP = 12;
+    private static final int CHILD_CHUNK_SIZE = 200;
+    private static final int CHILD_CHUNK_OVERLAP = 24;
     private static final int CHILD_CHUNK_STRIDE = CHILD_CHUNK_SIZE - CHILD_CHUNK_OVERLAP;
 
     private static final List<Character> SPLIT_PUNCTUATION = List.of(
@@ -57,7 +57,7 @@ public class ParentChildDocumentIndexer {
         this.childDocumentWriter = childDocumentWriter;
         this.parentDocumentStore = parentDocumentStore;
         this.parentSplitter = TokenTextSplitter.builder()
-                .withChunkSize(350)
+                .withChunkSize(1000)
                 .withMinChunkSizeChars(200)
                 .withMinChunkLengthToEmbed(20)
                 .withMaxNumChunks(10_000)
@@ -272,7 +272,7 @@ public class ParentChildDocumentIndexer {
     }
 
     /**
-     * 按 token 滑窗切分 child chunk，固定使用 chunkSize=120、overlap=12、stride=108。
+     * 按 token 滑窗切分 child chunk，固定使用 chunkSize=200、overlap=24、stride=176。
      */
     private List<String> splitChildTextsWithOverlap(String parentText) {
         String normalizedParentText = normalizeText(parentText);

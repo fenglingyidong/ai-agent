@@ -5,12 +5,14 @@ import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.observability.RagTracing;
+import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.service.ChatModelRegistry;
 import com.example.ragagent.service.ReActAgent;
 import com.example.ragagent.tools.BuiltInTools;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.opentelemetry.api.trace.Span;
+import io.opentelemetry.context.Scope;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -19,8 +21,14 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.InMemoryChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.content.Media;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
@@ -39,7 +47,9 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -92,15 +102,61 @@ class ReActAgentTest {
         Set<String> toolNames = registeredCallbacks.stream()
                 .map(callback -> callback.getToolDefinition().name())
                 .collect(Collectors.toSet());
-        assertEquals(Set.of("searchProductKnowledge", "updateShoppingPreference"), toolNames);
+        assertEquals(Set.of("searchProductKnowledge"), toolNames);
         String systemPrompt = systemPromptCaptor.getValue();
-        assertTrue(systemPrompt.contains("买哪款/推荐/选哪个/对比/场景适配"));
-        assertTrue(systemPrompt.contains("办公室/静音/低噪音"));
-        assertTrue(systemPrompt.contains("先调用 searchProductKnowledge"));
-        assertTrue(systemPrompt.contains("工具调用前不要输出可见文字"));
+        assertTrue(systemPrompt.contains("核心规则"));
+        assertTrue(systemPrompt.contains("封闭商品池"));
+        assertTrue(systemPrompt.contains("至少引用 1 个候选商品"));
+        assertTrue(systemPrompt.contains("候选外商品"));
+        assertTrue(systemPrompt.contains("商城实时详情补强"));
+        assertTrue(systemPrompt.contains("工具调用完成前不要输出可见文字"));
         assertTrue(systemPrompt.contains("不要编造"));
+        assertTrue(systemPrompt.contains("为什么这么回答"));
+        assertTrue(!systemPrompt.contains("先调用 searchProductKnowledge"));
         assertTrue(!systemPrompt.contains("可基于已知知识和用户条件直接回答"));
         assertTrue(systemPrompt.length() < 900);
+    }
+
+    @Test
+    void runShouldSendPromptThroughDirectChatModelWithToolsAndContext() {
+        ChatModel chatModel = mock(ChatModel.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        MemoryTestSupport memory = memorySupport();
+        ArgumentCaptor<Prompt> promptCaptor = ArgumentCaptor.forClass(Prompt.class);
+        when(chatModel.stream(promptCaptor.capture())).thenReturn(Flux.just(chatResponse("4")));
+
+        ReActAgent agent = new ReActAgent(
+                null,
+                chatModel,
+                builtInTools,
+                memory.longTermMemoryAdvisor(),
+                memory.messageChatMemoryAdvisor(),
+                memory.conversationMemoryService(),
+                new PromptSecurityFilter(),
+                null,
+                null,
+                List.of(),
+                null,
+                mock(ConversationLogService.class),
+                new RagTracing(),
+                new PromptTemplateStore()
+        );
+
+        String result = collect(agent.runStream("user-1", "session-1", null, "What is 2 + 2?", false,
+                List.of(), "", "", ""));
+
+        assertEquals("4", result);
+        Prompt prompt = promptCaptor.getValue();
+        assertInstanceOf(SystemMessage.class, prompt.getSystemMessage());
+        assertSecuredUserMessage(prompt.getUserMessage(), "What is 2 + 2?");
+        OpenAiChatOptions options = assertInstanceOf(OpenAiChatOptions.class, prompt.getOptions());
+        assertEquals("user-1", options.getToolContext().get("userId"));
+        assertEquals("session-1", options.getToolContext().get("sessionId"));
+        assertTrue(options.getToolContext().containsKey(BuiltInTools.TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE));
+        assertTrue(options.getToolCallbacks().stream()
+                .map(callback -> callback.getToolDefinition().name())
+                .anyMatch("searchProductKnowledge"::equals));
+        verify(memory.longTermMemoryAdvisor()).before(any(), any());
     }
 
     @Test
@@ -145,6 +201,40 @@ class ReActAgentTest {
         assertTrue(tracing.text("llm.react.input").contains("推荐跑鞋"));
         assertTrue(tracing.text("llm.react.input").contains("searchProductKnowledge"));
         assertEquals("推荐 轻量跑步鞋", tracing.text("llm.react.output"));
+    }
+
+    @Test
+    void runStreamShouldStartReactSpanUnderRequestRootSpanAfterSubscriptionContextLoss() {
+        ChatModel chatModel = mock(ChatModel.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        MemoryTestSupport memory = memorySupport();
+        RecordingTracing tracing = new RecordingTracing();
+
+        when(chatModel.stream(any(Prompt.class))).thenReturn(Flux.just(chatResponse("ok")));
+
+        ReActAgent agent = new ReActAgent(
+                null,
+                chatModel,
+                builtInTools,
+                memory.longTermMemoryAdvisor(),
+                memory.messageChatMemoryAdvisor(),
+                memory.conversationMemoryService(),
+                new PromptSecurityFilter(),
+                null,
+                null,
+                List.of(),
+                null,
+                mock(ConversationLogService.class),
+                tracing,
+                new PromptTemplateStore()
+        );
+
+        Flux<String> stream = agent.runStream("user-1", "session-1", null, "推荐跑鞋", false,
+                List.of(), "", "", "");
+        tracing.clearCurrentSpan();
+
+        assertEquals("ok", collect(stream));
+        assertSame(tracing.rootSpan(), tracing.parentWhenStarted("llm.react"));
     }
 
     @Test
@@ -386,6 +476,10 @@ class ReActAgentTest {
         return chunks == null ? "" : String.join("", chunks);
     }
 
+    private ChatResponse chatResponse(String text) {
+        return new ChatResponse(List.of(new Generation(new AssistantMessage(text))));
+    }
+
     private PromptSecurityFilter.SecuredPrompt secure(String userText) {
         return new PromptSecurityFilter().secure(userText);
     }
@@ -400,10 +494,30 @@ class ReActAgentTest {
     private static final class RecordingTracing extends RagTracing {
 
         private final Map<String, String> captured = new LinkedHashMap<>();
+        private final Span rootSpan = mock(Span.class);
+        private final ThreadLocal<Span> currentSpan = ThreadLocal.withInitial(() -> rootSpan);
+        private final Map<String, Span> parentWhenStarted = new LinkedHashMap<>();
 
         @Override
         public Span currentSpan() {
-            return Span.getInvalid();
+            return currentSpan.get();
+        }
+
+        @Override
+        public Span startSpan(String spanName) {
+            parentWhenStarted.put(spanName, currentSpan.get());
+            return mock(Span.class);
+        }
+
+        @Override
+        public Scope makeCurrent(Span span) {
+            Span previous = currentSpan.get();
+            currentSpan.set(span);
+            return () -> currentSpan.set(previous);
+        }
+
+        @Override
+        public void endSpan(Span span) {
         }
 
         @Override
@@ -413,6 +527,18 @@ class ReActAgentTest {
 
         private String text(String key) {
             return captured.getOrDefault(key, "");
+        }
+
+        private Span rootSpan() {
+            return rootSpan;
+        }
+
+        private Span parentWhenStarted(String spanName) {
+            return parentWhenStarted.get(spanName);
+        }
+
+        private void clearCurrentSpan() {
+            currentSpan.set(Span.getInvalid());
         }
     }
 }

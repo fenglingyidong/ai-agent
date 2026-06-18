@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -169,6 +170,23 @@ class RagTracingTest {
         disabledTracing.setAttribute(span, "rag.status", "ok");
 
         verify(span, never()).setAttribute("rag.status", "ok");
+    }
+
+    @Test
+    void appendDistinctCsvAttributeShouldKeepFirstSeenOrderAndSkipDuplicates() {
+        Span span = mock(Span.class);
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        RagTracing enabledTracing = new RagTracing(mock(Tracer.class), properties);
+
+        enabledTracing.appendDistinctCsvAttribute(span, "rag.parent.load_sources", "redis");
+        enabledTracing.appendDistinctCsvAttribute(span, "rag.parent.load_sources", "mysql");
+        enabledTracing.appendDistinctCsvAttribute(span, "rag.parent.load_sources", "redis");
+
+        verify(span).setAttribute("rag.parent.load_sources", "redis");
+        verify(span).setAttribute("rag.parent.load_sources", "redis,mysql");
+        verify(span, times(2)).setAttribute(org.mockito.ArgumentMatchers.eq("rag.parent.load_sources"),
+                org.mockito.ArgumentMatchers.anyString());
     }
 
     @Test

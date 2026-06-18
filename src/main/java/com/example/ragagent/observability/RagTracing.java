@@ -12,8 +12,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.regex.Pattern;
 
@@ -31,6 +34,8 @@ public class RagTracing {
 
     private final Tracer tracer;
     private final LangfuseProperties properties;
+    private final Map<Span, Map<String, LinkedHashSet<String>>> appendedCsvAttributes =
+            Collections.synchronizedMap(new WeakHashMap<>());
 
     public RagTracing() {
         this(GlobalOpenTelemetry.getTracer("com.example.ragagent"), new LangfuseProperties());
@@ -109,6 +114,7 @@ public class RagTracing {
 
     public void endSpan(Span span) {
         if (properties.isEnabled() && span != null) {
+            appendedCsvAttributes.remove(span);
             span.end();
         }
     }
@@ -134,6 +140,21 @@ public class RagTracing {
     public void setAttribute(Span span, String key, boolean value) {
         if (properties.isEnabled() && span != null && StringUtils.hasText(key)) {
             span.setAttribute(key, value);
+        }
+    }
+
+    public void appendDistinctCsvAttribute(Span span, String key, String value) {
+        if (!properties.isEnabled() || span == null || !StringUtils.hasText(key) || !StringUtils.hasText(value)) {
+            return;
+        }
+        synchronized (appendedCsvAttributes) {
+            Map<String, LinkedHashSet<String>> spanAttributes =
+                    appendedCsvAttributes.computeIfAbsent(span, ignored -> new java.util.LinkedHashMap<>());
+            LinkedHashSet<String> values =
+                    spanAttributes.computeIfAbsent(key, ignored -> new LinkedHashSet<>());
+            if (values.add(value)) {
+                span.setAttribute(key, String.join(",", values));
+            }
         }
     }
 

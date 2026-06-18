@@ -3,7 +3,9 @@ package com.example.ragagent.rag;
 import com.example.ragagent.rag.entity.RagParentDocumentEntity;
 import com.example.ragagent.rag.impl.ParentDocumentStore;
 import com.example.ragagent.rag.mapper.RagParentDocumentMapper;
+import com.example.ragagent.observability.RagTracing;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.opentelemetry.api.trace.Span;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -50,6 +52,7 @@ class ParentDocumentStoreTest {
     private ValueOperations<String, String> valueOperations;
     private ObjectMapper objectMapper;
     private ParentDocumentStore store;
+    private RecordingRagTracing tracing;
 
     @BeforeEach
     @SuppressWarnings("unchecked")
@@ -58,6 +61,7 @@ class ParentDocumentStoreTest {
         redisTemplate = mock(StringRedisTemplate.class);
         valueOperations = mock(ValueOperations.class);
         objectMapper = new ObjectMapper();
+        tracing = new RecordingRagTracing();
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         store = new ParentDocumentStore(
                 mapper,
@@ -65,7 +69,8 @@ class ParentDocumentStoreTest {
                 objectMapper,
                 Duration.ofHours(12),
                 Duration.ZERO,
-                Duration.ofSeconds(60)
+                Duration.ofSeconds(60),
+                tracing
         );
     }
 
@@ -139,6 +144,7 @@ class ParentDocumentStoreTest {
         assertEquals("Parent text", document.getText());
         assertEquals("SKU-1", document.getMetadata().get("skuId"));
         assertParentMetadata(document);
+        assertEquals("redis", tracing.stringAttribute("rag.parent.load_sources"));
         verify(mapper, never()).selectById("parent-1");
     }
 
@@ -152,6 +158,7 @@ class ParentDocumentStoreTest {
         assertEquals("Parent text", document.getText());
         assertEquals("SKU-1", document.getMetadata().get("skuId"));
         assertParentMetadata(document);
+        assertEquals("mysql", tracing.stringAttribute("rag.parent.load_sources"));
         verify(valueOperations).set(
                 eq("rag:parent:cache:parent-1"),
                 contains("\"parentId\":\"parent-1\""),
@@ -171,6 +178,30 @@ class ParentDocumentStoreTest {
         assertEquals("SKU-1", document.getMetadata().get("skuId"));
         assertParentMetadata(document);
         verify(mapper).selectById("parent-1");
+    }
+
+    @Test
+    void loadShouldAccumulateDistinctLoadSourcesWithinCurrentSpan() {
+        when(valueOperations.get("rag:parent:cache:parent-1")).thenReturn("""
+                {
+                  "parentId":"parent-1",
+                  "sourceId":"source-1",
+                  "title":"Guide",
+                  "text":"Parent text",
+                  "parentIndex":0,
+                  "documentHash":"hash-1",
+                  "extraMetadata":{"skuId":"SKU-1"}
+                }
+                """);
+        when(valueOperations.get("rag:parent:cache:parent-2")).thenReturn(null);
+        RagParentDocumentEntity secondParent = parentEntity();
+        secondParent.setParentId("parent-2");
+        when(mapper.selectById("parent-2")).thenReturn(secondParent);
+
+        assertTrue(store.load("parent-1").isPresent());
+        assertTrue(store.load("parent-2").isPresent());
+
+        assertEquals("redis,mysql", tracing.stringAttribute("rag.parent.load_sources"));
     }
 
     @Test
@@ -570,7 +601,8 @@ class ParentDocumentStoreTest {
                 objectMapper,
                 cacheTtl,
                 cacheTtlJitter,
-                missingCacheTtl
+                missingCacheTtl,
+                tracing
         );
     }
 
@@ -620,5 +652,37 @@ class ParentDocumentStoreTest {
         assertEquals("Guide", document.getMetadata().get("title"));
         assertEquals(0, document.getMetadata().get("parentIndex"));
         assertEquals("hash-1", document.getMetadata().get("documentHash"));
+    }
+
+    private static final class RecordingRagTracing extends RagTracing {
+
+        private final Map<String, String> stringAttributes = new java.util.LinkedHashMap<>();
+
+        @Override
+        public Span currentSpan() {
+            return Span.getInvalid();
+        }
+
+        @Override
+        public void setAttribute(Span span, String key, String value) {
+            stringAttributes.put(key, value);
+        }
+
+        @Override
+        public void appendDistinctCsvAttribute(Span span, String key, String value) {
+            String currentValue = stringAttributes.get(key);
+            if (currentValue == null || currentValue.isBlank()) {
+                stringAttributes.put(key, value);
+                return;
+            }
+            List<String> values = Arrays.asList(currentValue.split(","));
+            if (!values.contains(value)) {
+                stringAttributes.put(key, currentValue + "," + value);
+            }
+        }
+
+        private String stringAttribute(String key) {
+            return stringAttributes.get(key);
+        }
     }
 }

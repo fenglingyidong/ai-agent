@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.observation.ChatModelObservationContext;
 import org.springframework.ai.chat.observation.ChatModelObservationConvention;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -50,6 +52,27 @@ class SpringAiLangfuseObservationConfigTest {
         assertTrue(input.contains("user:" + System.lineSeparator() + "user asks"));
         assertTrue(input.contains("assistant:" + System.lineSeparator() + "assistant draft"));
         assertTrue(input.equals(value(values, "llm.spring_ai.input")));
+        assertTrue(input.equals(value(values, "gen_ai.prompt")));
+    }
+
+    @Test
+    void conventionShouldWriteLangfuseOutputWhenCaptureEnabled() {
+        LangfuseProperties properties = new LangfuseProperties();
+        properties.setEnabled(true);
+        properties.setCapturePrompt(true);
+        ChatModelObservationConvention convention = new SpringAiLangfuseObservationConfig()
+                .langfuseChatModelObservationConvention(properties, new RagTracing(properties));
+        ChatModelObservationContext context = context(new Prompt("hello"));
+        context.setResponse(new ChatResponse(List.of(
+                new Generation(new AssistantMessage("assistant answer"))
+        )));
+
+        KeyValues values = convention.getHighCardinalityKeyValues(context);
+
+        String output = value(values, "langfuse.observation.output");
+        assertTrue(output.contains("assistant answer"));
+        assertTrue(output.equals(value(values, "llm.spring_ai.output")));
+        assertTrue(output.equals(value(values, "gen_ai.completion")));
     }
 
     @Test

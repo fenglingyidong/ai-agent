@@ -6,6 +6,8 @@ import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.ToolResponseMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.observation.ChatModelObservationContext;
 import org.springframework.ai.chat.observation.ChatModelObservationConvention;
 import org.springframework.ai.chat.observation.DefaultChatModelObservationConvention;
@@ -49,14 +51,31 @@ public class SpringAiLangfuseObservationConfig {
                     return values;
                 }
 
+                KeyValues capturedValues = KeyValues.empty();
+                boolean hasCapturedValues = false;
                 String input = renderPrompt(context.getRequest(), properties.getMaxCaptureChars(), tracing);
-                if (!StringUtils.hasText(input)) {
+                if (StringUtils.hasText(input)) {
+                    capturedValues = capturedValues.and(
+                            KeyValue.of("langfuse.observation.input", input),
+                            KeyValue.of("gen_ai.prompt", input),
+                            KeyValue.of("llm.spring_ai.input", input)
+                    );
+                    hasCapturedValues = true;
+                }
+
+                String output = renderCompletion(context.getResponse(), properties.getMaxCaptureChars(), tracing);
+                if (StringUtils.hasText(output)) {
+                    capturedValues = capturedValues.and(
+                            KeyValue.of("langfuse.observation.output", output),
+                            KeyValue.of("gen_ai.completion", output),
+                            KeyValue.of("llm.spring_ai.output", output)
+                    );
+                    hasCapturedValues = true;
+                }
+                if (!hasCapturedValues) {
                     return values;
                 }
-                return values.and(
-                        KeyValue.of("langfuse.observation.input", input),
-                        KeyValue.of("llm.spring_ai.input", input)
-                );
+                return values.and(capturedValues);
             }
 
             private KeyValues defaultHighCardinalityKeyValues(ChatModelObservationContext context) {
@@ -86,6 +105,32 @@ public class SpringAiLangfuseObservationConfig {
         String sanitized = tracing == null ? rendered : tracing.sanitizePromptText(rendered);
         int limit = maxChars > 0 ? maxChars : DEFAULT_MAX_CAPTURE_CHARS;
         return sanitized.length() > limit ? sanitized.substring(0, limit) : sanitized;
+    }
+
+    static String renderCompletion(ChatResponse response, int maxChars, RagTracing tracing) {
+        if (response == null || response.getResults() == null || response.getResults().isEmpty()) {
+            return "";
+        }
+
+        String rendered = response.getResults().stream()
+                .map(SpringAiLangfuseObservationConfig::renderGeneration)
+                .filter(StringUtils::hasText)
+                .collect(Collectors.joining(System.lineSeparator() + System.lineSeparator()));
+        if (!StringUtils.hasText(rendered)) {
+            return "";
+        }
+
+        String sanitized = tracing == null ? rendered : tracing.sanitizePromptText(rendered);
+        int limit = maxChars > 0 ? maxChars : DEFAULT_MAX_CAPTURE_CHARS;
+        return sanitized.length() > limit ? sanitized.substring(0, limit) : sanitized;
+    }
+
+    private static String renderGeneration(Generation generation) {
+        if (generation == null || generation.getOutput() == null
+                || !StringUtils.hasText(generation.getOutput().getText())) {
+            return "";
+        }
+        return generation.getOutput().getText();
     }
 
     private static String renderMessage(Message message) {

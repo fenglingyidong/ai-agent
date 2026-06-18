@@ -6,6 +6,7 @@
 
 - [总体链路](#总体链路)
 - [核心模块](#核心模块)
+- [ReAct 主链路内部职责](#react-主链路内部职责)
 - [请求流转](#请求流转)
 - [存储设计](#存储设计)
 - [记忆设计](#记忆设计)
@@ -33,7 +34,10 @@ flowchart LR
 
 ## 核心模块
 
-- **`ReActAgent`（`service/`）**：多模态主链路。挂载 `BuiltInTools`、`mall-mcp` 工具回调和可选的 WebSearch MCP，注入 `MessageChatMemoryAdvisor` + `LongTermMemoryAdvisor`，并在 `mall_create_order` 上设置 Java 侧硬门禁。
+- **`ReActAgent`（`service/`）**：多模态主链路编排器。负责路由回落后的请求生命周期、工具解析、prompt 渲染和模型请求组装。
+- **`ReactToolResolver`（`service/`）**：主链路工具解析器。负责内置工具、外部 MCP 工具、`mall-mcp` 工具、任务策略过滤、`mall_create_order` Java 侧硬门禁包装，以及工具调用 tracing 包装。
+- **`ReactPromptBuilder`（`service/`）**：主链路 prompt 渲染器。负责渲染 ReAct system prompt、任务策略片段、可信上下文拼接，以及 Langfuse 捕获用的 `llm.react.input` 文本格式化。
+- **`ReactStreamExecutor`（`service/`）**：主链路流式执行器。负责 Spring AI advisor 前后置、`ChatModel` 流式输出、敏感值恢复、fallback、对话流水和 `llm.react` tracing 收口。
 - **`ShoppingIntentRouter`（`service/`）**：轻量意图路由器。把请求分类为 `A_FAQ_SIMPLE_QUERY`、`B_SIMPLE_SHOPPING_TOOL`、`C_COMPLEX_REACT`，输出固定结构 JSON，默认模型 `qwen3-vl-8b-instruct`。
 - **`ShoppingRouteExecutor`（`service/`）**：决定是否短路。置信度低于阈值（默认 `0.7`）或意图属于复杂场景时回落到主链路；否则委托 `SimpleTaskAgent` 走快车道。
 - **`SimpleTaskAgent`（`service/`）**：A/B 快车道执行器，仅允许调用受限工具集（A 路径只有 `searchProductKnowledge`，B 路径只有 `mall_search_products` / `mall_get_product_detail` / `mall_add_to_cart` / `mall_view_cart` / `mall_prepare_order`）。
@@ -41,12 +45,23 @@ flowchart LR
 - **`PromptSecurityFilter`（`security/`）**：基于正则的注入识别与敏感值占位符化，并在响应阶段恢复占位符。
 - **`mall-mcp` 集成**：通过 `MallMcpClient` 与独立的 `mall-mcp` 服务交互，所有 `mall_*` 工具均经 MCP 协议暴露，不直连商城 REST。
 
+## ReAct 主链路内部职责
+
+`ReActAgent` 只保留主流程编排，不再直接维护工具集合和 prompt 模板细节：
+
+| 类 | 负责 | 不负责 |
+| --- | --- | --- |
+| `ReActAgent` | 请求进入复杂主链路后的编排、组装 `ChatClientRequest`、维护路由失败和快车道回写 | 工具清单解析、prompt 模板渲染、模型流生命周期 |
+| `ReactToolResolver` | 按路由策略生成本轮可用 `ToolCallback`，过滤不可用工具，包装工具 tracing，包裹 `mall_create_order` 硬门禁 | 拼接 system prompt、调用模型、写会话流水 |
+| `ReactPromptBuilder` | 用 `PromptTemplateStore` 渲染 ReAct system prompt，拼接任务策略和可信上下文，格式化 `llm.react.input` | 决定哪些工具可用、执行路由、执行工具 |
+| `ReactStreamExecutor` | 执行 advisor 前后置和 `ChatModel.stream(...)`，恢复敏感值，占用 `llm.react` span，写成功、失败、取消和 fallback 的会话流水 | 选择工具、构造 prompt、决定路由 |
+
 ## 请求流转
 
 1. `ChatController.react` 接收 multipart 请求，拼装 `Media` 列表（最多 4 张图，支持上传或 URL）。
 2. `PromptSecurityFilter.secure(...)` 对用户文本做注入过滤和敏感值脱敏，得到 `SecuredPrompt`。
 3. `ShoppingRouteExecutor.routeBeforeCore(...)` 调用 `ShoppingIntentRouter` 取得意图 JSON；满足快车道条件时短路到 `SimpleTaskAgent`，否则把脱敏后的消息和媒体交给 `ReActAgent`。
-4. `ReActAgent` 用 Spring AI `ChatClient` 流式输出 Token，工具调用通过 `ToolCallbacks` 注册到当前请求；流结束时 `PromptSecurityFilter.restoreSensitiveValues(...)` 还原占位符。
+4. `ReActAgent` 委托 `ReactToolResolver` 解析当前工具集合，委托 `ReactPromptBuilder` 渲染 system prompt，并把请求交给 `ReactStreamExecutor` 流式输出 Token；流结束时恢复敏感值并写入 tracing 与对话流水。
 5. 用户提问和助手最终可见回答的原文流水由 `ConversationLogService` 异步写入 MySQL。
 
 ## 存储设计
@@ -65,7 +80,7 @@ flowchart LR
 
 - 商城业务（商品、购物车、普通订单）不直连商城 REST，全部通过独立的 `mall-mcp` 服务暴露：MCP endpoint `http://localhost:8120/mcp`，上下文接口 `http://localhost:8120/internal/mcp/mall/context`。
 - 工具集合：`mall_search_products`、`mall_get_product_detail`、`mall_add_to_cart`、`mall_view_cart`、`mall_prepare_order`、`mall_create_order`。
-- `mall_create_order` 设有 Java 侧硬门禁：路由意图必须为 `CART_CONFIRMATION`，路由必须标记 `need_confirm=true`，用户本轮文本必须有明确下单语义，且工具参数必须包含有效 `confirmationId` 和 `userConfirmed=true`，否则在 `ReActAgent` 层直接拒绝放行。
+- `mall_create_order` 设有 Java 侧硬门禁：路由意图必须为 `CART_CONFIRMATION`，路由必须标记 `need_confirm=true`，用户本轮文本必须有明确下单语义，且工具参数必须包含有效 `confirmationId` 和 `userConfirmed=true`，否则在主链路工具解析层直接拒绝放行。
 - 可选 WebSearch MCP 通过 `ToolCallbackProvider` 自动注册，不在默认链路上。
 
 ## RAG 检索

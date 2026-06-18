@@ -1,5 +1,6 @@
 package com.example.ragagent.rag.impl;
 
+import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.rag.RagDocumentConstants;
 import com.example.ragagent.rag.entity.RagParentDocumentEntity;
 import com.example.ragagent.rag.mapper.RagParentDocumentMapper;
@@ -7,9 +8,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.opentelemetry.api.trace.Span;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
@@ -36,6 +39,7 @@ public class ParentDocumentStore {
     private final RagParentDocumentMapper parentDocumentMapper;
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final RagTracing tracing;
     private final Duration cacheTtl;
     private final Duration cacheTtlJitter;
     private final long cacheTtlJitterMillis;
@@ -50,9 +54,21 @@ public class ParentDocumentStore {
                                @Value("${app.rag.parent-cache.ttl:12h}") Duration cacheTtl,
                                @Value("${app.rag.parent-cache.ttl-jitter:6h}") Duration cacheTtlJitter,
                                @Value("${app.rag.parent-cache.missing-ttl:60s}") Duration missingCacheTtl) {
+        this(parentDocumentMapper, redisTemplate, objectMapper, cacheTtl, cacheTtlJitter, missingCacheTtl, new RagTracing());
+    }
+
+    @Autowired
+    public ParentDocumentStore(RagParentDocumentMapper parentDocumentMapper,
+                               StringRedisTemplate redisTemplate,
+                               ObjectMapper objectMapper,
+                               @Value("${app.rag.parent-cache.ttl:12h}") Duration cacheTtl,
+                               @Value("${app.rag.parent-cache.ttl-jitter:6h}") Duration cacheTtlJitter,
+                               @Value("${app.rag.parent-cache.missing-ttl:60s}") Duration missingCacheTtl,
+                               RagTracing tracing) {
         this.parentDocumentMapper = parentDocumentMapper;
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.tracing = tracing == null ? new RagTracing() : tracing;
         this.cacheTtl = requirePositiveDuration(cacheTtl, "cacheTtl");
         this.cacheTtlJitter = requireNonNegativeDuration(cacheTtlJitter, "cacheTtlJitter");
         this.cacheTtlJitterMillis = toMillisOrThrow(this.cacheTtlJitter, "cacheTtlJitter");
@@ -107,6 +123,7 @@ public class ParentDocumentStore {
 
         CacheLookup cacheLookup = loadFromCache(normalizedParentId);
         if (cacheLookup.hit()) {
+            recordLoadSource("redis");
             return cacheLookup.document();
         }
 
@@ -117,6 +134,7 @@ public class ParentDocumentStore {
         }
         try {
             Optional<Document> loaded = loadFromMysqlAndCache(normalizedParentId);
+            recordLoadSource("mysql");
             newFuture.complete(loaded);
             return loaded;
         }
@@ -229,6 +247,11 @@ public class ParentDocumentStore {
         StoredParentDocument parentDocument = fromEntity(entity);
         cacheParentIfVersionUnchanged(parentDocument, versionBeforeLoad);
         return Optional.of(toDocument(parentDocument));
+    }
+
+    private void recordLoadSource(String source) {
+        Span span = tracing.currentSpan();
+        tracing.appendDistinctCsvAttribute(span, "rag.parent.load_sources", source);
     }
 
     private long markCacheMutation() {

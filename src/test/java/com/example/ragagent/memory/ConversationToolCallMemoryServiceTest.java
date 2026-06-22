@@ -153,6 +153,29 @@ class ConversationToolCallMemoryServiceTest {
     }
 
     @Test
+    void redactionShouldPreserveAdjacentNormalFacts() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+
+        service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                "token=secret-token skuId=3020 product=键盘",
+                "Authorization: Bearer abc+/=:xyz, skuId=3020, stock=260");
+        service.rememberSuccess("alice", "session-1", "rag_search",
+                "{\"note\":\"Bearer json-token+/=:\",\"skuId\":3020,\"stock\":260}",
+                "ok");
+
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertFalse(context.contains("secret-token"));
+        assertFalse(context.contains("abc+/=:xyz"));
+        assertFalse(context.contains("json-token+/=:"));
+        assertTrue(context.contains("skuId=3020"));
+        assertTrue(context.contains("product=键盘"));
+        assertTrue(context.contains("stock=260"));
+        assertTrue(context.contains("\"skuId\":3020"));
+        assertTrue(context.contains("\"stock\":260"));
+    }
+
+    @Test
     void recentToolCallContextShouldTruncateLongText() {
         ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
         String longInput = "a".repeat(5000);

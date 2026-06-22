@@ -45,10 +45,10 @@ public class ConversationToolCallMemoryService {
             "(?i)(\"(?:" + SENSITIVE_FIELD_NAME + ")\"\\s*:\\s*\")([^\"]*)(\")"
     );
     private static final Pattern SENSITIVE_TEXT_FIELD = Pattern.compile(
-            "(?i)\\b(" + SENSITIVE_FIELD_NAME + ")(\\s*[:=]\\s*)(.*?)(?=(?:\\s+\\b(?:"
-                    + SENSITIVE_FIELD_NAME + ")\\s*[:=])|[,;\\r\\n]|$)"
+            "(?i)\\b(" + SENSITIVE_FIELD_NAME + ")(\\s*[:=]\\s*)(.*?)(?=(?:\\s+"
+                    + "[A-Za-z][A-Za-z0-9_\\-]*\\s*[:=])|[,;\\r\\n]|$)"
     );
-    private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)Bearer\\s+\\S+");
+    private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)Bearer\\s+[^\\s,;\"')}\\]]+");
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ConcurrentMap<String, List<ConversationToolCallRecord>> recordsByConversationId =
@@ -175,6 +175,8 @@ public class ConversationToolCallMemoryService {
                 Map.Entry<String, JsonNode> field = fields.next();
                 if (isSensitiveFieldName(field.getKey())) {
                     objectNode.set(field.getKey(), TextNode.valueOf("[REDACTED]"));
+                } else if (field.getValue().isTextual()) {
+                    objectNode.set(field.getKey(), TextNode.valueOf(sanitizeBearerToken(field.getValue().asText())));
                 } else {
                     redactSensitiveJsonFields(field.getValue());
                 }
@@ -183,10 +185,19 @@ public class ConversationToolCallMemoryService {
         }
         if (node.isArray()) {
             ArrayNode arrayNode = (ArrayNode) node;
-            for (JsonNode item : arrayNode) {
-                redactSensitiveJsonFields(item);
+            for (int index = 0; index < arrayNode.size(); index++) {
+                JsonNode item = arrayNode.get(index);
+                if (item.isTextual()) {
+                    arrayNode.set(index, TextNode.valueOf(sanitizeBearerToken(item.asText())));
+                } else {
+                    redactSensitiveJsonFields(item);
+                }
             }
         }
+    }
+
+    private String sanitizeBearerToken(String value) {
+        return BEARER_TOKEN.matcher(value).replaceAll("Bearer [REDACTED]");
     }
 
     private boolean isSensitiveFieldName(String fieldName) {

@@ -10,8 +10,17 @@ public record ConversationToolCallRecord(
         String input,
         String output,
         Status status,
-        String errorType
+        String errorType,
+        boolean foldedHistory
 ) {
+
+    public ConversationToolCallRecord(String toolName,
+                                      String input,
+                                      String output,
+                                      Status status,
+                                      String errorType) {
+        this(toolName, input, output, status, errorType, false);
+    }
 
     public ConversationToolCallRecord {
         toolName = StringUtils.hasText(toolName) ? toolName.trim() : "<unknown>";

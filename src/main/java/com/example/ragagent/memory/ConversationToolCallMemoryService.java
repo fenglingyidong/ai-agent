@@ -73,7 +73,7 @@ public class ConversationToolCallMemoryService {
     private static final Pattern FOLDED_HISTORY_COUNT = Pattern.compile("^(\\d+) 条更早工具调用已折叠");
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    private final ConcurrentMap<String, List<ConversationToolCallRecord>> recordsByConversationId =
+    private final ConcurrentMap<ConversationId, List<ConversationToolCallRecord>> recordsByConversationId =
             new ConcurrentHashMap<>();
 
     public void rememberSuccess(String userId,
@@ -260,12 +260,13 @@ public class ConversationToolCallMemoryService {
                 foldedText,
                 foldedText,
                 ConversationToolCallRecord.Status.OK,
-                ""
+                "",
+                true
         );
     }
 
     private boolean isFoldedHistoryRecord(ConversationToolCallRecord record) {
-        return FOLDED_HISTORY_TOOL_NAME.equals(record.toolName());
+        return record.foldedHistory();
     }
 
     private int foldedHistoryCount(ConversationToolCallRecord record) {
@@ -294,8 +295,8 @@ public class ConversationToolCallMemoryService {
         }
     }
 
-    private String buildConversationId(String userId, String sessionId) {
-        return normalizeUserId(userId) + "::" + normalizeSessionId(sessionId);
+    private ConversationId buildConversationId(String userId, String sessionId) {
+        return new ConversationId(normalizeUserId(userId), normalizeSessionId(sessionId));
     }
 
     private String normalizeUserId(String userId) {
@@ -304,5 +305,8 @@ public class ConversationToolCallMemoryService {
 
     private String normalizeSessionId(String sessionId) {
         return StringUtils.hasText(sessionId) ? sessionId.trim() : DEFAULT_SESSION_ID;
+    }
+
+    private record ConversationId(String userId, String sessionId) {
     }
 }

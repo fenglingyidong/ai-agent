@@ -155,6 +155,47 @@ class ConversationToolCallMemoryServiceTest {
     }
 
     @Test
+    void toolNameMatchingFoldedHistoryLabelShouldRemainNormalRecord() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+        for (int index = 1; index <= 5; index++) {
+            service.rememberSuccess("alice", "session-1", "历史工具调用",
+                    "{\"skuId\":" + index + ",\"note\":\"input-" + index + "\"}",
+                    "result-" + index);
+        }
+
+        List<ConversationToolCallRecord> records = service.records("alice", "session-1");
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertEquals("历史工具调用", records.get(0).toolName());
+        assertTrue(records.get(0).input().contains("完整结果已折叠"));
+        assertTrue(records.get(0).output().contains("完整结果已折叠"));
+        assertFalse(records.get(0).input().contains("input-1"));
+        assertFalse(records.get(0).output().contains("result-1"));
+        assertFalse(context.contains("result-1"));
+        assertFalse(context.contains("input-1"));
+        assertTrue(context.contains("[工具调用 1] 已调用 历史工具调用，完整结果已折叠"));
+        assertTrue(context.contains("结果：result-5"));
+    }
+
+    @Test
+    void conversationIdsShouldNotCollideWhenUserOrSessionContainsSeparator() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+
+        service.rememberSuccess("a", "b::c", "mall_get_product_detail",
+                "{\"skuId\":3020}", "session-one-result");
+        service.rememberSuccess("a::b", "c", "mall_get_product_detail",
+                "{\"skuId\":4040}", "session-two-result");
+
+        String firstContext = service.recentToolCallContext("a", "b::c");
+        String secondContext = service.recentToolCallContext("a::b", "c");
+
+        assertTrue(firstContext.contains("session-one-result"));
+        assertFalse(firstContext.contains("session-two-result"));
+        assertTrue(secondContext.contains("session-two-result"));
+        assertFalse(secondContext.contains("session-one-result"));
+    }
+
+    @Test
     void recentToolCallContextShouldRedactNonJsonSensitiveFormats() {
         ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
 

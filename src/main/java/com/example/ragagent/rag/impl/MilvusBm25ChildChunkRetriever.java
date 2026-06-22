@@ -24,6 +24,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 直接调用 Milvus V2 BM25 sparse vector 查询商品子分块。
+ */
 @Component
 public class MilvusBm25ChildChunkRetriever {
 

@@ -104,6 +104,9 @@ public class ShoppingStateService {
         return new ShoppingPreferenceSnapshot(state, changes);
     }
 
+    /**
+     * 将本轮偏好补丁合并进 Redis 中的当前会话偏好。
+     */
     // 单实例内串行化 Redis 读-改-写，降低自动偏好写入时的字段丢失风险。
     public synchronized ShoppingPreferenceState mergePreference(String userId,
                                                                 String sessionId,

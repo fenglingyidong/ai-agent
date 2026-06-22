@@ -1,8 +1,5 @@
 package com.example.ragagent.tools;
 
-import com.example.ragagent.commerce.ShoppingPreferenceState;
-import com.example.ragagent.commerce.ShoppingStateService;
-import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.observability.RagTracing;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -11,6 +8,8 @@ import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,10 +20,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.concurrent.ConcurrentMap;
 
+/**
+ * 注册给 ReAct agent 的内置工具，当前负责商品知识库检索和商城实时详情补强。
+ */
 @Component
 public class BuiltInTools {
 
-    private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
     public static final String TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE = "searchProductKnowledgeCache";
     private static final int MAX_MALL_DETAIL_SKUS = 3;
 
@@ -32,7 +33,7 @@ public class BuiltInTools {
     private DocumentRetriever documentRetriever;
 
     @Autowired(required = false)
-    private MallMcpClient mallMcpClient;
+    private List<ToolCallbackProvider> toolCallbackProviders = List.of();
 
     @Autowired
     private ObjectMapper objectMapper;
@@ -43,24 +44,29 @@ public class BuiltInTools {
     public BuiltInTools() {
     }
 
-    public BuiltInTools(DocumentRetriever documentRetriever, ShoppingStateService shoppingStateService) {
-        this(documentRetriever, shoppingStateService, null, new ObjectMapper());
+    public BuiltInTools(DocumentRetriever documentRetriever) {
+        this(documentRetriever, List.of(), new ObjectMapper());
     }
 
     public BuiltInTools(DocumentRetriever documentRetriever,
-                        ShoppingStateService shoppingStateService,
-                        MallMcpClient mallMcpClient,
+                        List<ToolCallbackProvider> toolCallbackProviders,
                         ObjectMapper objectMapper) {
         this.documentRetriever = documentRetriever;
-        this.mallMcpClient = mallMcpClient;
+        this.toolCallbackProviders = toolCallbackProviders == null ? List.of() : List.copyOf(toolCallbackProviders);
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
         this.tracing = new RagTracing();
     }
 
+    /**
+     * 便捷检索商品知识库，供测试或无工具上下文的调用方使用。
+     */
     public String searchProductKnowledge(String query) {
         return searchProductKnowledge(query, null);
     }
 
+    /**
+     * 检索商品知识库，并在可用时根据检索到的 SKU 调用商城 MCP 获取实时详情。
+     */
     @Tool(description = "检索商品知识库、商品详情、规格参数、评价摘要和导购话术。适合回答已入库的商品事实、选品建议和对比依据；返回内容可能包含商城实时详情补强，若未包含，实时价格、库存、购物车和订单必须使用 mall_* MCP 工具。")
     public String searchProductKnowledge(@ToolParam(description = "用户商品需求或需要核验的商品事实") String query,
                                          ToolContext toolContext) {
@@ -101,7 +107,8 @@ public class BuiltInTools {
 
     private void appendMallRealtimeDetails(StringBuilder builder, List<Document> documents, ToolContext toolContext) {
         List<String> skuIds = uniqueSkuIds(documents);
-        if (skuIds.isEmpty() || mallMcpClient == null) {
+        ToolCallback mallDetailCallback = mallProductDetailCallback();
+        if (skuIds.isEmpty() || mallDetailCallback == null) {
             return;
         }
 
@@ -119,7 +126,7 @@ public class BuiltInTools {
                 builder.append("[商城实时详情 ").append(index + 1).append("]");
                 builder.append(System.lineSeparator()).append("SKU: ").append(skuId);
                 try {
-                    String detail = mallMcpClient.callTool("mall_get_product_detail", mallDetailArguments(skuId, toolContext));
+                    String detail = mallDetailCallback.call(mallDetailArguments(skuId).toString(), toolContext);
                     builder.append(System.lineSeparator()).append("查询状态: 成功");
                     builder.append(System.lineSeparator()).append(detail);
                     successCount++;
@@ -136,6 +143,26 @@ public class BuiltInTools {
             activeTracing.setAttribute(span, "rag.mall_enrich.sku_ids", String.join(",", skuIds));
             return null;
         });
+    }
+
+    private ToolCallback mallProductDetailCallback() {
+        if (toolCallbackProviders == null || toolCallbackProviders.isEmpty()) {
+            return null;
+        }
+        for (ToolCallbackProvider provider : toolCallbackProviders) {
+            ToolCallback[] callbacks = provider.getToolCallbacks();
+            if (callbacks == null) {
+                continue;
+            }
+            for (ToolCallback callback : callbacks) {
+                if (callback != null
+                        && callback.getToolDefinition() != null
+                        && "mall_get_product_detail".equals(callback.getToolDefinition().name())) {
+                    return callback;
+                }
+            }
+        }
+        return null;
     }
 
     private List<String> uniqueSkuIds(List<Document> documents) {
@@ -171,14 +198,10 @@ public class BuiltInTools {
         return "";
     }
 
-    private ObjectNode mallDetailArguments(String skuId, ToolContext toolContext) {
+    private ObjectNode mallDetailArguments(String skuId) {
         ObjectNode arguments = objectMapper == null ? new ObjectMapper().createObjectNode() : objectMapper.createObjectNode();
         long numericSkuId = Long.parseLong(skuId.trim());
         arguments.put("skuId", numericSkuId);
-        String sessionId = readToolContextValue(toolContext, TOOL_CONTEXT_SESSION_ID);
-        if (StringUtils.hasText(sessionId)) {
-            arguments.put("sessionId", sessionId);
-        }
         return arguments;
     }
 
@@ -211,14 +234,6 @@ public class BuiltInTools {
         }
         Object value = document.getMetadata().get(key);
         return value == null ? "" : value.toString();
-    }
-
-    private String readToolContextValue(ToolContext toolContext, String key) {
-        if (toolContext == null || toolContext.getContext() == null || !StringUtils.hasText(key)) {
-            return "";
-        }
-        Object value = toolContext.getContext().get(key);
-        return value == null ? "" : value.toString().trim();
     }
 
 }

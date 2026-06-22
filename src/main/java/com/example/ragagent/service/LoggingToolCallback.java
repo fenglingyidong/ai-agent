@@ -8,7 +8,11 @@ import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
+import org.springframework.util.StringUtils;
 
+/**
+ * 为工具调用增加日志、OpenTelemetry span 和 Langfuse 工具输入输出采集。
+ */
 final class LoggingToolCallback implements ToolCallback {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingToolCallback.class);
@@ -44,25 +48,28 @@ final class LoggingToolCallback implements ToolCallback {
         return delegate.getToolMetadata();
     }
 
+    /**
+     * 调用无上下文工具，并记录本次工具执行的输入、输出和错误状态。
+     */
     @Override
     public String call(String input) {
         RuntimeException[] toolError = new RuntimeException[1];
         String result = tracing.inSpan(toolSpanName(), () -> {
             Span span = tracing.currentSpan();
-            writeToolStartAttributes(span, input);
+            writeToolStartAttributes(span, input, userId, sessionId);
             tracing.captureToolPayload(span, "tool.input", input);
-            logToolInput(input);
+            logToolInput(input, userId, sessionId);
             try {
                 String delegateResult = delegate.call(input);
                 tracing.setAttribute(span, "tool.output.length", textLength(delegateResult));
                 tracing.captureToolPayload(span, "tool.output", delegateResult);
                 tracing.setAttribute(span, "tool.status", "ok");
-                logToolOutput(delegateResult);
+                logToolOutput(delegateResult, userId, sessionId);
                 return delegateResult;
             }
             catch (RuntimeException ex) {
                 writeToolErrorAttributes(span, ex);
-                logToolError(ex);
+                logToolError(ex, userId, sessionId);
                 toolError[0] = ex;
                 return null;
             }
@@ -73,25 +80,30 @@ final class LoggingToolCallback implements ToolCallback {
         return result;
     }
 
+    /**
+     * 调用带 ToolContext 的工具，并记录本次工具执行的输入、输出和错误状态。
+     */
     @Override
     public String call(String input, ToolContext toolContext) {
         RuntimeException[] toolError = new RuntimeException[1];
         String result = tracing.inSpan(toolSpanName(), () -> {
             Span span = tracing.currentSpan();
-            writeToolStartAttributes(span, input);
+            String resolvedUserId = resolveContextValue(toolContext, userId, "userId", "mallUsername");
+            String resolvedSessionId = resolveContextValue(toolContext, sessionId, "sessionId");
+            writeToolStartAttributes(span, input, resolvedUserId, resolvedSessionId);
             tracing.captureToolPayload(span, "tool.input", input);
-            logToolInput(input);
+            logToolInput(input, resolvedUserId, resolvedSessionId);
             try {
                 String delegateResult = delegate.call(input, toolContext);
                 tracing.setAttribute(span, "tool.output.length", textLength(delegateResult));
                 tracing.captureToolPayload(span, "tool.output", delegateResult);
                 tracing.setAttribute(span, "tool.status", "ok");
-                logToolOutput(delegateResult);
+                logToolOutput(delegateResult, resolvedUserId, resolvedSessionId);
                 return delegateResult;
             }
             catch (RuntimeException ex) {
                 writeToolErrorAttributes(span, ex);
-                logToolError(ex);
+                logToolError(ex, resolvedUserId, resolvedSessionId);
                 toolError[0] = ex;
                 return null;
             }
@@ -102,11 +114,11 @@ final class LoggingToolCallback implements ToolCallback {
         return result;
     }
 
-    private void writeToolStartAttributes(Span span, String input) {
+    private void writeToolStartAttributes(Span span, String input, String currentUserId, String currentSessionId) {
         tracing.setAttribute(span, "tool.name", toolName());
         tracing.setAttribute(span, "tool.input.length", textLength(input));
-        tracing.setAttribute(span, "app.user_id", userId);
-        tracing.setAttribute(span, "app.session_id", sessionId);
+        tracing.setAttribute(span, "app.user_id", safeContextText(currentUserId));
+        tracing.setAttribute(span, "app.session_id", safeContextText(currentSessionId));
     }
 
     private void writeToolErrorAttributes(Span span, RuntimeException ex) {
@@ -121,28 +133,44 @@ final class LoggingToolCallback implements ToolCallback {
         return name == null || name.isBlank() || "<unknown>".equals(name) ? "tool.unknown" : "tool." + name;
     }
 
-    private void logToolInput(String input) {
+    private void logToolInput(String input, String currentUserId, String currentSessionId) {
         log.info("ReAct tool start: userId={}, sessionId={}, toolName={}, inputLength={}",
-                userId,
-                sessionId,
+                safeContextText(currentUserId),
+                safeContextText(currentSessionId),
                 toolName(),
                 textLength(input));
     }
 
-    private void logToolOutput(String result) {
+    private void logToolOutput(String result, String currentUserId, String currentSessionId) {
         log.info("ReAct tool finish: userId={}, sessionId={}, toolName={}, outputLength={}",
-                userId,
-                sessionId,
+                safeContextText(currentUserId),
+                safeContextText(currentSessionId),
                 toolName(),
                 textLength(result));
     }
 
-    private void logToolError(RuntimeException ex) {
+    private void logToolError(RuntimeException ex, String currentUserId, String currentSessionId) {
         log.warn("ReAct tool error: userId={}, sessionId={}, toolName={}, errorType={}",
-                userId,
-                sessionId,
+                safeContextText(currentUserId),
+                safeContextText(currentSessionId),
                 toolName(),
                 ex.getClass().getSimpleName());
+    }
+
+    private String resolveContextValue(ToolContext toolContext, String fallback, String... keys) {
+        if (toolContext != null && toolContext.getContext() != null && keys != null) {
+            for (String key : keys) {
+                Object value = toolContext.getContext().get(key);
+                if (value != null && StringUtils.hasText(value.toString())) {
+                    return value.toString().trim();
+                }
+            }
+        }
+        return fallback;
+    }
+
+    private String safeContextText(String value) {
+        return StringUtils.hasText(value) ? value.trim() : "";
     }
 
     private String toolName() {

@@ -1,7 +1,6 @@
 package com.example.ragagent.agent;
 
 import com.example.ragagent.conversation.ConversationLogService;
-import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.observability.RagTracing;
@@ -9,9 +8,11 @@ import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.security.PromptSecurityFilter;
 import com.example.ragagent.service.ChatModelRegistry;
 import com.example.ragagent.service.ReActAgent;
+import com.example.ragagent.service.ShoppingIntentRoute;
+import com.example.ragagent.service.ShoppingIntentRouter;
+import com.example.ragagent.service.ShoppingRouteExecutor;
 import com.example.ragagent.testsupport.RecordingChatModel;
 import com.example.ragagent.tools.BuiltInTools;
-import io.modelcontextprotocol.client.McpSyncClient;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.context.Scope;
 import org.junit.jupiter.api.Test;
@@ -96,7 +97,6 @@ class ReActAgentTest {
                 null,
                 null,
                 List.of(),
-                null,
                 mock(ConversationLogService.class),
                 tracing,
                 new PromptTemplateStore()
@@ -133,7 +133,6 @@ class ReActAgentTest {
                 null,
                 null,
                 List.of(),
-                null,
                 mock(ConversationLogService.class),
                 tracing,
                 new PromptTemplateStore()
@@ -169,7 +168,6 @@ class ReActAgentTest {
                 null,
                 null,
                 List.of(externalProvider),
-                null,
                 mock(ConversationLogService.class),
                 new RagTracing(),
                 new PromptTemplateStore()
@@ -204,7 +202,6 @@ class ReActAgentTest {
                 chatModelRegistry,
                 null,
                 List.of(),
-                null,
                 mock(ConversationLogService.class),
                 new RagTracing(),
                 new PromptTemplateStore()
@@ -264,10 +261,20 @@ class ReActAgentTest {
         LongTermMemoryAdvisor longTermMemoryAdvisor = mock(LongTermMemoryAdvisor.class);
         MessageChatMemoryAdvisor messageChatMemoryAdvisor = memoryAdvisor();
         ConversationMemoryService conversationMemoryService = mock(ConversationMemoryService.class);
-        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
-        McpSyncClient syncClient = mock(McpSyncClient.class);
-        when(mallMcpClient.syncClient()).thenReturn(syncClient);
-        when(syncClient.listTools()).thenThrow(new IllegalStateException("mall-mcp 服务未启动或不可访问"));
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_SELECTION",
+                "COMPLEX_REACT",
+                Map.of(),
+                Map.of("product_name", "库存"),
+                true,
+                0.95,
+                "需要实时库存"
+        );
+        when(intentRouter.route("查一下库存", List.of(), "")).thenReturn(route);
+        ShoppingRouteExecutor shoppingRouteExecutor = new ShoppingRouteExecutor(intentRouter, null);
+        ToolCallbackProvider mallProvider = mock(ToolCallbackProvider.class);
+        when(mallProvider.getToolCallbacks()).thenThrow(new IllegalStateException("mall-mcp 服务未启动或不可访问"));
         ReActAgent agent = new ReActAgent(
                 chatModel,
                 builtInTools,
@@ -276,9 +283,8 @@ class ReActAgentTest {
                 conversationMemoryService,
                 new PromptSecurityFilter(),
                 null,
-                null,
-                List.of(),
-                mallMcpClient,
+                shoppingRouteExecutor,
+                List.of(mallProvider),
                 mock(ConversationLogService.class),
                 new RagTracing(),
                 new PromptTemplateStore()
@@ -313,7 +319,6 @@ class ReActAgentTest {
                 null,
                 null,
                 List.of(),
-                null,
                 mock(ConversationLogService.class),
                 new RagTracing(),
                 new PromptTemplateStore()

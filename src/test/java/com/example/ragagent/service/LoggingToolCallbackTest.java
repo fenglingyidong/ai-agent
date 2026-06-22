@@ -146,6 +146,21 @@ class LoggingToolCallbackTest {
         assertEquals("{\"ok\":true,\"token\":\"[REDACTED]\"}", tracing.stringAttribute("tool.output"));
     }
 
+    @Test
+    void callShouldPreferToolContextUserAndSessionInTraceAttributes() {
+        ToolCallback delegate = delegateReturning("{\"ok\":true,\"token\":\"secret-token\"}");
+        RecordingTracing tracing = new RecordingTracing();
+        LoggingToolCallback callback = new LoggingToolCallback(delegate, "simple-task", "simple-task", tracing);
+
+        callback.call("{\"skuId\":3020,\"token\":\"secret-token\"}", new ToolContext(Map.of(
+                "userId", "alice",
+                "sessionId", "session-123"
+        )));
+
+        assertEquals("alice", tracing.stringAttribute("app.user_id"));
+        assertEquals("session-123", tracing.stringAttribute("app.session_id"));
+    }
+
     private ToolCallback delegateReturning(String output) {
         ToolCallback delegate = mock(ToolCallback.class);
         ToolDefinition definition = mock(ToolDefinition.class);

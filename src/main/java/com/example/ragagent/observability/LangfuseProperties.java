@@ -4,6 +4,9 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+/**
+ * Langfuse 可观测性配置，控制是否启用以及是否采集提示词、工具和 RAG 内容。
+ */
 @Getter
 @Setter
 @ConfigurationProperties(prefix = "app.observability.langfuse")

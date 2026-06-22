@@ -31,6 +31,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 提供 ReAct 对话流式接口和可选模型列表，是前端聊天页进入后端 agent 的主入口。
+ */
 @RestController
 @RequestMapping("/api")
 public class ChatController {
@@ -60,10 +63,9 @@ public class ChatController {
         this.mallAuthCache = mallAuthCache;
     }
 
-    public ChatController(ReActAgent reActAgent, ChatModelRegistry chatModelRegistry, MallProperties mallProperties) {
-        this(reActAgent, chatModelRegistry, mallProperties, null);
-    }
-
+    /**
+     * 接收用户文本、图片和模型参数，组装会话上下文后以文本流形式返回 agent 响应。
+     */
     @PostMapping(value = "/react", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<StreamingResponseBody> react(
             @RequestParam(value = "message", defaultValue = DEFAULT_MESSAGE) String message,
@@ -96,6 +98,9 @@ public class ChatController {
         ));
     }
 
+    /**
+     * 返回当前可选聊天模型和默认模型，供前端模型选择器使用。
+     */
     @GetMapping("/models/chat")
     public ChatModelsResponse chatModels() {
         return new ChatModelsResponse(chatModelRegistry.getDefaultModelId(), chatModelRegistry.listAvailableModels());
@@ -253,6 +258,9 @@ public class ChatController {
     private record BasicCredentials(String username, String password) {
     }
 
+    /**
+     * 前端聊天模型选择器的数据结构。
+     */
     public record ChatModelsResponse(
             String defaultModel,
             java.util.List<ChatModelRegistry.AvailableChatModel> items

@@ -3,9 +3,15 @@ package com.example.ragagent.commerce;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
+/**
+ * 将导购偏好增量安全合并到当前会话偏好状态。
+ */
 @Component
 public class ShoppingPreferenceMergePolicy {
 
+    /**
+     * 应用清空字段、类别切换和新偏好字段，返回更新后的状态对象。
+     */
     public ShoppingPreferenceState merge(ShoppingPreferenceState current,
                                          ShoppingStateService.ShoppingPreferencePatch patch) {
         ShoppingPreferenceState state = current == null ? new ShoppingPreferenceState() : current;

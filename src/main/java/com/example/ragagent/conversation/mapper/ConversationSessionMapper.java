@@ -11,9 +11,15 @@ import org.apache.ibatis.annotations.Update;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 会话摘要表的 MyBatis-Plus Mapper，包含会话创建、轮次锁定和列表查询 SQL。
+ */
 @Mapper
 public interface ConversationSessionMapper extends BaseMapper<ConversationSessionEntity> {
 
+    /**
+     * 创建会话；若会话已存在则刷新更新时间并取消软删除状态。
+     */
     @Insert("""
             INSERT INTO conversation_sessions (user_id, session_id, title, next_turn_no, created_at, updated_at, deleted_at)
             VALUES (#{userId}, #{sessionId}, #{title}, 1, #{now}, #{now}, NULL)
@@ -24,6 +30,9 @@ public interface ConversationSessionMapper extends BaseMapper<ConversationSessio
                       @Param("title") String title,
                       @Param("now") LocalDateTime now);
 
+    /**
+     * 在事务内锁定下一轮轮次号，保证并发写入时轮次递增。
+     */
     @Select("""
             SELECT next_turn_no
             FROM conversation_sessions
@@ -32,6 +41,9 @@ public interface ConversationSessionMapper extends BaseMapper<ConversationSessio
             """)
     Long lockNextTurnNo(@Param("userId") String userId, @Param("sessionId") String sessionId);
 
+    /**
+     * 更新下一轮轮次号和会话更新时间。
+     */
     @Update("""
             UPDATE conversation_sessions
             SET next_turn_no = #{nextTurnNo}, updated_at = #{now}
@@ -42,6 +54,9 @@ public interface ConversationSessionMapper extends BaseMapper<ConversationSessio
                          @Param("nextTurnNo") long nextTurnNo,
                          @Param("now") LocalDateTime now);
 
+    /**
+     * 查询最近会话摘要，并带出最近一轮用户输入和助手输出。
+     */
     @Select("""
             SELECT s.session_id,
                    s.title,

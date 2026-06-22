@@ -1,0 +1,58 @@
+[
+  {
+    "id": "91f8921454448dc08d394ab15b13618c",
+    "timestamp": "2026-06-22 04:32:27.422",
+    "name": "POST /api/react",
+    "session_id": "api-20260622-1231-m05-after-observability-fields-M05",
+    "user_id": "alice",
+    "input": "婴儿湿巾 80 抽 12 包这款多少钱？适合囤吗？",
+    "output": "这款婴儿湿巾 80抽 12包的价格是99.00元，库存充足（300件），支持“Save 20 over 199”促销。评价显示好评率95.2%，最新评价提到“大包装更适合家庭囤货”，因此适合囤货使用。",
+    "metadata": {
+      "attributes": "{\"exception\":\"none\",\"http.url\":\"/api/react\",\"method\":\"POST\",\"outcome\":\"SUCCESS\",\"status\":\"200\",\"uri\":\"/api/react\"}",
+      "resourceAttributes": "{\"service.name\":\"rag-agent\",\"telemetry.sdk.language\":\"java\",\"telemetry.sdk.name\":\"opentelemetry\",\"telemetry.sdk.version\":\"1.43.0\"}",
+      "scope": "{\"name\":\"com.example.ragagent\",\"version\":\"3.4.1\",\"attributes\":{}}"
+    }
+  },
+  {
+    "id": "19d8cf019ac07b8d8d84df112fcf3c25",
+    "timestamp": "2026-06-22 04:32:37.950",
+    "name": "POST /api/react",
+    "session_id": "api-20260622-1231-m05-after-observability-fields-M05",
+    "user_id": "alice",
+    "input": "那加 2 件到购物车。",
+    "output": "商品未找到，无法添加到购物车。请确认商品信息或重新尝试。",
+    "metadata": {
+      "attributes": "{\"exception\":\"none\",\"http.url\":\"/api/react\",\"method\":\"POST\",\"outcome\":\"SUCCESS\",\"status\":\"200\",\"uri\":\"/api/react\"}",
+      "resourceAttributes": "{\"service.name\":\"rag-agent\",\"telemetry.sdk.language\":\"java\",\"telemetry.sdk.name\":\"opentelemetry\",\"telemetry.sdk.version\":\"1.43.0\"}",
+      "scope": "{\"name\":\"com.example.ragagent\",\"version\":\"3.4.1\",\"attributes\":{}}"
+    }
+  },
+  {
+    "id": "d7f25a70db35ea551b3e38faa5c9d5f4",
+    "timestamp": "2026-06-22 04:32:42.871",
+    "name": "POST /api/react",
+    "session_id": "api-20260622-1231-m05-after-observability-fields-M05",
+    "user_id": "alice",
+    "input": "看看购物车，然后下单。",
+    "output": "购物车中有2件商品：\n1. 旗舰降噪耳机 黑色，价格699.00元，数量1。\n2. 儿童积木套装 300片，价格149.00元，数量2。\n\n订单已预览成功，确认ID为：33c69d80-6528-49d4-85f9-642ee6126334。请确认无误后完成付款。",
+    "metadata": {
+      "attributes": "{\"exception\":\"none\",\"http.url\":\"/api/react\",\"method\":\"POST\",\"outcome\":\"SUCCESS\",\"status\":\"200\",\"uri\":\"/api/react\"}",
+      "resourceAttributes": "{\"service.name\":\"rag-agent\",\"telemetry.sdk.language\":\"java\",\"telemetry.sdk.name\":\"opentelemetry\",\"telemetry.sdk.version\":\"1.43.0\"}",
+      "scope": "{\"name\":\"com.example.ragagent\",\"version\":\"3.4.1\",\"attributes\":{}}"
+    }
+  },
+  {
+    "id": "cf7d290d8e4b8133b35bf2cf7afa6b50",
+    "timestamp": "2026-06-22 04:32:51.107",
+    "name": "POST /api/react",
+    "session_id": "api-20260622-1231-m05-after-observability-fields-M05",
+    "user_id": "alice",
+    "input": "确认下单。",
+    "output": "订单预览确认成功，订单确认 ID 为 e99254d0-8555-4abb-90d1-297967fef038。请尽快完成付款操作。",
+    "metadata": {
+      "attributes": "{\"exception\":\"none\",\"http.url\":\"/api/react\",\"method\":\"POST\",\"outcome\":\"SUCCESS\",\"status\":\"200\",\"uri\":\"/api/react\"}",
+      "resourceAttributes": "{\"service.name\":\"rag-agent\",\"telemetry.sdk.language\":\"java\",\"telemetry.sdk.name\":\"opentelemetry\",\"telemetry.sdk.version\":\"1.43.0\"}",
+      "scope": "{\"name\":\"com.example.ragagent\",\"version\":\"3.4.1\",\"attributes\":{}}"
+    }
+  }
+]

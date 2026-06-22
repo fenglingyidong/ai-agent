@@ -8,6 +8,9 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+/**
+ * conversation_sessions 表实体，保存会话摘要和下一轮轮次号。
+ */
 @Getter
 @Setter
 @TableName("conversation_sessions")

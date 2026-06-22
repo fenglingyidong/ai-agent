@@ -10,6 +10,9 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * 从用户文本、路由槽位和视觉上下文中提取短期导购偏好补丁。
+ */
 @Component
 public class ShoppingPreferenceExtractor {
 
@@ -25,6 +28,9 @@ public class ShoppingPreferenceExtractor {
             "书包", "手机", "电脑", "外套", "裙子", "玩具"
     };
 
+    /**
+     * 合并显式文本、路由槽位和视觉槽位，生成可写入会话偏好的增量补丁。
+     */
     public ShoppingStateService.ShoppingPreferencePatch extract(String userMessage,
                                                                 ShoppingIntentRoute route,
                                                                 Long turnNo) {
@@ -335,6 +341,9 @@ public class ShoppingPreferenceExtractor {
         return 1.0;
     }
 
+    /**
+     * 表示从文本或槽位中解析出的预算上下界。
+     */
     private record BudgetValues(Integer min, Integer max) {
 
         static BudgetValues empty() {
@@ -350,6 +359,9 @@ public class ShoppingPreferenceExtractor {
         }
     }
 
+    /**
+     * 区分“没有命中预算表达式”和“命中但值无效”的解析结果。
+     */
     private record BudgetRangeMatch(boolean matched, BudgetValues budget) {
 
         static BudgetRangeMatch notMatched() {
@@ -361,6 +373,9 @@ public class ShoppingPreferenceExtractor {
         }
     }
 
+    /**
+     * 统一承载路由文本槽位、视觉槽位和偏好增量中的导购字段。
+     */
     private record SlotValues(String category,
                               String brand,
                               BudgetValues budget,

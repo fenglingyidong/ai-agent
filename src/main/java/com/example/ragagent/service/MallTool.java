@@ -4,48 +4,51 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 
+/**
+ * 受控商城 MCP 工具清单及其描述、输入 schema。
+ */
 enum MallTool {
 
     SEARCH_PRODUCTS(
             "mall_search_products",
             "搜索实时商城商品。适合按关键词、品类、品牌和价格区间查询商品、价格和库存。",
             """
-                    {"type":"object","properties":{"keyword":{"type":"string"},"categoryId":{"type":"integer"},"brand":{"type":"string"},"minPrice":{"type":"number"},"maxPrice":{"type":"number"},"limit":{"type":"integer"},"sessionId":{"type":"string"}}}
+                    {"type":"object","properties":{"keyword":{"type":"string"},"categoryId":{"type":"integer"},"brand":{"type":"string"},"minPrice":{"type":"number"},"maxPrice":{"type":"number"},"limit":{"type":"integer"}}}
                     """.trim()
     ),
     GET_PRODUCT_DETAIL(
             "mall_get_product_detail",
             "按真实商城 SKU ID 查询商品详情、价格、库存、规格、评价摘要和优惠信息。",
             """
-                    {"type":"object","properties":{"skuId":{"type":"integer"},"sessionId":{"type":"string"}},"required":["skuId"]}
+                    {"type":"object","properties":{"skuId":{"type":"integer"}},"required":["skuId"]}
                     """.trim()
     ),
     ADD_TO_CART(
             "mall_add_to_cart",
             "把真实商城 SKU 加入当前用户购物车。服务端会重新查询商品详情并使用真实商品名和价格。",
             """
-                    {"type":"object","properties":{"skuId":{"type":"integer"},"quantity":{"type":"integer","minimum":1},"sessionId":{"type":"string"}},"required":["skuId","quantity"]}
+                    {"type":"object","properties":{"skuId":{"type":"integer"},"quantity":{"type":"integer","minimum":1}},"required":["skuId","quantity"]}
                     """.trim()
     ),
     VIEW_CART(
             "mall_view_cart",
             "查看当前用户购物车。",
             """
-                    {"type":"object","properties":{"sessionId":{"type":"string"}}}
+                    {"type":"object","properties":{}}
                     """.trim()
     ),
     PREPARE_ORDER(
             "mall_prepare_order",
             "确认当前用户购物车中的已选商品，返回订单摘要和短期有效 confirmationId。只确认，不创建订单。",
             """
-                    {"type":"object","properties":{"sessionId":{"type":"string"}}}
+                    {"type":"object","properties":{}}
                     """.trim()
     ),
     CREATE_ORDER(
             "mall_create_order",
             "用户明确二次确认后创建普通订单。必须传入 mall_prepare_order 返回的 confirmationId，并且 userConfirmed=true。",
             """
-                    {"type":"object","properties":{"confirmationId":{"type":"string"},"userConfirmed":{"type":"boolean"},"remark":{"type":"string"},"sessionId":{"type":"string"}},"required":["confirmationId","userConfirmed"]}
+                    {"type":"object","properties":{"confirmationId":{"type":"string"},"userConfirmed":{"type":"boolean"},"remark":{"type":"string"}},"required":["confirmationId","userConfirmed"]}
                     """.trim()
     );
 
@@ -62,10 +65,16 @@ enum MallTool {
         this.inputSchema = inputSchema;
     }
 
+    /**
+     * 返回按声明顺序排列的所有商城工具。
+     */
     static List<MallTool> all() {
         return ALL;
     }
 
+    /**
+     * 判断工具名是否属于 mall_* 命名空间。
+     */
     static boolean isMallTool(String toolName) {
         return StringUtils.hasText(toolName) && toolName.trim().startsWith(MALL_TOOL_PREFIX);
     }

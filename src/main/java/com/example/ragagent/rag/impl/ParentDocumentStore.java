@@ -31,6 +31,9 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * 父文档持久化和缓存组件，负责 MySQL 存储、Redis 缓存、空值缓存和单飞加载。
+ */
 @Component
 public class ParentDocumentStore {
 

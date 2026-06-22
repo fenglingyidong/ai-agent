@@ -20,6 +20,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * dense 父子分块检索器，先召回子分块，再按 parentId 回查父文档。
+ */
 @Component
 public class ParentChildDocumentRetriever implements DocumentRetriever {
 

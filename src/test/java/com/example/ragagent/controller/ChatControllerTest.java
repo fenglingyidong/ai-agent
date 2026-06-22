@@ -30,7 +30,7 @@ class ChatControllerTest {
     @Test
     void reactShouldConvertMultipartImageToSpringAiMedia() {
         ReActAgent reActAgent = mock(ReActAgent.class);
-        ChatController controller = new ChatController(reActAgent, mock(ChatModelRegistry.class), new MallProperties());
+        ChatController controller = controller(reActAgent);
         MockMultipartFile image = new MockMultipartFile(
                 "image",
                 "shoe.png",
@@ -75,7 +75,7 @@ class ChatControllerTest {
     @Test
     void reactShouldForwardModelAndWebSearchFlags() {
         ReActAgent reActAgent = mock(ReActAgent.class);
-        ChatController controller = new ChatController(reActAgent, mock(ChatModelRegistry.class), new MallProperties());
+        ChatController controller = controller(reActAgent);
         whenRunStream(reActAgent).thenReturn(Flux.just("ok"));
 
         controller.react(
@@ -110,7 +110,7 @@ class ChatControllerTest {
     @Test
     void reactShouldUseInjectedAuthenticationNameAsUserId() {
         ReActAgent reActAgent = mock(ReActAgent.class);
-        ChatController controller = new ChatController(reActAgent, mock(ChatModelRegistry.class), new MallProperties());
+        ChatController controller = controller(reActAgent);
         whenRunStream(reActAgent).thenReturn(Flux.just("ok"));
 
         controller.react(
@@ -143,7 +143,7 @@ class ChatControllerTest {
     @Test
     void reactShouldStreamPlainTextResponse() throws Exception {
         ReActAgent reActAgent = mock(ReActAgent.class);
-        ChatController controller = new ChatController(reActAgent, mock(ChatModelRegistry.class), new MallProperties());
+        ChatController controller = controller(reActAgent);
         whenRunStream(reActAgent).thenReturn(Flux.just("hello", " world"));
 
         StreamingResponseBody body = controller.react(
@@ -167,7 +167,7 @@ class ChatControllerTest {
     @Test
     void reactShouldForwardMallHeadersToAgentTools() {
         ReActAgent reActAgent = mock(ReActAgent.class);
-        ChatController controller = new ChatController(reActAgent, mock(ChatModelRegistry.class), new MallProperties());
+        ChatController controller = controller(reActAgent);
         MockHttpServletRequest request = new MockHttpServletRequest();
         request.addHeader("X-Mall-Authorization", "Bearer mall-token");
         request.addHeader(
@@ -245,6 +245,10 @@ class ChatControllerTest {
         );
 
         assertEquals("Bearer cached-token", mallTokenCaptor.getValue());
+    }
+
+    private ChatController controller(ReActAgent reActAgent) {
+        return new ChatController(reActAgent, mock(ChatModelRegistry.class), new MallProperties(), null);
     }
 
     private org.mockito.stubbing.OngoingStubbing<Flux<String>> whenRunStream(ReActAgent reActAgent) {

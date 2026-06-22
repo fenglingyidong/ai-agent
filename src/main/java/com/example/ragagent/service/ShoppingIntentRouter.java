@@ -19,6 +19,9 @@ import org.springframework.util.StringUtils;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 使用轻量模型判断购物意图，决定请求是否可进入简单任务快车道。
+ */
 @Service
 public class ShoppingIntentRouter {
 
@@ -47,22 +50,21 @@ public class ShoppingIntentRouter {
         this(null, new RagTracing(), new PromptTemplateStore());
     }
 
-    public ShoppingIntentRouter(ChatClient routerChatClient) {
-        this(routerChatClient, new RagTracing(), new PromptTemplateStore());
+    ShoppingIntentRouter(ChatClient.Builder builder, RagTracing tracing) {
+        this(builder, tracing, new PromptTemplateStore());
     }
 
-    ShoppingIntentRouter(ChatClient routerChatClient, RagTracing tracing) {
-        this(routerChatClient, tracing, new PromptTemplateStore());
-    }
-
-    ShoppingIntentRouter(ChatClient routerChatClient, RagTracing tracing, PromptTemplateStore promptTemplateStore) {
-        this.routerChatClient = routerChatClient;
+    ShoppingIntentRouter(ChatClient.Builder builder, RagTracing tracing, PromptTemplateStore promptTemplateStore) {
+        this.builder = builder;
         this.tracing = tracing == null ? new RagTracing() : tracing;
         PromptTemplateStore store = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
         this.routerSystemPrompt = store.text("intent-router.system");
         this.routerVisualSystemPrompt = store.text("intent-router.visual.system");
     }
 
+    /**
+     * 初始化意图路由专用 ChatClient。
+     */
     @jakarta.annotation.PostConstruct
     public void init() {
         if (routerChatClient == null && builder != null) {
@@ -70,10 +72,16 @@ public class ShoppingIntentRouter {
         }
     }
 
+    /**
+     * 根据用户文本和图片生成购物意图路由结果。
+     */
     public ShoppingIntentRoute route(String userMessage, List<Media> media) {
         return route(userMessage, media, "");
     }
 
+    /**
+     * 根据用户文本、图片和会话偏好上下文生成购物意图路由结果。
+     */
     public ShoppingIntentRoute route(String userMessage, List<Media> media, String preferenceContext) {
         if (!enabled) {
             return ShoppingIntentRoute.fallback("intent router disabled");

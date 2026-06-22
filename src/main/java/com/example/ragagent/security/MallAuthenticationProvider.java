@@ -12,6 +12,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.List;
 
+/**
+ * Spring Security 认证提供者，通过商城登录接口校验账号密码。
+ */
 public class MallAuthenticationProvider implements AuthenticationProvider {
 
     private final MallApiClient mallApiClient;
@@ -22,6 +25,9 @@ public class MallAuthenticationProvider implements AuthenticationProvider {
         this.mallAuthCache = mallAuthCache;
     }
 
+    /**
+     * 调用商城登录接口完成认证，并把商城令牌缓存到 Redis。
+     */
     @Override
     public Authentication authenticate(Authentication authentication) throws AuthenticationException {
         String username = authentication == null ? "" : String.valueOf(authentication.getPrincipal());
@@ -43,6 +49,9 @@ public class MallAuthenticationProvider implements AuthenticationProvider {
         );
     }
 
+    /**
+     * 仅处理用户名密码认证令牌。
+     */
     @Override
     public boolean supports(Class<?> authentication) {
         return UsernamePasswordAuthenticationToken.class.isAssignableFrom(authentication);

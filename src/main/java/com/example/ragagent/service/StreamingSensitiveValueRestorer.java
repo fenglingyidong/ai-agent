@@ -2,6 +2,9 @@ package com.example.ragagent.service;
 
 import java.util.Map;
 
+/**
+ * 在流式输出中恢复被 PromptSecurityFilter 替换的敏感值占位符。
+ */
 final class StreamingSensitiveValueRestorer {
 
     private final Map<String, String> sensitiveValues;
@@ -11,6 +14,9 @@ final class StreamingSensitiveValueRestorer {
         this.sensitiveValues = sensitiveValues == null ? Map.of() : sensitiveValues;
     }
 
+    /**
+     * 接收一个流式片段，返回可以安全输出的已恢复文本。
+     */
     String accept(String chunk) {
         if (chunk == null || chunk.isEmpty()) {
             return "";
@@ -25,6 +31,9 @@ final class StreamingSensitiveValueRestorer {
         return restore(readyText);
     }
 
+    /**
+     * 刷出尚未输出的尾部缓冲文本。
+     */
     String flush() {
         String all = pending.toString();
         pending.setLength(0);

@@ -23,6 +23,9 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+/**
+ * 负责长期记忆的召回、提示词渲染，以及把短期窗口淘汰内容总结后写入向量库。
+ */
 @Service
 public class LongTermMemoryService {
 
@@ -52,6 +55,9 @@ public class LongTermMemoryService {
         this.summarySystemPrompt = this.promptTemplateStore.text("memory.summary.system");
     }
 
+    /**
+     * 按用户和当前输入从长期记忆向量库召回相关摘要。
+     */
     public String retrieveLongTermMemory(String userId, String userText) {
         if (!StringUtils.hasText(userText) || properties.getLongTermTopK() <= 0 || vectorStore == null) {
             return "";
@@ -75,10 +81,16 @@ public class LongTermMemoryService {
                 .orElse("");
     }
 
+    /**
+     * 将召回到的长期记忆渲染成可追加到系统提示词的片段。
+     */
     public String renderLongTermMemoryPrompt(String longTermMemory) {
         return promptTemplateStore.render("memory.long-term.system", Map.of(LONG_TERM_MEMORY_PLACEHOLDER, longTermMemory));
     }
 
+    /**
+     * 异步调度短期记忆淘汰内容的摘要任务，空批次会直接跳过。
+     */
     public CompletableFuture<Boolean> scheduleSummaryIfNeeded(String userId,
                                                               String conversationId,
                                                               List<ConversationMemoryEntry> evictedEntries) {

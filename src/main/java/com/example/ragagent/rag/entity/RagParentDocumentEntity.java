@@ -8,6 +8,9 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+/**
+ * rag_parent_documents 表实体，保存父分块正文和可恢复元数据。
+ */
 @Getter
 @Setter
 @TableName("rag_parent_documents")

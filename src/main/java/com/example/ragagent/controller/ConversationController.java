@@ -14,6 +14,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+/**
+ * 提供会话列表、会话轮次查询和删除接口，支撑前端历史会话视图。
+ */
 @RestController
 @RequestMapping("/api/conversations")
 public class ConversationController {
@@ -26,6 +29,9 @@ public class ConversationController {
         this.conversationLogService = conversationLogService;
     }
 
+    /**
+     * 分页返回当前用户最近的会话摘要。
+     */
     @GetMapping
     public ConversationsResponse sessions(@RequestParam(value = "limit", defaultValue = "50") int limit,
                                           @RequestParam(value = "offset", defaultValue = "0") int offset,
@@ -37,6 +43,9 @@ public class ConversationController {
         );
     }
 
+    /**
+     * 返回指定会话的最近对话轮次。
+     */
     @GetMapping("/{sessionId}/turns")
     public ConversationTurnsResponse turns(@PathVariable String sessionId,
                                            @RequestParam(value = "limit", defaultValue = "50") int limit,
@@ -49,6 +58,9 @@ public class ConversationController {
         );
     }
 
+    /**
+     * 删除当前用户下指定会话的持久化记录。
+     */
     @DeleteMapping("/{sessionId}")
     public void deleteSession(@PathVariable String sessionId, Authentication authentication) {
         conversationLogService.deleteSession(resolveCurrentUserId(authentication), sessionId);
@@ -63,12 +75,18 @@ public class ConversationController {
         return DEFAULT_USER_ID;
     }
 
+    /**
+     * 会话轮次查询响应。
+     */
     public record ConversationTurnsResponse(
             String sessionId,
             List<ConversationTurnRecord> items
     ) {
     }
 
+    /**
+     * 会话摘要列表响应。
+     */
     public record ConversationsResponse(List<ConversationSessionSummary> items) {
     }
 }

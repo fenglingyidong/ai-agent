@@ -22,11 +22,17 @@ import org.springframework.util.StringUtils;
 import java.util.Locale;
 import java.util.stream.Collectors;
 
+/**
+ * Spring AI ChatModel 观测配置，把模型输入输出映射到 Langfuse 兼容字段。
+ */
 @Configuration
 public class SpringAiLangfuseObservationConfig {
 
     private static final int DEFAULT_MAX_CAPTURE_CHARS = 8_000;
 
+    /**
+     * 为 OpenAiChatModel 注入自定义 observation convention。
+     */
     @Bean
     BeanPostProcessor openAiChatModelObservationPostProcessor(ChatModelObservationConvention convention) {
         return new BeanPostProcessor() {
@@ -40,6 +46,9 @@ public class SpringAiLangfuseObservationConfig {
         };
     }
 
+    /**
+     * 创建会采集模型输入输出的 Langfuse observation convention。
+     */
     @Bean
     ChatModelObservationConvention langfuseChatModelObservationConvention(LangfuseProperties properties,
                                                                           RagTracing tracing) {
@@ -89,6 +98,9 @@ public class SpringAiLangfuseObservationConfig {
         };
     }
 
+    /**
+     * 将 Spring AI Prompt 渲染为可采集的纯文本，并进行脱敏截断。
+     */
     static String renderPrompt(Prompt prompt, int maxChars, RagTracing tracing) {
         if (prompt == null || prompt.getInstructions() == null || prompt.getInstructions().isEmpty()) {
             return "";
@@ -107,6 +119,9 @@ public class SpringAiLangfuseObservationConfig {
         return sanitized.length() > limit ? sanitized.substring(0, limit) : sanitized;
     }
 
+    /**
+     * 将 ChatResponse 渲染为可采集的模型输出文本，并进行脱敏截断。
+     */
     static String renderCompletion(ChatResponse response, int maxChars, RagTracing tracing) {
         if (response == null || response.getResults() == null || response.getResults().isEmpty()) {
             return "";

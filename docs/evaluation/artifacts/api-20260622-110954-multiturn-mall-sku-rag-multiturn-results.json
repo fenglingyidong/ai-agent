@@ -1,0 +1,205 @@
+{
+  "runId": "api-20260622-110954-multiturn",
+  "source": "docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.md",
+  "endpoint": "http://localhost:18082/api/react",
+  "modelId": "qwen",
+  "webSearchEnabled": false,
+  "conversations": [
+    {
+      "id": "M01",
+      "title": "办公桌面升级",
+      "sessionId": "api-20260622-110954-multiturn-M01",
+      "turns": [
+        {
+          "id": "M01-T1",
+          "question": "我想把办公桌面升级一下，预算 400 左右，配一套实用的。",
+          "sessionId": "api-20260622-110954-multiturn-M01",
+          "status": 200,
+          "durationSeconds": 65.179,
+          "answer": "抱歉，大模型服务连接被中断，暂时无法完成本次回答。请稍后重试。",
+          "error": null,
+          "turn": 1
+        },
+        {
+          "id": "M01-T2",
+          "question": "我更在意安静，键盘会不会吵？鼠标要点击声音小的。",
+          "sessionId": "api-20260622-110954-multiturn-M01",
+          "status": 200,
+          "durationSeconds": 7.708,
+          "answer": "推荐「无线鼠标 静音版」（SKU: 3004），价格89.00元，库存500件，用户评价明确反馈“按键安静，续航表现不错”，完全符合您对鼠标静音的核心需求。\n\n键盘方面，「机械键盘 无线矮轴」（SKU: 3003）虽为无线设计且连接稳定，但机械键盘固有触发声音无法忽略，不满足“键盘不吵”的要求；当前候选中无静音键盘商品。因此，若键盘静音为硬性需求，该键盘暂不推荐。\n\n综上，优先下单无线鼠标 静音版；键盘需另作静音向选品，当前候选无合适选项。",
+          "error": null,
+          "turn": 2
+        },
+        {
+          "id": "M01-T3",
+          "question": "那先只买鼠标和挂灯，库存够吗？",
+          "sessionId": "api-20260622-110954-multiturn-M01",
+          "status": 200,
+          "durationSeconds": 3.972,
+          "answer": "工具结果事实：库存充足。\n\n鼠标有两款，库存分别为500和220；挂灯有两款，库存分别为300和180。您想购买的鼠标和挂灯均有足够库存，可放心选购。",
+          "error": null,
+          "turn": 3
+        }
+      ]
+    },
+    {
+      "id": "M02",
+      "title": "双猫大包装采购",
+      "sessionId": "api-20260622-110954-multiturn-M02",
+      "turns": [
+        {
+          "id": "M02-T1",
+          "question": "家里两只猫，想买猫粮和猫砂，预算 450 左右，尽量大包装。",
+          "sessionId": "api-20260622-110954-multiturn-M02",
+          "status": 200,
+          "durationSeconds": 9.676,
+          "answer": "根据您的需求（两只猫、预算450元、优先大包装），当前商品池中仅有猫粮可选，无猫砂商品。候选中：\n\n- **FreshPeak 猫粮全价粮 10kg**（SKU 3023）：实时价329元，库存200件，享“满199减20”促销，评价“Large pack is better value.”，规格符合大包装要求，价格在预算内，剩余121元可用于后续补配猫砂；\n- **FreshPeak 猫粮全价粮 5kg**（SKU 3022）：实时价189元，虽为正品但规格为5kg，非大包装，且单独购买后余额261元仍需配猫砂，但当前无猫砂候选，无法组成完整组合。\n\n因此，**推荐 FreshPeak 猫粮全价粮 10kg（329元）**：它满足大包装、双猫长期喂养、预算内、高库存、高好评等核心要求，是当前唯一可立即下单的合规选项。猫砂部分因商品池暂缺，需后续补充上架后为您生成完整组合方案。",
+          "error": null,
+          "turn": 1
+        },
+        {
+          "id": "M02-T2",
+          "question": "如果我想控制在 400 以内呢？",
+          "sessionId": "api-20260622-110954-multiturn-M02",
+          "status": 200,
+          "durationSeconds": 4.069,
+          "answer": "商城当前没有找到价格在400元以内且符合“猫粮,猫砂”品类的大包装商品。建议您放宽预算或调整品类关键词，例如搜索“猫粮”或“猫砂”单独品类，再确认是否需要大包装规格。",
+          "error": null,
+          "turn": 2
+        },
+        {
+          "id": "M02-T3",
+          "question": "那还是 408 这套吧，猫砂除味怎么样？",
+          "sessionId": "api-20260622-110954-multiturn-M02",
+          "status": 200,
+          "durationSeconds": 3.69,
+          "answer": "您选择的猫砂混合砂 12L（SKU 4062）除味效果很好，有用户评价提到“混合砂除味更好”，适合多猫家庭。当前价格为79.00元，库存充足。是否需要加入购物车？",
+          "error": null,
+          "turn": 3
+        }
+      ]
+    },
+    {
+      "id": "M03",
+      "title": "机械键盘对比",
+      "sessionId": "api-20260622-110954-multiturn-M03",
+      "turns": [
+        {
+          "id": "M03-T1",
+          "question": "机械键盘青轴、红轴 87 键、无线矮轴怎么选？",
+          "sessionId": "api-20260622-110954-multiturn-M03",
+          "status": 200,
+          "durationSeconds": 7.759,
+          "answer": "根据您的明确偏好（87键、无线、矮轴），唯一完全匹配的商品是 **机械键盘 无线矮轴（SKU: 3003）**，售价259元，现货150件，享满199减20优惠，好评率97.5%，最新评价称“无线连接稳定，紧凑布局节省桌面空间”。\n\n其余两款不满足硬性约束：\n- 机械键盘 青轴（SKU: 3001）：有线、非矮轴，价格299元；\n- 机械键盘 红轴 87键（SKU: 3002）：有线、红轴、87键，价格129元，虽布局符合但不满足无线+矮轴要求。\n\n因此，直接选 **机械键盘 无线矮轴（SKU: 3003）**。",
+          "error": null,
+          "turn": 1
+        },
+        {
+          "id": "M03-T2",
+          "question": "我是办公室用，预算 150 以内，别太吵。",
+          "sessionId": "api-20260622-110954-multiturn-M03",
+          "status": 200,
+          "durationSeconds": 5.216,
+          "answer": "工具结果事实：商城找到符合您“办公室用，别太吵”需求的机械键盘（红轴 87键），价格 129.00 元，库存充足，评价显示静音手感适合办公。\n\n导购推断：您预算 150 元内，87 键，办公室安静使用，此款红轴键盘是匹配项。若需无线矮轴可选 SKU 3003，但价格超出预算。\n\n是否确认添加此商品到购物车？",
+          "error": null,
+          "turn": 2
+        },
+        {
+          "id": "M03-T3",
+          "question": "库存和价格再确认一下。",
+          "sessionId": "api-20260622-110954-multiturn-M03",
+          "status": 200,
+          "durationSeconds": 2.861,
+          "answer": "商城没有搜到匹配的商品，可能是商品已下架或信息有误。建议您提供更具体的商品名称或SKU，我会帮您重新查询。",
+          "error": null,
+          "turn": 3
+        }
+      ]
+    },
+    {
+      "id": "M04",
+      "title": "无完全匹配到加购",
+      "sessionId": "api-20260622-110954-multiturn-M04",
+      "turns": [
+        {
+          "id": "M04-T1",
+          "question": "我穿 41 码，想买跑步鞋，预算 400 左右，有合适的吗？",
+          "sessionId": "api-20260622-110954-multiturn-M04",
+          "status": 200,
+          "durationSeconds": 7.531,
+          "answer": "当前商品池中无 41 码跑步鞋。最接近的选项是 North Star 轻量跑步鞋 42码（SKU: 2001），售价 399.00 元（符合 400 元预算），库存充足（300 双），评分 4.6/5（842 条评价），评价反馈“Lightweight shoes with stable support.”，明确适配跑步场景。其余选项：43码白色（399.00 元）、44码灰色（419.00 元，超预算）均非 41 码。若坚持 41 码且不超预算，暂无匹配商品。",
+          "error": null,
+          "turn": 1
+        },
+        {
+          "id": "M04-T2",
+          "question": "42 码可以接受，那就这双吧，库存够不够？",
+          "sessionId": "api-20260622-110954-multiturn-M04",
+          "status": 200,
+          "durationSeconds": 3.38,
+          "answer": "商城没有找到您指定的 SKU（123456），无法确认当前库存情况。建议您提供更具体的商品名称或重新核对商品信息。",
+          "error": null,
+          "turn": 2
+        },
+        {
+          "id": "M04-T3",
+          "question": "帮我加购物车，买 1 双。",
+          "sessionId": "api-20260622-110954-multiturn-M04",
+          "status": 200,
+          "durationSeconds": 3.153,
+          "answer": "当前会话缺少有效的商城上下文，无法执行加购操作。请先在商城内完成登录或确认购物环境，再尝试添加商品到购物车。",
+          "error": null,
+          "turn": 3
+        }
+      ]
+    },
+    {
+      "id": "M05",
+      "title": "商品确认到下单",
+      "sessionId": "api-20260622-110954-multiturn-M05",
+      "turns": [
+        {
+          "id": "M05-T1",
+          "question": "婴儿湿巾 80 抽 12 包这款多少钱？适合囤吗？",
+          "sessionId": "api-20260622-110954-multiturn-M05",
+          "status": 200,
+          "durationSeconds": 3.295,
+          "answer": "工具结果事实：婴儿湿巾 80抽 12包的价格是99.00元，库存充足（300件）。\n\n导购推断：这款商品规格为12包，适合家庭囤货使用，性价比较高。",
+          "error": null,
+          "turn": 1
+        },
+        {
+          "id": "M05-T2",
+          "question": "那加 2 件到购物车。",
+          "sessionId": "api-20260622-110954-multiturn-M05",
+          "status": 200,
+          "durationSeconds": 3.549,
+          "answer": "当前会话未在商城上下文中，无法执行加购操作。请先在商城内完成登录或确认购物车状态，再尝试添加商品。",
+          "error": null,
+          "turn": 2
+        },
+        {
+          "id": "M05-T3",
+          "question": "看看购物车，然后下单。",
+          "sessionId": "api-20260622-110954-multiturn-M05",
+          "status": 200,
+          "durationSeconds": 2.98,
+          "answer": "当前会话缺少有效的商城上下文，无法查看购物车。请先登录或确认在商城环境中操作，再尝试下单。",
+          "error": null,
+          "turn": 3
+        },
+        {
+          "id": "M05-T4",
+          "question": "确认下单。",
+          "sessionId": "api-20260622-110954-multiturn-M05",
+          "status": 200,
+          "durationSeconds": 3.07,
+          "answer": "当前会话未提供有效的商城上下文，无法确认下单。请先确保已添加商品到购物车，或重新登录/初始化会话后再尝试。",
+          "error": null,
+          "turn": 4
+        }
+      ]
+    }
+  ],
+  "durationSeconds": 137.104
+}

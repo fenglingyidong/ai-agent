@@ -27,6 +27,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+/**
+ * 父子分块索引器，负责切分原始文档、保存父分块并写入子分块向量索引。
+ */
 @Component
 public class ParentChildDocumentIndexer {
 
@@ -391,12 +394,18 @@ public class ParentChildDocumentIndexer {
         }
     }
 
+    /**
+     * 一次完整文档索引生成的父子分块 ID。
+     */
     public record DocumentIndexingResult(
             List<String> parentIds,
             List<String> childIds
     ) {
     }
 
+    /**
+     * 单个父分块索引后的 parentId 和子分块 ID。
+     */
     public record IndexedParentChunk(
             String parentId,
             List<String> childIds

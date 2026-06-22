@@ -9,6 +9,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+/**
+ * RAG 召回配置，覆盖 dense、BM25、并行检索和父文档截断策略。
+ */
 @Getter
 @Setter
 @Validated
@@ -59,16 +62,25 @@ public class RagRetrievalProperties {
     @DecimalMax("1.0")
     private double minNormalizedGapToTruncate = 0.0d;
 
+    /**
+     * 校验参与父文档聚合的候选窗口不能小于保底保留数量。
+     */
     @AssertTrue(message = "maxChildResultsToConsider must be greater than or equal to minChildResultsToKeep")
     public boolean isChildResultWindowValid() {
         return maxChildResultsToConsider >= minChildResultsToKeep;
     }
 
+    /**
+     * 校验异步等待时间覆盖 Milvus BM25 RPC 截止时间。
+     */
     @AssertTrue(message = "bm25FutureTimeoutMs must be greater than or equal to bm25RpcDeadlineMs")
     public boolean isBm25TimeoutWindowValid() {
         return bm25FutureTimeoutMs >= bm25RpcDeadlineMs;
     }
 
+    /**
+     * 校验 RAG 并行线程池最大线程数不小于核心线程数。
+     */
     @AssertTrue(message = "parallelExecutorMaxSize must be greater than or equal to parallelExecutorCoreSize")
     public boolean isParallelExecutorSizeValid() {
         return parallelExecutorMaxSize >= parallelExecutorCoreSize;

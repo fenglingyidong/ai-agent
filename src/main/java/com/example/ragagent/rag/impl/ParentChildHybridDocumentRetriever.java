@@ -25,6 +25,9 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Pattern;
 
+/**
+ * 混合父子分块检索器，融合 dense 向量召回和 Milvus BM25 sparse 召回。
+ */
 @Component
 @Primary
 public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
@@ -43,6 +46,9 @@ public class ParentChildHybridDocumentRetriever implements DocumentRetriever {
     private final Executor retrievalExecutor;
     private final RagTracing tracing;
 
+    /**
+     * 创建混合检索器，注入 dense/BM25 检索器、并行执行器和 tracing 组件。
+     */
     public ParentChildHybridDocumentRetriever(ParentChildDocumentRetriever denseRetriever,
                                               MilvusBm25ChildChunkRetriever bm25Retriever,
                                               RagRetrievalProperties properties,

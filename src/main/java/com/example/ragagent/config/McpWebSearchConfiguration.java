@@ -8,12 +8,18 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.util.StringUtils;
 import org.springframework.web.reactive.function.client.ClientRequest;
 
+/**
+ * 为 DashScope WebSearch MCP 请求自动补充鉴权头。
+ */
 @Configuration
 public class McpWebSearchConfiguration {
 
     private static final String DASHSCOPE_HOST = "dashscope.aliyuncs.com";
     private static final String WEBSEARCH_MCP_PATH = "/api/v1/mcps/WebSearch/mcp";
 
+    /**
+     * 创建 WebClient 定制器，仅对 WebSearch MCP 地址附加 Bearer Token。
+     */
     @Bean
     public WebClientCustomizer mcpWebSearchAuthorizationCustomizer(
             @Value("${app.mcp.websearch.api-key:}") String apiKey) {

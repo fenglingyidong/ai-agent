@@ -11,6 +11,9 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
+/**
+ * 分层记忆配置，控制短期窗口、长期召回和摘要线程池参数。
+ */
 @Getter
 @Setter
 @Validated

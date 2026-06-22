@@ -10,6 +10,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.Objects;
 
+/**
+ * 为 mall_create_order 增加 Java 侧二次确认门禁。
+ */
 final class OrderCreationGuardedToolCallback implements ToolCallback {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -35,11 +38,17 @@ final class OrderCreationGuardedToolCallback implements ToolCallback {
         return delegate.getToolMetadata();
     }
 
+    /**
+     * 调用无上下文下单工具，仍会执行确认参数校验。
+     */
     @Override
     public String call(String input) {
         return call(input, null);
     }
 
+    /**
+     * 校验路由授权、confirmationId 和 userConfirmed 后再放行真实下单工具。
+     */
     @Override
     public String call(String input, ToolContext toolContext) {
         String blockReason = blockReason(input);

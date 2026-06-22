@@ -14,27 +14,30 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 为 ReAct 主链路解析本轮可用工具，并统一套上日志、追踪和下单保护。
+ */
 final class ReactToolResolver {
 
     private static final Logger log = LoggerFactory.getLogger(ReactToolResolver.class);
 
     private final List<ToolCallback> builtInToolCallbacks;
     private final List<ToolCallbackProvider> externalToolCallbackProviders;
-    private final MallMcpToolCallback mallMcpToolCallback;
     private final RagTracing tracing;
 
     ReactToolResolver(BuiltInTools builtInTools,
                       List<ToolCallbackProvider> externalToolCallbackProviders,
-                      MallMcpToolCallback mallMcpToolCallback,
                       RagTracing tracing) {
         this.builtInToolCallbacks = loadBuiltInToolCallbacks(builtInTools);
         this.externalToolCallbackProviders = externalToolCallbackProviders == null
                 ? List.of()
                 : List.copyOf(externalToolCallbackProviders);
-        this.mallMcpToolCallback = mallMcpToolCallback;
         this.tracing = tracing == null ? new RagTracing() : tracing;
     }
 
+    /**
+     * 按路由结果、任务策略和开关选择实际传给模型的工具回调。
+     */
     ActiveToolCallbacks resolve(String userId,
                                 String sessionId,
                                 boolean webSearchEnabled,
@@ -50,31 +53,9 @@ final class ReactToolResolver {
                 orderCreationAllowed
         ));
 
-        if (allowsMallTools(mallToolsAllowed, taskPolicies) && mallMcpToolCallback != null) {
-            try {
-                List<ToolCallback> mallToolCallbacks = mallMcpToolCallback.getToolCallbacks();
-                if (mallToolCallbacks.isEmpty()) {
-                    throw new MallMcpToolResolutionException("未发现 mall_* MCP 工具");
-                }
-                for (ToolCallback callback : mallToolCallbacks) {
-                    putToolCallback(activeToolCallbacks, callback, userId, sessionId, orderCreationAllowed);
-                }
-            }
-            catch (RuntimeException ex) {
-                throw new MallMcpToolResolutionException(safeMallMcpMessage(ex), ex);
-            }
-        }
-
-        if (!webSearchEnabled) {
-            List<ToolCallback> callbacks = filterCallbacksByTaskPolicies(
-                    List.copyOf(activeToolCallbacks.values()),
-                    taskPolicies,
-                    orderCreationAllowed
-            );
-            return new ActiveToolCallbacks(callbacks, false, hasMallTools(callbacks));
-        }
-
+        boolean mallAllowed = allowsMallTools(mallToolsAllowed, taskPolicies);
         boolean hasExternalTools = false;
+        boolean hasMallTools = false;
         for (ToolCallbackProvider provider : externalToolCallbackProviders) {
             try {
                 ToolCallback[] callbacks = provider.getToolCallbacks();
@@ -87,16 +68,27 @@ final class ReactToolResolver {
                     if (!StringUtils.hasText(toolName) || activeToolCallbacks.containsKey(toolName)) {
                         continue;
                     }
-                    if (MallMcpToolCallback.isMallTool(toolName)) {
+                    boolean mallTool = MallTool.isMallTool(toolName);
+                    if (mallTool && !mallAllowed) {
+                        continue;
+                    }
+                    if (!mallTool && !webSearchEnabled) {
                         continue;
                     }
                     putToolCallback(activeToolCallbacks, callback, userId, sessionId, orderCreationAllowed);
-                    hasExternalTools = true;
+                    hasExternalTools = hasExternalTools || !mallTool;
+                    hasMallTools = hasMallTools || mallTool;
                 }
             }
             catch (RuntimeException ex) {
+                if (mallAllowed) {
+                    throw new MallMcpToolResolutionException(safeMallMcpMessage(ex), ex);
+                }
                 log.warn("Failed to resolve MCP tool callbacks, MCP tools will be skipped for this request", ex);
             }
+        }
+        if (mallAllowed && !hasMallTools) {
+            throw new MallMcpToolResolutionException("未发现 mall_* MCP 工具");
         }
 
         List<ToolCallback> callbacks = filterCallbacksByTaskPolicies(
@@ -107,6 +99,9 @@ final class ReactToolResolver {
         return new ActiveToolCallbacks(callbacks, hasExternalTools, hasMallTools(callbacks));
     }
 
+    /**
+     * 将商城 MCP 工具发现异常转换为用户可见的失败提示。
+     */
     String mallMcpFailureMessage(MallMcpToolResolutionException ex) {
         String message = safeMallMcpMessage(ex);
         return message.startsWith("商城 MCP 调用失败：") ? message : "商城 MCP 调用失败：" + message;
@@ -150,12 +145,12 @@ final class ReactToolResolver {
             return false;
         }
         Set<String> allowedToolNames = allowedToolNames(taskPolicies);
-        return allowedToolNames.isEmpty() || allowedToolNames.stream().anyMatch(MallMcpToolCallback::isMallTool);
+        return allowedToolNames.isEmpty() || allowedToolNames.stream().anyMatch(MallTool::isMallTool);
     }
 
     private boolean isShoppingControlledTool(String toolName) {
         return "searchProductKnowledge".equals(toolName)
-                || MallMcpToolCallback.isMallTool(toolName);
+                || MallTool.isMallTool(toolName);
     }
 
     private boolean hasMallTools(List<ToolCallback> callbacks) {
@@ -164,7 +159,7 @@ final class ReactToolResolver {
         }
         return callbacks.stream()
                 .map(this::toolName)
-                .anyMatch(MallMcpToolCallback::isMallTool);
+                .anyMatch(MallTool::isMallTool);
     }
 
     private Set<String> allowedToolNames(List<ShoppingTaskPolicy> taskPolicies) {
@@ -183,9 +178,12 @@ final class ReactToolResolver {
                                  boolean orderCreationAllowed) {
         String toolName = toolName(callback);
         if (StringUtils.hasText(toolName)) {
-            ToolCallback guardedCallback = MallTool.CREATE_ORDER.toolName().equals(toolName)
-                    ? new OrderCreationGuardedToolCallback(callback, orderCreationAllowed)
+            ToolCallback renderedCallback = MallTool.isMallTool(toolName)
+                    ? new MallRenderedToolCallback(callback, new MallToolResultRenderer())
                     : callback;
+            ToolCallback guardedCallback = MallTool.CREATE_ORDER.toolName().equals(toolName)
+                    ? new OrderCreationGuardedToolCallback(renderedCallback, orderCreationAllowed)
+                    : renderedCallback;
             activeToolCallbacks.put(toolName, new LoggingToolCallback(guardedCallback, userId, sessionId, tracing));
         }
     }
@@ -204,8 +202,14 @@ final class ReactToolResolver {
         return ex.getMessage().trim();
     }
 
+    /**
+     * 本轮已启用的工具回调及其分类标记。
+     */
     record ActiveToolCallbacks(List<ToolCallback> callbacks, boolean hasExternalTools, boolean hasMallTools) {
 
+        /**
+         * 返回按注册顺序排列的工具名列表。
+         */
         List<String> toolNames() {
             if (callbacks == null || callbacks.isEmpty()) {
                 return List.of();
@@ -217,6 +221,9 @@ final class ReactToolResolver {
                     .toList();
         }
 
+        /**
+         * 返回用于提示词策略渲染的工具名集合。
+         */
         Set<String> toolNameSet() {
             if (callbacks == null || callbacks.isEmpty()) {
                 return Set.of();
@@ -229,6 +236,9 @@ final class ReactToolResolver {
         }
     }
 
+    /**
+     * 表示商城 MCP 工具列表解析失败。
+     */
     static final class MallMcpToolResolutionException extends RuntimeException {
 
         private MallMcpToolResolutionException(String message) {

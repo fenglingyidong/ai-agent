@@ -20,6 +20,9 @@ import java.util.WeakHashMap;
 import java.util.concurrent.Callable;
 import java.util.regex.Pattern;
 
+/**
+ * 封装 RAG 和 agent 链路的 OpenTelemetry/Langfuse 埋点、脱敏和调试内容采集。
+ */
 @Component
 public class RagTracing {
 
@@ -60,6 +63,9 @@ public class RagTracing {
         this.properties = properties == null ? new LangfuseProperties() : properties;
     }
 
+    /**
+     * 在指定 span 中执行代码块，并自动记录异常和结束 span。
+     */
     public <T> T inSpan(String spanName, Callable<T> callable) {
         if (!properties.isEnabled()) {
             try {
@@ -89,10 +95,16 @@ public class RagTracing {
         }
     }
 
+    /**
+     * 返回当前线程上下文中的 span。
+     */
     public Span currentSpan() {
         return Span.current();
     }
 
+    /**
+     * 创建新的业务 span，并写入 Langfuse observation 名称。
+     */
     public Span startSpan(String spanName) {
         if (!properties.isEnabled()) {
             return Span.getInvalid();
@@ -104,6 +116,9 @@ public class RagTracing {
         return span;
     }
 
+    /**
+     * 将 span 放入当前上下文，未启用 tracing 时返回空 Scope。
+     */
     public Scope makeCurrent(Span span) {
         if (!properties.isEnabled() || span == null) {
             return () -> {
@@ -112,6 +127,9 @@ public class RagTracing {
         return span.makeCurrent();
     }
 
+    /**
+     * 结束 span，并清理为该 span 维护的追加属性缓存。
+     */
     public void endSpan(Span span) {
         if (properties.isEnabled() && span != null) {
             appendedCsvAttributes.remove(span);
@@ -119,30 +137,45 @@ public class RagTracing {
         }
     }
 
+    /**
+     * 为 span 写入非空字符串属性。
+     */
     public void setAttribute(Span span, String key, String value) {
         if (properties.isEnabled() && span != null && StringUtils.hasText(key) && StringUtils.hasText(value)) {
             span.setAttribute(key, value);
         }
     }
 
+    /**
+     * 为 span 写入 long 属性。
+     */
     public void setAttribute(Span span, String key, long value) {
         if (properties.isEnabled() && span != null && StringUtils.hasText(key)) {
             span.setAttribute(key, value);
         }
     }
 
+    /**
+     * 为 span 写入 double 属性。
+     */
     public void setAttribute(Span span, String key, double value) {
         if (properties.isEnabled() && span != null && StringUtils.hasText(key)) {
             span.setAttribute(key, value);
         }
     }
 
+    /**
+     * 为 span 写入 boolean 属性。
+     */
     public void setAttribute(Span span, String key, boolean value) {
         if (properties.isEnabled() && span != null && StringUtils.hasText(key)) {
             span.setAttribute(key, value);
         }
     }
 
+    /**
+     * 以去重 CSV 形式追加 span 属性，适合记录多次工具调用名称等集合值。
+     */
     public void appendDistinctCsvAttribute(Span span, String key, String value) {
         if (!properties.isEnabled() || span == null || !StringUtils.hasText(key) || !StringUtils.hasText(value)) {
             return;
@@ -158,6 +191,9 @@ public class RagTracing {
         }
     }
 
+    /**
+     * 在 span 上记录异常并标记错误状态。
+     */
     public void recordError(Span span, Throwable ex) {
         if (!properties.isEnabled() || span == null || ex == null) {
             return;
@@ -167,6 +203,9 @@ public class RagTracing {
         span.setAttribute("error.type", ex.getClass().getSimpleName());
     }
 
+    /**
+     * 按配置采集提示词文本，采集前会做敏感信息脱敏和长度截断。
+     */
     public void capturePromptText(Span span, String key, String value) {
         if (!properties.isEnabled() || !properties.isCapturePrompt() || span == null
                 || !StringUtils.hasText(key) || value == null) {
@@ -175,10 +214,16 @@ public class RagTracing {
         captureSanitizedText(span, key, value, promptCaptureLimit());
     }
 
+    /**
+     * 写入 Langfuse trace input 字段。
+     */
     public void recordTraceInput(Span span, String value) {
         captureLangfuseTraceValue(span, "langfuse.trace.input", value);
     }
 
+    /**
+     * 写入 Langfuse trace output 字段。
+     */
     public void recordTraceOutput(Span span, String value) {
         captureLangfuseTraceValue(span, "langfuse.trace.output", value);
     }
@@ -194,6 +239,9 @@ public class RagTracing {
         }
     }
 
+    /**
+     * 按配置采集工具入参或返回结果，采集前会脱敏和截断。
+     */
     public void captureToolPayload(Span span, String key, String value) {
         if (!properties.isEnabled() || !properties.isCaptureToolPayload() || span == null
                 || !StringUtils.hasText(key) || value == null) {
@@ -202,6 +250,9 @@ public class RagTracing {
         captureSanitizedText(span, key, value, configuredCaptureLimit());
     }
 
+    /**
+     * 按配置采集 RAG 文档内容，采集前会脱敏和截断。
+     */
     public void captureRagContent(Span span, String key, String value) {
         if (!properties.isEnabled() || !properties.isCaptureRagContent() || span == null
                 || !StringUtils.hasText(key) || value == null) {
@@ -250,6 +301,9 @@ public class RagTracing {
         return properties.getMaxCaptureChars() > 0 ? properties.getMaxCaptureChars() : PROMPT_CAPTURE_MAX_CHARS;
     }
 
+    /**
+     * 提取前若干个非空文档 ID，便于在 span 上记录召回摘要。
+     */
     public List<String> topDocumentIds(List<Document> documents, int limit) {
         if (documents == null || documents.isEmpty() || limit <= 0) {
             return List.of();
@@ -261,6 +315,9 @@ public class RagTracing {
                 .toList();
     }
 
+    /**
+     * 生成不含正文的父文档摘要 JSON，适合默认观测字段。
+     */
     public String safeParentsJson(List<Document> parents, int limit) {
         if (parents == null || parents.isEmpty() || limit <= 0) {
             return "[]";
@@ -285,6 +342,9 @@ public class RagTracing {
         return "[" + String.join(",", items) + "]";
     }
 
+    /**
+     * 生成包含父文档调试内容的 JSON，仅在允许采集 RAG 内容时返回正文。
+     */
     public String debugParentsJson(List<Document> parents, int limit) {
         if (!properties.isCaptureRagContent() || parents == null || parents.isEmpty() || limit <= 0) {
             return "[]";
@@ -313,6 +373,9 @@ public class RagTracing {
         return "[" + String.join(",", items) + "]";
     }
 
+    /**
+     * 生成包含子文档调试内容的 JSON，仅在允许采集 RAG 内容时返回正文。
+     */
     public String debugChildrenJson(List<Document> children, int limit) {
         if (!properties.isCaptureRagContent() || children == null || children.isEmpty() || limit <= 0) {
             return "[]";

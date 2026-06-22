@@ -10,6 +10,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 管理可选聊天模型配置，并为请求解析最终使用的模型参数。
+ */
 @Component
 public class ChatModelRegistry {
 
@@ -23,6 +26,9 @@ public class ChatModelRegistry {
         this.properties = properties;
     }
 
+    /**
+     * 根据请求模型、默认模型和配置顺序解析可用的模型 id。
+     */
     public String resolveModelId(String requestedModelId) {
         Map<String, ChatModelsProperties.ChatModelItem> items = properties.getItems();
         if (items.isEmpty()) {
@@ -37,6 +43,9 @@ public class ChatModelRegistry {
         return items.keySet().iterator().next();
     }
 
+    /**
+     * 将模型 id 解析为底层 OpenAI 兼容接口使用的模型名称。
+     */
     public String resolveModelName(String requestedModelId) {
         String resolvedModelId = resolveModelId(requestedModelId);
         if (!StringUtils.hasText(resolvedModelId)) {
@@ -46,6 +55,9 @@ public class ChatModelRegistry {
         return item == null ? null : item.getModel();
     }
 
+    /**
+     * 为指定模型 id 创建 Spring AI 聊天选项。
+     */
     public OpenAiChatOptions createOptions(String requestedModelId) {
         String modelName = resolveModelName(requestedModelId);
         return StringUtils.hasText(modelName)
@@ -53,10 +65,16 @@ public class ChatModelRegistry {
                 : null;
     }
 
+    /**
+     * 返回当前对外展示的默认模型 id。
+     */
     public String getDefaultModelId() {
         return resolveModelId(properties.getDefaultModel());
     }
 
+    /**
+     * 列出前端可选择的聊天模型及其显示标签。
+     */
     public List<AvailableChatModel> listAvailableModels() {
         Map<String, ChatModelsProperties.ChatModelItem> items = new LinkedHashMap<>(properties.getItems());
         return items.entrySet().stream()
@@ -69,6 +87,9 @@ public class ChatModelRegistry {
                 .toList();
     }
 
+    /**
+     * 前端模型选择器展示的模型条目。
+     */
     public record AvailableChatModel(
             String id,
             String label,

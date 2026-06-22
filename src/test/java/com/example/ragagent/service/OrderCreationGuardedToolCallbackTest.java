@@ -1,16 +1,11 @@
 package com.example.ragagent.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
-
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -22,8 +17,6 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class OrderCreationGuardedToolCallbackTest {
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Test
     void shouldBlockWhenRouteDoesNotAllowOrderCreation() {
@@ -101,22 +94,17 @@ class OrderCreationGuardedToolCallbackTest {
     }
 
     @Test
-    void shouldOverrideModelProvidedSessionIdWithTrustedContextForConfirmedOrder() throws Exception {
+    void shouldPassConfirmedOrderArgumentsWithoutSessionInjection() {
         ToolCallback delegate = delegate();
         when(delegate.call(any(String.class), any(ToolContext.class))).thenReturn("{\"ok\":true}");
-        ToolContext toolContext = new ToolContext(Map.of("sessionId", "session-1"));
-        OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(
-                new MallSessionToolCallback(delegate), true);
+        ToolContext toolContext = mock(ToolContext.class);
+        OrderCreationGuardedToolCallback callback = new OrderCreationGuardedToolCallback(delegate, true);
+        String input = "{\"confirmationId\":\"confirm-1\",\"userConfirmed\":true,\"remark\":\"尽快发货\"}";
 
-        String result = callback.call(
-                "{\"confirmationId\":\"confirm-1\",\"userConfirmed\":true,\"sessionId\":\"attacker-session\"}",
-                toolContext);
+        String result = callback.call(input, toolContext);
 
         assertEquals("{\"ok\":true}", result);
-        JsonNode delegatedInput = delegatedInput(delegate);
-        assertEquals("confirm-1", delegatedInput.path("confirmationId").asText());
-        assertTrue(delegatedInput.path("userConfirmed").asBoolean());
-        assertEquals("session-1", delegatedInput.path("sessionId").asText());
+        verify(delegate).call(input, toolContext);
     }
 
     @Test
@@ -132,9 +120,4 @@ class OrderCreationGuardedToolCallbackTest {
         return delegate;
     }
 
-    private JsonNode delegatedInput(ToolCallback delegate) throws Exception {
-        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
-        verify(delegate).call(captor.capture(), any(ToolContext.class));
-        return objectMapper.readTree(captor.getValue());
-    }
 }

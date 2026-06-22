@@ -18,6 +18,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 使用 Milvus V2 原生 insert 写入商品子分块，同时写入 dense 向量和可 BM25 检索的文本。
+ */
 @Component
 public class MilvusProductChildDocumentWriter implements ProductChildDocumentWriter {
 
@@ -36,6 +39,9 @@ public class MilvusProductChildDocumentWriter implements ProductChildDocumentWri
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 为子分块生成 embedding，并批量写入商品集合。
+     */
     @Override
     public void add(List<Document> documents) {
         List<Document> safeDocuments = documents == null ? List.of() : documents.stream()

@@ -29,6 +29,9 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 执行 ReAct 大模型流式调用，并收口记忆、会话流水和 tracing 写入。
+ */
 final class ReactStreamExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(ReactStreamExecutor.class);
@@ -57,6 +60,9 @@ final class ReactStreamExecutor {
         this.promptBuilder = promptBuilder == null ? new ReactPromptBuilder(null) : promptBuilder;
     }
 
+    /**
+     * 运行一次 ReAct 流式请求，输出已恢复敏感值占位符的文本片段。
+     */
     Flux<String> execute(ReactStreamRequest request) {
         return Flux.defer(() -> {
             Scope rootScope = tracing.makeCurrent(request.rootSpan());
@@ -161,6 +167,9 @@ final class ReactStreamExecutor {
         });
     }
 
+    /**
+     * 模型流中断时返回用户可见提示，并保留已生成内容。
+     */
     private Flux<String> resumeWithModelStreamFallback(Throwable ex,
                                                        ReactStreamRequest request,
                                                        AtomicBoolean fallbackUsed,
@@ -183,6 +192,9 @@ final class ReactStreamExecutor {
         return Flux.just(fallback);
     }
 
+    /**
+     * 手动执行 advisor before 阶段，补齐长期记忆和短期窗口记忆。
+     */
     private ChatClientRequest applyAdvisorBefore(ChatClientRequest request) {
         ChatClientRequest current = request;
         for (BaseAdvisor advisor : memoryAdvisors()) {
@@ -194,6 +206,9 @@ final class ReactStreamExecutor {
         return current;
     }
 
+    /**
+     * 手动执行 advisor after 阶段，将最终回答写回记忆组件。
+     */
     private void applyAdvisorAfter(ChatClientRequest request, String rawFinalAnswer) {
         if (!StringUtils.hasLength(rawFinalAnswer)) {
             return;
@@ -261,6 +276,9 @@ final class ReactStreamExecutor {
         return value == null ? 0 : value.length();
     }
 
+    /**
+     * ReAct 流式执行所需的全部上下文。
+     */
     record ReactStreamRequest(String userId,
                               String sessionId,
                               String modelId,

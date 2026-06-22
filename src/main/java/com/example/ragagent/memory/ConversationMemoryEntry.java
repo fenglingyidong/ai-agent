@@ -14,6 +14,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
+/**
+ * Redis 中存储的一条短期记忆消息，保留消息类型、文本、媒体和元数据。
+ */
 public record ConversationMemoryEntry(
         long sequence,
         long timestampEpochMillis,

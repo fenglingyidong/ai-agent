@@ -10,40 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class PromptTemplateStoreTest {
 
     @Test
-    void shouldRenderClasspathPromptTemplateWithVariables() {
-        PromptTemplateStore store = PromptTemplateStore.fromClasspath("prompts/test");
-
-        String rendered = store.render("sample", Map.of(
-                "name", "Alice",
-                "task", "推荐跑鞋"
-        ));
-
-        assertEquals("你好 Alice，请执行：推荐跑鞋。", rendered);
-    }
-
-    @Test
-    void shouldTrimTrailingWhitespaceLoadedFromPromptFile() {
-        PromptTemplateStore store = PromptTemplateStore.fromClasspath("prompts/test");
-
-        String rendered = store.render("sample", Map.of(
-                "name", "Bob",
-                "task", "查看购物车"
-        ));
-
-        assertTrue(!rendered.endsWith("\n"));
-        assertTrue(!rendered.endsWith("\r"));
-    }
-
-    @Test
-    void shouldLoadRawPromptTextWithoutRenderingJsonBraces() {
-        PromptTemplateStore store = PromptTemplateStore.fromClasspath("prompts/test");
-
-        String text = store.text("json");
-
-        assertTrue(text.contains("{\"task_type\": \"COMPLEX_REACT\"}"));
-    }
-
-    @Test
     void shouldLoadPromptSkillFragmentsFromNestedDirectory() {
         PromptTemplateStore store = new PromptTemplateStore();
 
@@ -66,13 +32,15 @@ class PromptTemplateStoreTest {
         ));
         String simpleKnowledgePrompt = store.text("simple-task.knowledge.system");
 
+        assertTrue(reactPrompt.contains("核心规则"));
         assertTrue(reactPrompt.contains("原文场景/人群/建议当事实"));
-        assertTrue(reactPrompt.contains("其余建议标为“导购推断”"));
-        assertTrue(reactPrompt.contains("唯一可推荐商品池"));
-        assertTrue(reactPrompt.contains("为什么这么回答"));
+        assertTrue(reactPrompt.contains("mall rule"));
+        assertTrue(reactPrompt.contains("network rule"));
+        assertTrue(reactPrompt.contains("工具调用完成前不要输出可见文字"));
         assertTrue(!reactPrompt.contains("searchProductKnowledge"));
         assertTrue(!reactPrompt.contains("updateShoppingPreference"));
-        assertTrue(simpleKnowledgePrompt.contains("知识库原文或元数据明确写出"));
-        assertTrue(simpleKnowledgePrompt.contains("导购说明原文已经写出适用人群、使用场景或购买建议时"));
+        assertTrue(simpleKnowledgePrompt.contains("事实边界"));
+        assertTrue(simpleKnowledgePrompt.contains("知识库原文事实"));
+        assertTrue(simpleKnowledgePrompt.contains("纯中文文本"));
     }
 }

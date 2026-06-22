@@ -1,5 +1,8 @@
 package com.example.ragagent.rag;
 
+/**
+ * RAG 父子分块使用的 Redis key 前缀、文档类型和元数据字段名常量。
+ */
 public final class RagDocumentConstants {
 
     public static final String PARENT_KEY_PREFIX = "rag:parent:";

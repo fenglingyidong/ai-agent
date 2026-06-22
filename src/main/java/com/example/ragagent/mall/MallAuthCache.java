@@ -6,6 +6,9 @@ import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 
+/**
+ * 使用 Redis 缓存商城登录令牌，供后续 agent 请求复用。
+ */
 @Component
 public class MallAuthCache {
 
@@ -19,6 +22,9 @@ public class MallAuthCache {
         this.properties = properties;
     }
 
+    /**
+     * 写入指定缓存键的商城认证令牌。
+     */
     public void put(String cacheKey, String token) {
         if (!StringUtils.hasText(cacheKey) || !StringUtils.hasText(token)) {
             return;
@@ -26,6 +32,9 @@ public class MallAuthCache {
         redisTemplate.opsForValue().set(redisKey(cacheKey), token.trim(), authCacheTtl());
     }
 
+    /**
+     * 读取商城认证令牌，未命中时返回空字符串。
+     */
     public String get(String cacheKey) {
         if (!StringUtils.hasText(cacheKey)) {
             return "";
@@ -34,6 +43,9 @@ public class MallAuthCache {
         return StringUtils.hasText(token) ? token.trim() : "";
     }
 
+    /**
+     * 清除指定缓存键下的商城认证令牌。
+     */
     public void clear(String cacheKey) {
         if (StringUtils.hasText(cacheKey)) {
             redisTemplate.delete(redisKey(cacheKey));

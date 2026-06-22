@@ -10,6 +10,9 @@ import org.springframework.util.StringUtils;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * 封装短期对话记忆写入逻辑，把用户和助手消息追加到 Spring AI ChatMemory。
+ */
 @Service
 public class ConversationMemoryService {
 
@@ -22,6 +25,9 @@ public class ConversationMemoryService {
         this.chatMemory = chatMemory;
     }
 
+    /**
+     * 将一轮用户输入和助手输出写入指定用户会话的短期记忆。
+     */
     public void rememberTurn(String userId, String sessionId, String userText, String assistantText) {
         List<Message> messages = new ArrayList<>();
         if (StringUtils.hasText(userText)) {
@@ -35,6 +41,9 @@ public class ConversationMemoryService {
         }
     }
 
+    /**
+     * 生成 ChatMemory 使用的稳定会话键。
+     */
     public String buildConversationId(String userId, String sessionId) {
         return normalizeUserId(userId) + "::" + normalizeSessionId(sessionId);
     }

@@ -5,6 +5,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+/**
+ * 定时触发短期记忆空闲摘要扫描，避免只在窗口淘汰时才生成长期记忆。
+ */
 @Component
 public class ShortTermMemorySummaryScheduler {
 
@@ -16,6 +19,9 @@ public class ShortTermMemorySummaryScheduler {
         this.chatMemoryRepository = chatMemoryRepository;
     }
 
+    /**
+     * 按配置间隔扫描空闲短期会话，并调度长期摘要任务。
+     */
     @Scheduled(fixedDelayString = "#{@memoryIdleSummaryScanDelayMillis}")
     public void summarizeIdleShortTermMemory() {
         try {

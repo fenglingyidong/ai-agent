@@ -8,6 +8,9 @@ import lombok.Setter;
 
 import java.time.LocalDateTime;
 
+/**
+ * conversation_turns 表实体，保存单轮用户输入、助手输出和处理状态。
+ */
 @Getter
 @Setter
 @TableName("conversation_turns")

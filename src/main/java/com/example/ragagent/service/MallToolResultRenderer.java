@@ -13,6 +13,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 将商城 MCP 返回的 JSON 结构提炼为模型可直接引用的事实文本。
+ */
 final class MallToolResultRenderer {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -20,6 +23,9 @@ final class MallToolResultRenderer {
     private static final Set<String> ENVELOPE_FIELDS = Set.of("ok", "code", "message", "data");
     private static final Set<String> INTERNAL_FIELDS = Set.of("sessionId");
 
+    /**
+     * 按工具类型渲染原始商城工具结果。
+     */
     String render(String toolName, String rawResult) {
         if (!StringUtils.hasText(rawResult)) {
             return "工具结果事实：商城工具没有返回内容。";

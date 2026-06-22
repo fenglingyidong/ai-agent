@@ -9,6 +9,9 @@ import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
+/**
+ * 商城后端 API 配置，包括基础地址、登录路径、鉴权头和缓存时间。
+ */
 @Getter
 @Setter
 @Validated

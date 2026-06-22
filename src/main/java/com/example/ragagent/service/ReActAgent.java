@@ -2,7 +2,6 @@ package com.example.ragagent.service;
 
 import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.conversation.ConversationTurnRecord;
-import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.observability.RagTracing;
@@ -37,6 +36,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * 复杂 ReAct 主代理入口，负责路由、工具装配、提示词构建、流式模型调用和会话落库。
+ */
 @Service
 public class ReActAgent {
 
@@ -64,7 +66,6 @@ public class ReActAgent {
                       ChatModelRegistry chatModelRegistry,
                       ShoppingRouteExecutor shoppingRouteExecutor,
                       List<ToolCallbackProvider> externalToolCallbackProviders,
-                      MallMcpClient mallMcpClient,
                       ConversationLogService conversationLogService,
                       RagTracing tracing,
                       PromptTemplateStore promptTemplateStore) {
@@ -84,17 +85,16 @@ public class ReActAgent {
                 this.tracing,
                 this.promptBuilder
         );
-        MallMcpToolCallback mallMcpToolCallback = mallMcpClient == null
-                ? null
-                : new MallMcpToolCallback(mallMcpClient);
         this.toolResolver = new ReactToolResolver(
                 builtInTools,
                 externalToolCallbackProviders,
-                mallMcpToolCallback,
                 this.tracing
         );
     }
 
+    /**
+     * 执行一次 /api/react 流式会话请求，并返回可直接写给前端的文本流。
+     */
     public Flux<String> runStream(String userId,
                                   String sessionId,
                                   String modelId,
@@ -159,6 +159,9 @@ public class ReActAgent {
                     routedRequest.taskPolicies(),
                     routedRequest.orderCreationAllowed(),
                     routedRequest.trustedContext(),
+                    mallToken,
+                    mallUsername,
+                    mallPassword,
                     securedPrompt,
                     conversationTurn,
                     requestSpan
@@ -284,6 +287,9 @@ public class ReActAgent {
                                          List<ShoppingTaskPolicy> taskPolicies,
                                          boolean orderCreationAllowed,
                                           String trustedContext,
+                                          String mallToken,
+                                          String mallUsername,
+                                          String mallPassword,
                                           PromptSecurityFilter.SecuredPrompt securedPrompt,
                                           ConversationTurnRecord conversationTurn,
                                           Span rootSpan) {
@@ -325,6 +331,9 @@ public class ReActAgent {
                 webSearchEnabled,
                 taskPolicies,
                 trustedContext,
+                mallToken,
+                mallUsername,
+                mallPassword,
                 securedPrompt,
                 conversationTurn,
                 rootSpan
@@ -393,6 +402,9 @@ public class ReActAgent {
                                            boolean webSearchEnabled,
                                            List<ShoppingTaskPolicy> taskPolicies,
                                            String trustedContext,
+                                           String mallToken,
+                                           String mallUsername,
+                                           String mallPassword,
                                             PromptSecurityFilter.SecuredPrompt securedPrompt,
                                             ConversationTurnRecord conversationTurn,
                                             Span rootSpan) {
@@ -406,7 +418,7 @@ public class ReActAgent {
                 trustedContext
         );
         String conversationId = conversationMemoryService.buildConversationId(userId, sessionId);
-        Map<String, Object> toolContext = buildToolContext(userId, sessionId);
+        Map<String, Object> toolContext = buildToolContext(userId, sessionId, mallToken, mallUsername, mallPassword);
         ChatClientRequest baseRequest = buildChatClientRequest(
                 modelId,
                 reactSystemPrompt,
@@ -470,12 +482,25 @@ public class ReActAgent {
         return context;
     }
 
-    private Map<String, Object> buildToolContext(String userId, String sessionId) {
+    private Map<String, Object> buildToolContext(String userId,
+                                                 String sessionId,
+                                                 String mallToken,
+                                                 String mallUsername,
+                                                 String mallPassword) {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put(TOOL_CONTEXT_USER_ID, StringUtils.hasText(userId) ? userId.trim() : "");
         context.put(TOOL_CONTEXT_SESSION_ID, StringUtils.hasText(sessionId) ? sessionId.trim() : "");
+        putIfText(context, "mallToken", mallToken);
+        putIfText(context, "mallUsername", mallUsername);
+        putIfText(context, "mallPassword", mallPassword);
         context.put(BuiltInTools.TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE, new ConcurrentHashMap<String, String>());
         return context;
+    }
+
+    private void putIfText(Map<String, Object> context, String key, String value) {
+        if (StringUtils.hasText(value)) {
+            context.put(key, value.trim());
+        }
     }
 
     private void logAgentStart(String userId,

@@ -13,6 +13,9 @@ import org.springframework.util.StringUtils;
 
 import java.util.Map;
 
+/**
+ * 在 ChatClient 调用前召回长期记忆，并追加到系统提示词中。
+ */
 @Component
 public class LongTermMemoryAdvisor implements BaseAdvisor {
 
@@ -27,6 +30,9 @@ public class LongTermMemoryAdvisor implements BaseAdvisor {
         this.longTermMemoryService = longTermMemoryService;
     }
 
+    /**
+     * 在模型请求前注入与当前用户输入相关的长期记忆片段。
+     */
     @Override
     public ChatClientRequest before(ChatClientRequest request, AdvisorChain advisorChain) {
         String currentUserText = extractCurrentUserText(request.prompt());
@@ -44,16 +50,25 @@ public class LongTermMemoryAdvisor implements BaseAdvisor {
         return request.mutate().prompt(updatedPrompt).build();
     }
 
+    /**
+     * 模型响应后不做改写，仅保持 Advisor 生命周期完整。
+     */
     @Override
     public ChatClientResponse after(ChatClientResponse advisedResponse, AdvisorChain advisorChain) {
         return advisedResponse;
     }
 
+    /**
+     * 返回 Advisor 名称，便于日志和调试定位。
+     */
     @Override
     public String getName() {
         return "longTermMemoryAdvisor";
     }
 
+    /**
+     * 让长期记忆在短期 ChatMemory 之前生效，避免被后续系统提示覆盖。
+     */
     @Override
     public int getOrder() {
         return Advisor.DEFAULT_CHAT_MEMORY_PRECEDENCE_ORDER - 10;

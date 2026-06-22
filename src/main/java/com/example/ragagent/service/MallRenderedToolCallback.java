@@ -7,6 +7,9 @@ import org.springframework.ai.tool.metadata.ToolMetadata;
 
 import java.util.Objects;
 
+/**
+ * 包装商城工具回调，将原始 MCP 返回转换成模型更容易遵守的导购文本。
+ */
 final class MallRenderedToolCallback implements ToolCallback {
 
     private final ToolCallback delegate;
@@ -27,11 +30,17 @@ final class MallRenderedToolCallback implements ToolCallback {
         return delegate.getToolMetadata();
     }
 
+    /**
+     * 调用无上下文商城工具并渲染结果。
+     */
     @Override
     public String call(String input) {
         return renderer.render(toolName(), delegate.call(input));
     }
 
+    /**
+     * 调用带 ToolContext 的商城工具并渲染结果。
+     */
     @Override
     public String call(String input, ToolContext toolContext) {
         return renderer.render(toolName(), delegate.call(input, toolContext));

@@ -40,7 +40,7 @@ class ShoppingIntentRouterTest {
                   "reason": "查颜色"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("还有别的颜色吗", List.of());
 
@@ -55,7 +55,7 @@ class ShoppingIntentRouterTest {
     @Test
     void routeShouldFallbackWhenModelReturnsInvalidJson() {
         RouterMocks mocks = routerMocks("我认为这是运动鞋，不是 JSON");
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("还有别的颜色吗", List.of());
 
@@ -82,7 +82,7 @@ class ShoppingIntentRouterTest {
                   "reason": "查库存"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("儿童积木套装 300片库存还有多少", List.of());
 
@@ -109,7 +109,7 @@ class ShoppingIntentRouterTest {
                   "reason": "复杂推荐"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("预算300给5岁孩子买生日礼物，帮我比较推荐", List.of());
 
@@ -136,7 +136,7 @@ class ShoppingIntentRouterTest {
                   "reason": "复杂推荐，需要补齐年龄"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("预算300买生日礼物，帮我推荐", List.of());
 
@@ -167,7 +167,7 @@ class ShoppingIntentRouterTest {
                   "reason": "场景推荐"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("办公室用鼠标，希望点击声音小一点，买哪款？", List.of());
 
@@ -195,7 +195,7 @@ class ShoppingIntentRouterTest {
                   "reason": "查属性"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         router.route("这件还有别的颜色吗", List.of());
 
@@ -228,7 +228,7 @@ class ShoppingIntentRouterTest {
                   "reason": "图文理解"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
         Media media = new Media(MediaType.IMAGE_PNG, new ByteArrayResource(new byte[]{1, 2, 3}));
 
         router.route("看看图里是什么", List.of(media));
@@ -257,7 +257,7 @@ class ShoppingIntentRouterTest {
                   "reason": "推荐需主代理"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("预算500以内，通勤跑鞋，品牌不限", List.of());
 
@@ -280,7 +280,7 @@ class ShoppingIntentRouterTest {
                   "reason": "结合偏好继续推荐"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         router.route("再推荐几双", List.of(), "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内");
 
@@ -306,7 +306,7 @@ class ShoppingIntentRouterTest {
                   "reason": "查颜色"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
         Media media = new Media(MediaType.IMAGE_PNG, new ByteArrayResource(new byte[]{1, 2, 3}));
         String preferenceContext = withPreferenceContext
                 ? "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内"
@@ -349,7 +349,7 @@ class ShoppingIntentRouterTest {
                   "reason": "查属性"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         router.route("x", List.of());
 
@@ -373,7 +373,7 @@ class ShoppingIntentRouterTest {
                 }
                 """);
         RecordingTracing tracing = new RecordingTracing();
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient, tracing);
+        ShoppingIntentRouter router = router(mocks, tracing);
 
         router.route("推荐跑鞋", List.of(), "当前会话短期导购偏好：\n- 预算：500 元以内");
 
@@ -401,7 +401,7 @@ class ShoppingIntentRouterTest {
                   "reason": "商品知识库事实查询"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("儿童积木套装有什么特点", List.of());
 
@@ -419,7 +419,7 @@ class ShoppingIntentRouterTest {
                   "reason": "单步商城工具"
                 }
                 """);
-        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.chatClient);
+        ShoppingIntentRouter router = router(mocks);
 
         ShoppingIntentRoute route = router.route("购物车里有什么", List.of());
 
@@ -428,10 +428,14 @@ class ShoppingIntentRouterTest {
     }
 
     private RouterMocks routerMocks(String content) {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        ChatClient.Builder clonedBuilder = mock(ChatClient.Builder.class);
         ChatClient chatClient = mock(ChatClient.class);
         ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
         ChatClient.CallResponseSpec callResponseSpec = mock(ChatClient.CallResponseSpec.class);
         ObjectMapper objectMapper = new ObjectMapper();
+        when(builder.clone()).thenReturn(clonedBuilder);
+        when(clonedBuilder.build()).thenReturn(chatClient);
         when(chatClient.prompt()).thenReturn(requestSpec);
         when(requestSpec.options(any())).thenReturn(requestSpec);
         when(requestSpec.system(anyString())).thenReturn(requestSpec);
@@ -440,10 +444,20 @@ class ShoppingIntentRouterTest {
         when(requestSpec.call()).thenReturn(callResponseSpec);
         when(callResponseSpec.entity(ShoppingIntentRoute.class)).thenAnswer(invocation ->
                 objectMapper.readValue(content, ShoppingIntentRoute.class));
-        return new RouterMocks(chatClient, requestSpec);
+        return new RouterMocks(builder, requestSpec);
     }
 
-    private record RouterMocks(ChatClient chatClient, ChatClient.ChatClientRequestSpec requestSpec) {
+    private ShoppingIntentRouter router(RouterMocks mocks) {
+        return router(mocks, new RagTracing());
+    }
+
+    private ShoppingIntentRouter router(RouterMocks mocks, RagTracing tracing) {
+        ShoppingIntentRouter router = new ShoppingIntentRouter(mocks.builder, tracing);
+        router.init();
+        return router;
+    }
+
+    private record RouterMocks(ChatClient.Builder builder, ChatClient.ChatClientRequestSpec requestSpec) {
     }
 
     private static final class RecordingTracing extends RagTracing {

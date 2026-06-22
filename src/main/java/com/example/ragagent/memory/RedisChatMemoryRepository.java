@@ -20,6 +20,9 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * 基于 Redis 的 ChatMemoryRepository，维护短期记忆窗口并触发长期摘要。
+ */
 @Component
 public class RedisChatMemoryRepository implements ChatMemoryRepository {
 
@@ -48,6 +51,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         this.longTermMemoryService = longTermMemoryService;
     }
 
+    /**
+     * 列出 Redis 中仍处于活跃状态的短期会话键。
+     */
     @Override
     public List<String> findConversationIds() {
         Set<String> conversationIds = redisTemplate.opsForSet().members(CONVERSATION_SET_KEY);
@@ -60,6 +66,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
                 .toList();
     }
 
+    /**
+     * 读取指定会话的短期消息，并按时间窗口压缩过期内容。
+     */
     @Override
     public List<Message> findByConversationId(String conversationId) {
         Assert.hasText(conversationId, "conversationId cannot be null or empty");
@@ -70,6 +79,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
                 .toList();
     }
 
+    /**
+     * 保存 Spring AI 写入的消息列表，并对窗口外内容发起长期摘要。
+     */
     @Override
     public void saveAll(String conversationId, List<Message> messages) {
         Assert.hasText(conversationId, "conversationId cannot be null or empty");
@@ -94,6 +106,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         refreshTtl(conversationId);
     }
 
+    /**
+     * 删除指定会话的短期消息、序列状态和会话索引。
+     */
     @Override
     public void deleteByConversationId(String conversationId) {
         Assert.hasText(conversationId, "conversationId cannot be null or empty");
@@ -103,6 +118,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         redisTemplate.opsForSet().remove(CONVERSATION_SET_KEY, conversationId);
     }
 
+    /**
+     * 扫描长时间未更新的会话，把新增短期消息批量总结为长期记忆。
+     */
     public int summarizeIdleConversations() {
         Instant now = Instant.now();
         int scheduledCount = 0;

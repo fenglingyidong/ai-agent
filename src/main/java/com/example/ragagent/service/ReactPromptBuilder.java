@@ -12,6 +12,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 渲染 ReAct 主链路的系统提示词，并生成可追踪的 LLM 输入快照。
+ */
 final class ReactPromptBuilder {
 
     private static final String REACT_SYSTEM_PROMPT = "react.system";
@@ -30,6 +33,9 @@ final class ReactPromptBuilder {
         this.promptTemplateStore = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
     }
 
+    /**
+     * 按工具可用性、任务策略和可信上下文拼装最终 system prompt。
+     */
     String buildSystemPrompt(boolean hasExternalTools,
                              boolean hasMallTools,
                              boolean webSearchEnabled,
@@ -46,6 +52,9 @@ final class ReactPromptBuilder {
         return withTrustedSystemContext(systemPrompt, trustedContext);
     }
 
+    /**
+     * 将 Prompt 消息和工具名序列化为 Langfuse 可读的输入文本。
+     */
     String reactInput(Prompt prompt, List<String> toolNames) {
         StringBuilder builder = new StringBuilder();
         List<Message> messages = prompt == null ? List.of() : prompt.getInstructions();

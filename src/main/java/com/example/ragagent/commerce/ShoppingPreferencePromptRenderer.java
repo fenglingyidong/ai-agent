@@ -34,6 +34,9 @@ public class ShoppingPreferencePromptRenderer {
             "usageScenario", "使用场景"
     );
 
+    /**
+     * 将当前完整偏好状态渲染为可注入 prompt 的短文本。
+     */
     public String render(ShoppingPreferenceState state) {
         if (isEmpty(state)) {
             return "";

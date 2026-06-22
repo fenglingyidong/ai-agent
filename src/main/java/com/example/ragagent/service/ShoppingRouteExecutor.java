@@ -6,7 +6,6 @@ import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingPreferenceSnapshot;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
-import com.example.ragagent.mall.MallMcpContextClient;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
 import io.opentelemetry.api.trace.Span;
@@ -21,6 +20,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 
+/**
+ * 串联购物意图路由、短期偏好和简单任务快车道决策。
+ */
 @Service
 public class ShoppingRouteExecutor {
 
@@ -39,9 +41,6 @@ public class ShoppingRouteExecutor {
 
     @Value("${app.ai.intent-router.confidence-threshold:0.7}")
     private double confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD;
-
-    @Autowired(required = false)
-    private MallMcpContextClient mallMcpContextClient;
 
     @Autowired(required = false)
     private SimpleTaskAgent simpleTaskAgent;
@@ -67,38 +66,26 @@ public class ShoppingRouteExecutor {
     public ShoppingRouteExecutor() {
     }
 
-    public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter, MallMcpContextClient mallMcpContextClient) {
+    public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter, SimpleTaskAgent simpleTaskAgent) {
         this.intentRouter = intentRouter;
-        this.mallMcpContextClient = mallMcpContextClient;
-    }
-
-    public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
-                                 MallMcpContextClient mallMcpContextClient,
-                                 SimpleTaskAgent simpleTaskAgent) {
-        this.intentRouter = intentRouter;
-        this.mallMcpContextClient = mallMcpContextClient;
         this.simpleTaskAgent = simpleTaskAgent;
     }
 
     public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
-                                 MallMcpContextClient mallMcpContextClient,
                                  SimpleTaskAgent simpleTaskAgent,
                                  ShoppingTaskPolicyRegistry taskPolicyRegistry) {
         this.intentRouter = intentRouter;
-        this.mallMcpContextClient = mallMcpContextClient;
         this.simpleTaskAgent = simpleTaskAgent;
         this.taskPolicyRegistry = taskPolicyRegistry;
     }
 
     public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
-                                 MallMcpContextClient mallMcpContextClient,
                                  SimpleTaskAgent simpleTaskAgent,
                                  ShoppingTaskPolicyRegistry taskPolicyRegistry,
                                  ShoppingStateService shoppingStateService,
                                  ShoppingPreferenceExtractor shoppingPreferenceExtractor,
                                  ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer) {
         this(intentRouter,
-                mallMcpContextClient,
                 simpleTaskAgent,
                 taskPolicyRegistry,
                 shoppingStateService,
@@ -108,7 +95,6 @@ public class ShoppingRouteExecutor {
     }
 
     public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
-                                 MallMcpContextClient mallMcpContextClient,
                                  SimpleTaskAgent simpleTaskAgent,
                                  ShoppingTaskPolicyRegistry taskPolicyRegistry,
                                  ShoppingStateService shoppingStateService,
@@ -116,7 +102,6 @@ public class ShoppingRouteExecutor {
                                  ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer,
                                  BuiltInTools builtInTools) {
         this.intentRouter = intentRouter;
-        this.mallMcpContextClient = mallMcpContextClient;
         this.simpleTaskAgent = simpleTaskAgent;
         this.taskPolicyRegistry = taskPolicyRegistry;
         this.shoppingStateService = shoppingStateService;
@@ -126,6 +111,9 @@ public class ShoppingRouteExecutor {
         this.tracing = new RagTracing();
     }
 
+    /**
+     * 在进入 ReAct 主链路前改写请求，并决定是否短路返回。
+     */
     RoutedAgentRequest routeBeforeCore(String userId,
                                        String sessionId,
                                        String userMessage,
@@ -136,19 +124,6 @@ public class ShoppingRouteExecutor {
         String normalizedMessage = normalizeMessage(userMessage);
         List<Media> safeMedia = media == null ? List.of() : media;
         if (intentRouter == null) {
-            if (requiresMallMcp(null, normalizedMessage, safeMedia.size())) {
-                MallMcpContextClient.MallMcpContextRegistration registration = registerMallMcpContext(
-                        userId,
-                        sessionId,
-                        mallToken,
-                        mallUsername,
-                        mallPassword
-                );
-                if (registration != null && !registration.ok()) {
-                    return new RoutedAgentRequest(normalizedMessage, safeMedia,
-                            Flux.just("商城 MCP 调用失败：" + registration.message()));
-                }
-            }
             return new RoutedAgentRequest(appendMultimodalInstruction(normalizedMessage, safeMedia.size()), safeMedia, null);
         }
 
@@ -161,22 +136,6 @@ public class ShoppingRouteExecutor {
         boolean mallToolsAllowedByPolicy = allowsMallToolsByPolicy(taskPolicies);
         boolean simpleTaskAllowed = shouldRunSimpleTask(route)
                 && (!"SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType()) || mallToolsAllowedByPolicy);
-        boolean mallContextRegistered = false;
-
-        if (simpleTaskAllowed && "SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType())) {
-            MallMcpContextClient.MallMcpContextRegistration registration = registerMallMcpContext(
-                    userId,
-                    sessionId,
-                    mallToken,
-                    mallUsername,
-                    mallPassword
-            );
-            if (registration != null && !registration.ok()) {
-                return new RoutedAgentRequest(normalizedMessage, safeMedia,
-                        Flux.just("商城 MCP 调用失败：" + registration.message()));
-            }
-            mallContextRegistered = true;
-        }
 
         if (simpleTaskAllowed) {
             FastLaneResult simpleTaskResult = simpleTaskAgent.tryRun(
@@ -184,24 +143,13 @@ public class ShoppingRouteExecutor {
                     normalizedMessage,
                     sessionId,
                     confidenceThreshold(),
-                    preferenceContextAfterRoute
-            );
-            if (simpleTaskResult.handled()) {
-                return new RoutedAgentRequest(normalizedMessage, safeMedia, simpleTaskResult.stream());
-            }
-        }
-
-        if (!mallContextRegistered && mallToolsAllowedByPolicy && requiresMallMcp(route, normalizedMessage, safeMedia.size())) {
-            MallMcpContextClient.MallMcpContextRegistration registration = registerMallMcpContext(
-                    userId,
-                    sessionId,
+                    preferenceContextAfterRoute,
                     mallToken,
                     mallUsername,
                     mallPassword
             );
-            if (registration != null && !registration.ok()) {
-                return new RoutedAgentRequest(normalizedMessage, safeMedia,
-                        Flux.just("商城 MCP 调用失败：" + registration.message()));
+            if (simpleTaskResult.handled()) {
+                return new RoutedAgentRequest(normalizedMessage, safeMedia, simpleTaskResult.stream());
             }
         }
         boolean mallToolsAllowedForCore = mallToolsAllowedByPolicy && allowMallToolsForCore(route, normalizedMessage, safeMedia.size());
@@ -308,7 +256,7 @@ public class ShoppingRouteExecutor {
         java.util.Set<String> allowedToolNames = taskPolicies.stream()
                 .flatMap(policy -> policy.allowedToolNames().stream())
                 .collect(java.util.stream.Collectors.toSet());
-        return allowedToolNames.isEmpty() || allowedToolNames.stream().anyMatch(MallMcpToolCallback::isMallTool);
+        return allowedToolNames.isEmpty() || allowedToolNames.stream().anyMatch(MallTool::isMallTool);
     }
 
     private boolean requiresMallMcp(ShoppingIntentRoute route, String message, int mediaCount) {
@@ -395,17 +343,6 @@ public class ShoppingRouteExecutor {
                 && !Boolean.TRUE.equals(route.routeToCore())
                 && ("FAQ_SIMPLE_QUERY".equals(route.normalizedTaskType())
                 || "SIMPLE_SHOPPING_TOOL".equals(route.normalizedTaskType()));
-    }
-
-    private MallMcpContextClient.MallMcpContextRegistration registerMallMcpContext(String userId,
-                                                                                   String sessionId,
-                                                                                   String mallToken,
-                                                                                   String mallUsername,
-                                                                                   String mallPassword) {
-        if (mallMcpContextClient == null) {
-            return MallMcpContextClient.MallMcpContextRegistration.failed("mall-mcp context client unavailable");
-        }
-        return mallMcpContextClient.register(userId, sessionId, mallToken, mallUsername, mallPassword);
     }
 
     private String buildCoreAgentMessage(String message, int mediaCount) {

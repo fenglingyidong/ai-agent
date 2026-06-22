@@ -1,0 +1,58 @@
+{
+  "runId": "api-20260622-121343-m05-after-mallmcp-restart",
+  "source": "docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.md",
+  "endpoint": "http://localhost:18082/api/react",
+  "modelId": "qwen",
+  "webSearchEnabled": false,
+  "durationSeconds": 60.355,
+  "sessionId": "api-20260622-121343-m05-after-mallmcp-restart-M05",
+  "results": [
+    {
+      "id": "M05-T1",
+      "question": "婴儿湿巾 80 抽 12 包这款多少钱？适合囤吗？",
+      "sessionId": "api-20260622-121343-m05-after-mallmcp-restart-M05",
+      "status": 200,
+      "durationSeconds": 25.939,
+      "answer": "商城 MCP 调用失败。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 1
+    },
+    {
+      "id": "M05-T2",
+      "question": "那加 2 件到购物车。",
+      "sessionId": "api-20260622-121343-m05-after-mallmcp-restart-M05",
+      "status": 200,
+      "durationSeconds": 6.265,
+      "answer": "商品未找到，无法添加到购物车。请确认商品名称或 SKU 是否正确。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 2
+    },
+    {
+      "id": "M05-T3",
+      "question": "看看购物车，然后下单。",
+      "sessionId": "api-20260622-121343-m05-after-mallmcp-restart-M05",
+      "status": 200,
+      "durationSeconds": 13.711,
+      "answer": "购物车已查看，包含以下商品：\n1. 旗舰降噪耳机 黑色，价格 699.00 元，数量 1\n2. 儿童积木套装 300片，价格 149.00 元，数量 2\n\n订单预览确认 ID：1a5b4f35-b0eb-45ca-878e-6b68efc61910\n\n请确认无误后付款。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 3
+    },
+    {
+      "id": "M05-T4",
+      "question": "确认下单。",
+      "sessionId": "api-20260622-121343-m05-after-mallmcp-restart-M05",
+      "status": 200,
+      "durationSeconds": 5.429,
+      "answer": "订单预览确认成功，订单确认ID为：ae37a0a2-2fb5-4afa-9ab9-0e571e35d356。请尽快完成付款操作。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 4
+    }
+  ],
+  "traceError": null,
+  "traceCount": 4,
+  "observationCount": 110
+}

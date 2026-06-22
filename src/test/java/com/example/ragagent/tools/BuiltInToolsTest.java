@@ -1,15 +1,15 @@
 package com.example.ragagent.tools;
 
-import com.example.ragagent.commerce.ShoppingStateService;
-import com.example.ragagent.mall.MallMcpClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
+import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.util.List;
 import java.util.Map;
@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -30,8 +32,7 @@ class BuiltInToolsTest {
     @Test
     void searchProductKnowledgeShouldRenderRetrievedDocuments() {
         DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
-        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
-        BuiltInTools tools = new BuiltInTools(documentRetriever, shoppingStateService);
+        BuiltInTools tools = new BuiltInTools(documentRetriever);
         Document document = Document.builder()
                 .text("儿童积木套装 300片，适合 3 岁以上儿童。")
                 .metadata(Map.of("title", "儿童积木", "skuId", "3020", "brand", "启蒙"))
@@ -53,12 +54,10 @@ class BuiltInToolsTest {
     @Test
     void searchProductKnowledgeShouldAppendRealtimeMallDetailsForRetrievedSkus() {
         DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
-        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
-        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        ToolCallback mallDetailCallback = mallDetailCallback();
         BuiltInTools tools = new BuiltInTools(
                 documentRetriever,
-                shoppingStateService,
-                mallMcpClient,
+                List.of(providerWith(mallDetailCallback)),
                 new ObjectMapper()
         );
         Document document = Document.builder()
@@ -66,7 +65,7 @@ class BuiltInToolsTest {
                 .metadata(Map.of("title", "机械键盘 红轴 87键", "skuId", "3002", "brand", "Mall Labs"))
                 .build();
         when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
-        when(mallMcpClient.callTool(eq("mall_get_product_detail"), any(ObjectNode.class)))
+        when(mallDetailCallback.call(anyString(), isNull()))
                 .thenReturn("{\"ok\":true,\"data\":{\"skuId\":3002,\"skuName\":\"机械键盘 红轴 87键\",\"price\":129.00,\"stock\":260}}");
 
         String result = tools.searchProductKnowledge("87键机械键盘");
@@ -76,20 +75,18 @@ class BuiltInToolsTest {
         assertTrue(result.contains("\"price\":129.00"));
         assertTrue(result.contains("商品知识库只提供价格桶和非实时商品知识"));
         assertTrue(!result.contains("仍只是导入快照"));
-        ArgumentCaptor<ObjectNode> argumentCaptor = ArgumentCaptor.forClass(ObjectNode.class);
-        verify(mallMcpClient).callTool(eq("mall_get_product_detail"), argumentCaptor.capture());
-        assertEquals(3002, argumentCaptor.getValue().get("skuId").asInt());
+        ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mallDetailCallback).call(argumentCaptor.capture(), isNull());
+        assertTrue(argumentCaptor.getValue().contains("\"skuId\":3002"));
     }
 
     @Test
     void searchProductKnowledgeShouldKeepRagResultWhenMallDetailFails() {
         DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
-        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
-        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        ToolCallback mallDetailCallback = mallDetailCallback();
         BuiltInTools tools = new BuiltInTools(
                 documentRetriever,
-                shoppingStateService,
-                mallMcpClient,
+                List.of(providerWith(mallDetailCallback)),
                 new ObjectMapper()
         );
         Document document = Document.builder()
@@ -97,7 +94,7 @@ class BuiltInToolsTest {
                 .metadata(Map.of("title", "中性笔套装 彩色 24支", "skuId", "4072"))
                 .build();
         when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
-        when(mallMcpClient.callTool(eq("mall_get_product_detail"), any(ObjectNode.class)))
+        when(mallDetailCallback.call(anyString(), isNull()))
                 .thenThrow(new IllegalStateException("mall-mcp 服务未启动或不可访问"));
 
         String result = tools.searchProductKnowledge("彩色中性笔套装");
@@ -111,12 +108,10 @@ class BuiltInToolsTest {
     @Test
     void searchProductKnowledgeShouldNotCallMallWhenRetrievedDocumentHasNoSku() {
         DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
-        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
-        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
+        ToolCallback mallDetailCallback = mallDetailCallback();
         BuiltInTools tools = new BuiltInTools(
                 documentRetriever,
-                shoppingStateService,
-                mallMcpClient,
+                List.of(providerWith(mallDetailCallback)),
                 new ObjectMapper()
         );
         Document document = Document.builder()
@@ -128,14 +123,13 @@ class BuiltInToolsTest {
         String result = tools.searchProductKnowledge("导购知识");
 
         assertTrue(result.contains("没有 SKU 的导购知识。"));
-        verify(mallMcpClient, never()).callTool(eq("mall_get_product_detail"), any(ObjectNode.class));
+        verify(mallDetailCallback, never()).call(anyString(), any());
     }
 
     @Test
     void searchProductKnowledgeShouldReuseSameRoundQueryCache() {
         DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
-        ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
-        BuiltInTools tools = new BuiltInTools(documentRetriever, shoppingStateService);
+        BuiltInTools tools = new BuiltInTools(documentRetriever);
         ToolContext toolContext = new ToolContext(Map.of(
                 BuiltInTools.TOOL_CONTEXT_SEARCH_PRODUCT_KNOWLEDGE_CACHE,
                 new ConcurrentHashMap<String, String>()
@@ -151,6 +145,20 @@ class BuiltInToolsTest {
 
         assertEquals(first, second);
         verify(documentRetriever, times(1)).retrieve(any(Query.class));
+    }
+
+    private ToolCallbackProvider providerWith(ToolCallback... callbacks) {
+        ToolCallbackProvider provider = mock(ToolCallbackProvider.class);
+        when(provider.getToolCallbacks()).thenReturn(callbacks);
+        return provider;
+    }
+
+    private ToolCallback mallDetailCallback() {
+        ToolCallback callback = mock(ToolCallback.class);
+        ToolDefinition definition = mock(ToolDefinition.class);
+        when(definition.name()).thenReturn("mall_get_product_detail");
+        when(callback.getToolDefinition()).thenReturn(definition);
+        return callback;
     }
 
 }

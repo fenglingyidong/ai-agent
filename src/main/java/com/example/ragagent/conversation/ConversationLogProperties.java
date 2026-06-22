@@ -6,6 +6,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+/**
+ * 会话日志持久化配置，控制是否启用和每个会话保留的最大轮次数。
+ */
 @Getter
 @Setter
 @Validated

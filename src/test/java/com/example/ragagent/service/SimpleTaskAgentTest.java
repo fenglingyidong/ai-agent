@@ -5,11 +5,8 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
-import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
-import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.spec.McpSchema;
 import io.opentelemetry.api.trace.Span;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -17,11 +14,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.execution.ToolExecutionException;
 import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,7 +45,7 @@ class SimpleTaskAgentTest {
         AgentMocks mocks = agentMocks("儿童积木套装适合 3 岁以上儿童，主打益智启蒙。");
         ArgumentCaptor<String> systemPromptCaptor = ArgumentCaptor.forClass(String.class);
         when(mocks.requestSpec.system(systemPromptCaptor.capture())).thenReturn(mocks.requestSpec);
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
+        SimpleTaskAgent agent = agent(mocks, mock(BuiltInTools.class), null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
@@ -66,11 +65,10 @@ class SimpleTaskAgentTest {
         assertEquals("searchProductKnowledge", callbacks.get(0).getToolDefinition().name());
         String systemPrompt = systemPromptCaptor.getValue();
         assertTrue(systemPrompt.contains("知识库原文事实"));
-        assertTrue(systemPrompt.contains("知识库未明确"));
-        assertTrue(systemPrompt.contains("年龄、人群、场景、购买建议"));
+        assertTrue(systemPrompt.contains("价格桶只用于预算召回和初筛"));
+        assertTrue(systemPrompt.contains("工具无结果或失败时"));
         assertTrue(!systemPrompt.contains("推荐、选哪个、更合适、别太复杂"));
         assertTrue(!systemPrompt.contains("不要输出“我来查询”“让我搜索”"));
-        assertTrue(systemPrompt.contains("调用完成前不要输出任何可见文字"));
         assertTrue(systemPrompt.contains("纯中文文本"));
     }
 
@@ -79,7 +77,7 @@ class SimpleTaskAgentTest {
         AgentMocks mocks = agentMocks("继续推荐跑鞋");
         ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
         when(mocks.requestSpec.user(userPromptCaptor.capture())).thenReturn(mocks.requestSpec);
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null);
+        SimpleTaskAgent agent = agent(mocks, mock(BuiltInTools.class), null);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
@@ -110,7 +108,7 @@ class SimpleTaskAgentTest {
     void tryRunShouldCaptureSimpleTaskInputAndOutput() {
         AgentMocks mocks = agentMocks("轻量跑步鞋适合日常慢跑。");
         RecordingTracing tracing = new RecordingTracing();
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, mock(BuiltInTools.class), null, tracing);
+        SimpleTaskAgent agent = agent(mocks, mock(BuiltInTools.class), null, tracing);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_SELECTION",
                 "FAQ_SIMPLE_QUERY",
@@ -135,7 +133,7 @@ class SimpleTaskAgentTest {
         AgentMocks mocks = agentMocks("儿童积木套装 300片售价 149.00 元，库存充足。");
         ArgumentCaptor<String> systemPromptCaptor = ArgumentCaptor.forClass(String.class);
         when(mocks.requestSpec.system(systemPromptCaptor.capture())).thenReturn(mocks.requestSpec);
-        MallMcpClient mallMcpClient = mallMcpClientWithTools(
+        ToolCallbackProvider mallProvider = providerWithTools(
                 "mall_search_products",
                 "mall_get_product_detail",
                 "mall_add_to_cart",
@@ -143,7 +141,7 @@ class SimpleTaskAgentTest {
                 "mall_prepare_order",
                 "mall_create_order"
         );
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
+        SimpleTaskAgent agent = agent(mocks, null, List.of(mallProvider));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "PRODUCT_SELECTION",
                 "SIMPLE_SHOPPING_TOOL",
@@ -182,9 +180,9 @@ class SimpleTaskAgentTest {
     @Test
     void shouldWrapSimpleMallToolsWithTracingCallback() {
         AgentMocks mocks = agentMocks("购物车为空。");
-        MallMcpClient mallMcpClient = mallMcpClientWithTools("mall_view_cart");
+        ToolCallbackProvider mallProvider = providerWithTools("mall_view_cart");
         RecordingTracing tracing = new RecordingTracing();
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient, tracing);
+        SimpleTaskAgent agent = agent(mocks, null, List.of(mallProvider), tracing);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
@@ -217,7 +215,7 @@ class SimpleTaskAgentTest {
     @Test
     void shouldReturnGenericMcpFailureWhenMallClientIsUnavailable() {
         AgentMocks mocks = agentMocks("不会返回");
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, null);
+        SimpleTaskAgent agent = agent(mocks, null, List.of());
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
@@ -237,7 +235,7 @@ class SimpleTaskAgentTest {
     @Test
     void shouldReturnGenericMcpFailureWhenMallToolsAreMissing() {
         AgentMocks mocks = agentMocks("不会返回");
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools());
+        SimpleTaskAgent agent = agent(mocks, null, List.of(providerWithTools()));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
@@ -258,7 +256,7 @@ class SimpleTaskAgentTest {
     void shouldReturnMcpFailureDirectlyWhenSimpleModelCallSeesMcpUnavailable() {
         AgentMocks mocks = agentMocks("不会返回");
         when(mocks.requestSpec.call()).thenThrow(new SimpleTaskAgent.McpUnavailableException("mall-mcp 服务未启动或不可访问"));
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
+        SimpleTaskAgent agent = agent(mocks, null, List.of(providerWithTools("mall_view_cart")));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
@@ -283,7 +281,7 @@ class SimpleTaskAgentTest {
                 new RuntimeException("mcp call failed")
         );
         when(mocks.requestSpec.call()).thenThrow(exception);
-        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
+        SimpleTaskAgent agent = agent(mocks, null, List.of(providerWithTools("mall_view_cart")));
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "CART_CONFIRMATION",
                 "SIMPLE_SHOPPING_TOOL",
@@ -306,7 +304,7 @@ class SimpleTaskAgentTest {
             AgentMocks mocks = agentMocks("不会返回");
             when(mocks.requestSpec.call()).thenThrow(new SimpleTaskAgent.McpUnavailableException(
                     "mall-mcp 服务未启动或不可访问 token=secret-token input={\"skuId\":3020}"));
-            SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClientWithTools("mall_view_cart"));
+            SimpleTaskAgent agent = agent(mocks, null, List.of(providerWithTools("mall_view_cart")));
             ShoppingIntentRoute route = new ShoppingIntentRoute(
                     "CART_CONFIRMATION",
                     "SIMPLE_SHOPPING_TOOL",
@@ -332,12 +330,10 @@ class SimpleTaskAgentTest {
     void shouldKeepToolDiscoveryFailureCauseOnlyInDebugLogs() {
         try (CapturedLogs capturedLogs = new CapturedLogs(Level.DEBUG)) {
             AgentMocks mocks = agentMocks("不会返回");
-            MallMcpClient mallMcpClient = mock(MallMcpClient.class);
-            McpSyncClient syncClient = mock(McpSyncClient.class);
-            when(mallMcpClient.syncClient()).thenReturn(syncClient);
-            when(syncClient.listTools()).thenThrow(new RuntimeException(
+            ToolCallbackProvider provider = mock(ToolCallbackProvider.class);
+            when(provider.getToolCallbacks()).thenThrow(new RuntimeException(
                     "discovery failed token=secret-token input={\"skuId\":3020}"));
-            SimpleTaskAgent agent = new SimpleTaskAgent(mocks.chatClient, null, mallMcpClient);
+            SimpleTaskAgent agent = agent(mocks, null, List.of(provider));
             ShoppingIntentRoute route = new ShoppingIntentRoute(
                     "CART_CONFIRMATION",
                     "SIMPLE_SHOPPING_TOOL",
@@ -363,9 +359,13 @@ class SimpleTaskAgentTest {
     }
 
     private AgentMocks agentMocks(String content) {
+        ChatClient.Builder builder = mock(ChatClient.Builder.class);
+        ChatClient.Builder clonedBuilder = mock(ChatClient.Builder.class);
         ChatClient chatClient = mock(ChatClient.class);
         ChatClient.ChatClientRequestSpec requestSpec = mock(ChatClient.ChatClientRequestSpec.class);
         ChatClient.CallResponseSpec callResponseSpec = mock(ChatClient.CallResponseSpec.class);
+        when(builder.clone()).thenReturn(clonedBuilder);
+        when(clonedBuilder.build()).thenReturn(chatClient);
         when(chatClient.prompt()).thenReturn(requestSpec);
         when(requestSpec.options(any())).thenReturn(requestSpec);
         when(requestSpec.system(anyString())).thenReturn(requestSpec);
@@ -375,7 +375,22 @@ class SimpleTaskAgentTest {
         when(requestSpec.toolContext(anyMap())).thenReturn(requestSpec);
         when(requestSpec.call()).thenReturn(callResponseSpec);
         when(callResponseSpec.content()).thenReturn(content);
-        return new AgentMocks(chatClient, requestSpec);
+        return new AgentMocks(builder, requestSpec);
+    }
+
+    private SimpleTaskAgent agent(AgentMocks mocks,
+                                  BuiltInTools builtInTools,
+                                  List<ToolCallbackProvider> providers) {
+        return agent(mocks, builtInTools, providers, new RagTracing());
+    }
+
+    private SimpleTaskAgent agent(AgentMocks mocks,
+                                  BuiltInTools builtInTools,
+                                  List<ToolCallbackProvider> providers,
+                                  RagTracing tracing) {
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.builder, builtInTools, providers, tracing);
+        agent.init();
+        return agent;
     }
 
     private List<ToolCallback> capturedToolObjectCallbacks(AgentMocks mocks) {
@@ -390,30 +405,21 @@ class SimpleTaskAgentTest {
         return captor.getValue();
     }
 
-    private MallMcpClient mallMcpClientWithTools(String... toolNames) {
-        MallMcpClient mallMcpClient = mock(MallMcpClient.class);
-        McpSyncClient syncClient = mock(McpSyncClient.class);
-        when(mallMcpClient.syncClient()).thenReturn(syncClient);
-        when(syncClient.listTools()).thenReturn(new McpSchema.ListToolsResult(
-                List.of(toolNames).stream().map(this::tool).toList(),
-                null
-        ));
-        return mallMcpClient;
+    private ToolCallbackProvider providerWithTools(String... toolNames) {
+        ToolCallbackProvider provider = mock(ToolCallbackProvider.class);
+        ToolCallback[] callbacks = Arrays.stream(toolNames)
+                .map(this::toolCallback)
+                .toArray(ToolCallback[]::new);
+        when(provider.getToolCallbacks()).thenReturn(callbacks);
+        return provider;
     }
 
-    private McpSchema.Tool tool(String name) {
-        return McpSchema.Tool.builder()
-                .name(name)
-                .description(name + " description from mcp")
-                .inputSchema(new McpSchema.JsonSchema(
-                        "object",
-                        Map.of("skuId", Map.of("type", "integer")),
-                        List.of(),
-                        null,
-                        null,
-                        null
-                ))
-                .build();
+    private ToolCallback toolCallback(String name) {
+        ToolCallback callback = mock(ToolCallback.class);
+        ToolDefinition definition = toolDefinition(name);
+        when(callback.getToolDefinition()).thenReturn(definition);
+        when(callback.call(anyString(), any())).thenReturn("{\"ok\":true}");
+        return callback;
     }
 
     private ToolDefinition toolDefinition(String name) {
@@ -427,7 +433,7 @@ class SimpleTaskAgentTest {
         return chunks == null ? "" : String.join("", chunks);
     }
 
-    private record AgentMocks(ChatClient chatClient, ChatClient.ChatClientRequestSpec requestSpec) {
+    private record AgentMocks(ChatClient.Builder builder, ChatClient.ChatClientRequestSpec requestSpec) {
     }
 
     private static final class CapturedLogs implements AutoCloseable {

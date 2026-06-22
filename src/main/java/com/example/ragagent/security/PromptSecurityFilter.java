@@ -9,6 +9,9 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * 对用户输入做提示词注入过滤和敏感值脱敏，并在输出阶段恢复占位符。
+ */
 @Component
 public class PromptSecurityFilter {
 
@@ -166,6 +169,9 @@ public class PromptSecurityFilter {
                 .replace(">", "&gt;");
     }
 
+    /**
+     * 一次安全过滤后的输入上下文和敏感值恢复映射。
+     */
     public record SecuredPrompt(
             String originalInput,
             String safeInput,

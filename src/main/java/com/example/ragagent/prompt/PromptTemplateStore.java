@@ -12,6 +12,9 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
+/**
+ * 统一从 classpath 的 prompts 目录加载 UTF-8 模板，并提供简单变量渲染能力。
+ */
 @Component
 public class PromptTemplateStore {
 
@@ -27,19 +30,24 @@ public class PromptTemplateStore {
         this.basePath = normalizeBasePath(basePath);
     }
 
-    public static PromptTemplateStore fromClasspath(String basePath) {
-        return new PromptTemplateStore(basePath);
-    }
-
+    /**
+     * 读取不带变量的模板文本，语义上作为渲染入口使用。
+     */
     public String render(String name) {
         return text(name);
     }
 
+    /**
+     * 按模板名称读取原始模板文本，并去掉末尾多余换行。
+     */
     public String text(String name) {
         Resource resource = new ClassPathResource(basePath + "/" + normalizeName(name) + ".st");
         return trimTrailingLineBreaks(readUtf8(resource));
     }
 
+    /**
+     * 使用 Spring AI PromptTemplate 渲染指定模板。
+     */
     public String render(String name, Map<String, Object> variables) {
         String template = text(name);
         String rendered = new PromptTemplate(template).render(variables == null ? Map.of() : variables);

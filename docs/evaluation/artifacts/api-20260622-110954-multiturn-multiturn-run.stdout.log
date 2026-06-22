@@ -1,0 +1,41 @@
+START M01 session=api-20260622-110954-multiturn-M01
+TURN M01.1 request
+TURN M01.1 status=200 seconds=65.179 answerChars=31
+TURN M01.2 request
+TURN M01.2 status=200 seconds=7.708 answerChars=222
+TURN M01.3 request
+TURN M01.3 status=200 seconds=3.972 answerChars=75
+START M02 session=api-20260622-110954-multiturn-M02
+TURN M02.1 request
+TURN M02.1 status=200 seconds=9.676 answerChars=394
+TURN M02.2 request
+TURN M02.2 status=200 seconds=4.069 answerChars=83
+TURN M02.3 request
+TURN M02.3 status=200 seconds=3.690 answerChars=81
+START M03 session=api-20260622-110954-multiturn-M03
+TURN M03.1 request
+TURN M03.1 status=200 seconds=7.759 answerChars=259
+TURN M03.2 request
+TURN M03.2 status=200 seconds=5.216 answerChars=154
+TURN M03.3 request
+TURN M03.3 status=200 seconds=2.861 answerChars=53
+START M04 session=api-20260622-110954-multiturn-M04
+TURN M04.1 request
+TURN M04.1 status=200 seconds=7.531 answerChars=233
+TURN M04.2 request
+TURN M04.2 status=200 seconds=3.380 answerChars=57
+TURN M04.3 request
+TURN M04.3 status=200 seconds=3.153 answerChars=54
+START M05 session=api-20260622-110954-multiturn-M05
+TURN M05.1 request
+TURN M05.1 status=200 seconds=3.295 answerChars=74
+TURN M05.2 request
+TURN M05.2 status=200 seconds=3.549 answerChars=49
+TURN M05.3 request
+TURN M05.3 status=200 seconds=2.980 answerChars=45
+TURN M05.4 request
+TURN M05.4 status=200 seconds=3.070 answerChars=53
+results=D:/mycodes/RAGAgent/docs/evaluation/artifacts/api-20260622-110954-multiturn-mall-sku-rag-multiturn-results.json
+trace_error=Command '['docker', 'compose', '-f', 'observability/langfuse/docker-compose.yml', 'exec', '-T', 'clickhouse', 'clickhouse-client', '--query', "WITH target_traces AS (\n    SELECT\n        id,\n        session_id,\n        input,\n        output\n    FROM default.traces\n    WHERE is_deleted = 0\n      AND session_id IN ('api-20260622-110954-multiturn-M01', 'api-20260622-110954-multiturn-M02', 'api-20260622-110954-multiturn-M03', 'api-20260622-110954-multiturn-M04', 'api-20260622-110954-multiturn-M05')\n),\nobs AS (\n    SELECT\n        trace_id,\n        groupUniqArray(name) AS observation_names,\n        countIf(startsWith(name, 'rag.')) AS rag_count,\n        countIf(name = 'rag.mall_enrich') AS mall_enrich_count,\n        countIf(startsWith(name, 'tool.')) AS tool_count,\n        maxIf(output, name = 'llm.intent_router') AS router_output\n    FROM default.observations\n    WHERE is_deleted = 0\n      AND trace_id IN (SELECT id FROM target_traces)\n    GROUP BY trace_id\n)\nSELECT\n    t.session_id AS session_id,\n    t.id AS trace_id,\n    ifNull(t.input, '') AS input,\n    ifNull(t.output, '') AS output,\n    ifNull(o.observation_names, []) AS observation_names,\n    ifNull(o.rag_count, 0) AS rag_count,\n    ifNull(o.mall_enrich_count, 0) AS mall_enrich_count,\n    ifNull(o.tool_count, 0) AS tool_count,\n    if(position(ifNull(t.output, ''), 'Ϊʲô') > 0, 1, 0) AS output_has_why,\n    ifNull(o.router_output, '') AS router_output\nFROM target_traces t\nLEFT JOIN obs o ON o.trace_id = t.id\nORDER BY t.session_id\nFORMAT JSONEachRow", '--format', 'JSONEachRow']' returned non-zero exit status 1.
+traceSummary=D:/mycodes/RAGAgent/docs/evaluation/artifacts/api-20260622-110954-multiturn-langfuse-trace-summary.jsonl
+runId=api-20260622-110954-multiturn

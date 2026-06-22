@@ -1,0 +1,57 @@
+{
+  "runId": "api-20260622-1223-m05-after-otel-restart",
+  "source": "docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.md",
+  "endpoint": "http://localhost:18082/api/react",
+  "modelId": "qwen",
+  "webSearchEnabled": false,
+  "durationSeconds": 15.05,
+  "sessionId": "api-20260622-1223-m05-after-otel-restart-M05",
+  "results": [
+    {
+      "id": "M05-T1",
+      "question": "???? 80 ? 12 ????????????",
+      "sessionId": "api-20260622-1223-m05-after-otel-restart-M05",
+      "status": 200,
+      "durationSeconds": 3.99,
+      "answer": "没有检索到相关信息。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 1
+    },
+    {
+      "id": "M05-T2",
+      "question": "?? 2 ??????",
+      "sessionId": "api-20260622-1223-m05-after-otel-restart-M05",
+      "status": 200,
+      "durationSeconds": 4.273,
+      "answer": "没有检索到相关信息。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 2
+    },
+    {
+      "id": "M05-T3",
+      "question": "???????????",
+      "sessionId": "api-20260622-1223-m05-after-otel-restart-M05",
+      "status": 200,
+      "durationSeconds": 3.515,
+      "answer": "请提供具体问题或商品名称，我会为您查询相关信息。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 3
+    },
+    {
+      "id": "M05-T4",
+      "question": "?????",
+      "sessionId": "api-20260622-1223-m05-after-otel-restart-M05",
+      "status": 200,
+      "durationSeconds": 3.271,
+      "answer": "请提供具体商品名称或问题，我将为您查询相关信息。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 4
+    }
+  ],
+  "traceCount": 0,
+  "observationCount": 0
+}

@@ -1,0 +1,57 @@
+{
+  "runId": "api-20260622-1231-m05-after-observability-fields",
+  "source": "docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.md",
+  "endpoint": "http://localhost:18082/api/react",
+  "modelId": "qwen",
+  "webSearchEnabled": false,
+  "durationSeconds": 28.799,
+  "sessionId": "api-20260622-1231-m05-after-observability-fields-M05",
+  "results": [
+    {
+      "id": "M05-T1",
+      "question": "婴儿湿巾 80 抽 12 包这款多少钱？适合囤吗？",
+      "sessionId": "api-20260622-1231-m05-after-observability-fields-M05",
+      "status": 200,
+      "durationSeconds": 10.667,
+      "answer": "这款婴儿湿巾 80抽 12包的价格是99.00元，库存充足（300件），支持“Save 20 over 199”促销。评价显示好评率95.2%，最新评价提到“大包装更适合家庭囤货”，因此适合囤货使用。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 1
+    },
+    {
+      "id": "M05-T2",
+      "question": "那加 2 件到购物车。",
+      "sessionId": "api-20260622-1231-m05-after-observability-fields-M05",
+      "status": 200,
+      "durationSeconds": 4.922,
+      "answer": "商品未找到，无法添加到购物车。请确认商品信息或重新尝试。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 2
+    },
+    {
+      "id": "M05-T3",
+      "question": "看看购物车，然后下单。",
+      "sessionId": "api-20260622-1231-m05-after-observability-fields-M05",
+      "status": 200,
+      "durationSeconds": 8.235,
+      "answer": "购物车中有2件商品：\n1. 旗舰降噪耳机 黑色，价格699.00元，数量1。\n2. 儿童积木套装 300片，价格149.00元，数量2。\n\n订单已预览成功，确认ID为：33c69d80-6528-49d4-85f9-642ee6126334。请确认无误后完成付款。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 3
+    },
+    {
+      "id": "M05-T4",
+      "question": "确认下单。",
+      "sessionId": "api-20260622-1231-m05-after-observability-fields-M05",
+      "status": 200,
+      "durationSeconds": 4.974,
+      "answer": "订单预览确认成功，订单确认 ID 为 e99254d0-8555-4abb-90d1-297967fef038。请尽快完成付款操作。",
+      "error": null,
+      "caseId": "M05",
+      "turn": 4
+    }
+  ],
+  "traceCount": 4,
+  "observationCount": 116
+}

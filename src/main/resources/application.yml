@@ -84,6 +84,9 @@ spring:
             websearch:
               url: https://dashscope.aliyuncs.com
               endpoint: /api/v1/mcps/WebSearch/mcp
+            mall:
+              url: ${MALL_MCP_BASE_URL:http://localhost:8120}
+              endpoint: ${MALL_MCP_ENDPOINT:/mcp}
 
 mybatis-plus:
   configuration:
@@ -184,9 +187,3 @@ app:
     authorization-header: ${MALL_AUTHORIZATION_HEADER:X-Mall-Authorization}
     request-timeout: ${MALL_REQUEST_TIMEOUT:5s}
     auth-cache-ttl: ${MALL_AUTH_CACHE_TTL:2h}
-    mcp:
-      base-url: ${MALL_MCP_BASE_URL:http://localhost:8120}
-      endpoint: /mcp
-      context-path: /internal/mcp/mall/context
-      context-secret: ${MCP_CONTEXT_SECRET:mall-mcp-dev-secret}
-      request-timeout: 5s

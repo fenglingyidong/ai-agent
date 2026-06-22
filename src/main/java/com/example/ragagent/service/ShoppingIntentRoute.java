@@ -11,6 +11,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * 轻量路由模型输出的购物意图结构，包含任务类型、槽位、置信度和风险信息。
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ShoppingIntentRoute(
         String intent,
@@ -80,31 +83,52 @@ public record ShoppingIntentRoute(
         this(intent, null, visualContext, textSlots, routeToCore, confidence, reason);
     }
 
+    /**
+     * 创建一个强制回退主 ReAct Agent 的路由结果。
+     */
     public static ShoppingIntentRoute fallback(String reason) {
         return new ShoppingIntentRoute("UNKNOWN", "COMPLEX_REACT", Map.of(), Map.of(), Map.of(), true, 0.0, reason,
                 List.of(), List.of(), List.of(), false, "LOW");
     }
 
+    /**
+     * 返回标准化后的购物意图名称。
+     */
     public String normalizedIntent() {
         return StringUtils.hasText(intent) ? intent.trim().toUpperCase(Locale.ROOT) : "UNKNOWN";
     }
 
+    /**
+     * 返回标准化后的任务类型。
+     */
     public String normalizedTaskType() {
         return StringUtils.hasText(taskType) ? taskType.trim().toUpperCase(Locale.ROOT) : "COMPLEX_REACT";
     }
 
+    /**
+     * 判断路由置信度是否达到给定阈值。
+     */
     public boolean isHighConfidence(double threshold) {
         return confidence != null && confidence >= threshold;
     }
 
+    /**
+     * 判断路由结果是否携带视觉上下文。
+     */
     public boolean hasVisualContext() {
         return !visualContext.isEmpty();
     }
 
+    /**
+     * 判断路由结果是否携带文本槽位。
+     */
     public boolean hasTextSlots() {
         return !textSlots.isEmpty();
     }
 
+    /**
+     * 判断路由结果是否要求补齐槽位。
+     */
     public boolean hasMissingSlots() {
         return !missingSlots.isEmpty();
     }

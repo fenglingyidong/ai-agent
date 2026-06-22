@@ -14,6 +14,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 根据购物意图路由选择 ReAct Agent 需要遵守的导购任务策略。
+ */
 @Component
 public class ShoppingTaskPolicyRegistry {
 
@@ -83,6 +86,9 @@ public class ShoppingTaskPolicyRegistry {
         this.policiesById = Collections.unmodifiableMap(policies);
     }
 
+    /**
+     * 按路由意图解析应注入系统提示词的任务策略列表。
+     */
     public List<ShoppingTaskPolicy> resolve(ShoppingIntentRoute route) {
         if (route == null) {
             return List.of();

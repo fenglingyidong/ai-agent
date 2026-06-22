@@ -34,6 +34,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Milvus 向量库配置，分别创建商品知识库、长期记忆库和 BM25 检索所需客户端。
+ */
 @Configuration
 public class MilvusVectorStoreConfiguration {
 
@@ -45,6 +48,9 @@ public class MilvusVectorStoreConfiguration {
     private static final String PRODUCT_BM25_FUNCTION = "product_bm25_function";
     private static final Map<String, Object> PRODUCT_CONTENT_ANALYZER_PARAMS = Map.of("type", "chinese");
 
+    /**
+     * 创建 Spring AI MilvusVectorStore 使用的一代 Milvus 客户端。
+     */
     @Bean(destroyMethod = "")
     public MilvusServiceClient milvusServiceClient(AppVectorProperties properties) {
         AppVectorProperties.Milvus milvus = properties.getMilvus();
@@ -68,12 +74,18 @@ public class MilvusVectorStoreConfiguration {
         return new MilvusServiceClient(builder.build());
     }
 
+    /**
+     * 创建默认 V2 Milvus 客户端，供 Schema 初始化等通用操作使用。
+     */
     @Bean(destroyMethod = "close")
     @Primary
     public MilvusClientV2 milvusClientV2(AppVectorProperties properties) {
         return buildMilvusClient(properties, 30_000);
     }
 
+    /**
+     * 创建 BM25 检索专用 V2 客户端，使用更短 RPC 截止时间和重试策略。
+     */
     @Bean(name = BM25_MILVUS_CLIENT, destroyMethod = "close")
     public MilvusClientV2 bm25MilvusClientV2(AppVectorProperties properties,
                                              RagRetrievalProperties retrievalProperties) {
@@ -83,6 +95,9 @@ public class MilvusVectorStoreConfiguration {
         return client;
     }
 
+    /**
+     * 校验 BM25 中文文本检索依赖的 JVM 默认字符集。
+     */
     static void requireUtf8JvmCharset(Charset charset) {
         if (!StandardCharsets.UTF_8.equals(charset)) {
             throw new IllegalStateException("Milvus BM25 text search requires JVM default charset UTF-8. "
@@ -90,6 +105,9 @@ public class MilvusVectorStoreConfiguration {
         }
     }
 
+    /**
+     * 构建 BM25 查询的快速失败重试配置。
+     */
     static RetryConfig bm25RetryConfig(RagRetrievalProperties properties) {
         return RetryConfig.builder()
                 .maxRetryTimes(2)
@@ -122,6 +140,9 @@ public class MilvusVectorStoreConfiguration {
         return new MilvusClientV2(builder.build());
     }
 
+    /**
+     * 创建商品知识库向量存储，BM25 开启时由自定义 Schema 初始化器建表。
+     */
     @Bean(PRODUCT_VECTOR_STORE)
     public MilvusVectorStore productVectorStore(MilvusServiceClient milvusServiceClient,
                                                 EmbeddingModel embeddingModel,
@@ -138,6 +159,9 @@ public class MilvusVectorStoreConfiguration {
                 .build();
     }
 
+    /**
+     * 创建长期记忆向量存储。
+     */
     @Bean(MEMORY_VECTOR_STORE)
     public MilvusVectorStore memoryVectorStore(MilvusServiceClient milvusServiceClient,
                                                EmbeddingModel embeddingModel,
@@ -152,6 +176,9 @@ public class MilvusVectorStoreConfiguration {
                 .build();
     }
 
+    /**
+     * 初始化支持 dense 向量和 BM25 sparse 向量的商品集合 Schema。
+     */
     @Bean
     public SmartInitializingSingleton productBm25SchemaInitializer(MilvusClientV2 milvusClientV2,
                                                                    AppVectorProperties properties) {

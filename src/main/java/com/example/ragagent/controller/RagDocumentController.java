@@ -23,6 +23,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 提供 RAG 文档和商品文档导入接口，把外部内容写入父子分块索引。
+ */
 @RestController
 @RequestMapping("/api/rag/documents")
 public class RagDocumentController {
@@ -90,6 +93,9 @@ public class RagDocumentController {
         return importDocument(request.toRagDocumentImportRequest());
     }
 
+    /**
+     * 通用 RAG 文档导入请求，包含原文和可用于召回过滤的商品元数据。
+     */
     public record RagDocumentImportRequest(
             @Size(max = 128)
             String sourceId,
@@ -153,6 +159,9 @@ public class RagDocumentController {
         }
     }
 
+    /**
+     * 文档导入结果，返回生成的父子分块 ID 和写入索引的元数据。
+     */
     public record RagDocumentImportResponse(
             String sourceId,
             String title,
@@ -164,6 +173,9 @@ public class RagDocumentController {
     ) {
     }
 
+    /**
+     * 商品结构化导入请求，会被转换成适合 RAG 检索的商品知识文本。
+     */
     public record ProductDocumentImportRequest(
             @Size(max = 128)
             String productId,

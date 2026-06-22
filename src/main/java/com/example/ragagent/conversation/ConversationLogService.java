@@ -20,6 +20,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+/**
+ * 维护对话会话和轮次的数据库日志，用于历史会话查询和流式响应落盘。
+ */
 @Service
 public class ConversationLogService {
 
@@ -46,6 +49,9 @@ public class ConversationLogService {
         this.properties = properties;
     }
 
+    /**
+     * 创建或更新会话摘要，并插入一条处于处理中的对话轮次记录。
+     */
     @Transactional
     public ConversationTurnRecord beginTurn(String userId,
                                             String sessionId,
@@ -85,18 +91,30 @@ public class ConversationLogService {
         return record;
     }
 
+    /**
+     * 将对话轮次标记为已完成，并保存最终助手回答。
+     */
     public void completeTurn(ConversationTurnRecord turn, String assistantText) {
         saveResult(turn, ConversationTurnStatus.COMPLETED, nullToEmpty(assistantText), null);
     }
 
+    /**
+     * 将对话轮次标记为部分完成，保留已经流出的内容和中断原因。
+     */
     public void partialTurn(ConversationTurnRecord turn, String assistantText, String reason) {
         saveResult(turn, ConversationTurnStatus.PARTIAL, nullToEmpty(assistantText), normalizeError(reason));
     }
 
+    /**
+     * 将对话轮次标记为失败，并记录异常信息。
+     */
     public void failTurn(ConversationTurnRecord turn, String assistantText, Throwable throwable) {
         saveResult(turn, ConversationTurnStatus.FAILED, nullToEmpty(assistantText), normalizeFailureError(throwable));
     }
 
+    /**
+     * 查询指定用户和会话下最近的对话轮次。
+     */
     public List<ConversationTurnRecord> listRecentTurns(String userId, String sessionId, int limit) {
         if (!properties.isEnabled()) {
             return List.of();
@@ -110,10 +128,16 @@ public class ConversationLogService {
                 .toList();
     }
 
+    /**
+     * 查询指定用户最近的会话摘要。
+     */
     public List<ConversationSessionSummary> listRecentSessions(String userId, int limit) {
         return listRecentSessions(userId, limit, 0);
     }
 
+    /**
+     * 分页查询指定用户最近的会话摘要。
+     */
     public List<ConversationSessionSummary> listRecentSessions(String userId, int limit, int offset) {
         if (!properties.isEnabled()) {
             return List.of();
@@ -137,6 +161,9 @@ public class ConversationLogService {
                 : normalized.substring(0, MAX_SESSION_TITLE_LENGTH);
     }
 
+    /**
+     * 删除指定用户会话及其所有轮次记录。
+     */
     @Transactional
     public void deleteSession(String userId, String sessionId) {
         if (!properties.isEnabled()) {

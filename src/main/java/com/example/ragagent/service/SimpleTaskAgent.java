@@ -1,6 +1,5 @@
 package com.example.ragagent.service;
 
-import com.example.ragagent.mall.MallMcpClient;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.tools.BuiltInTools;
@@ -11,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.execution.ToolExecutionException;
 import org.springframework.ai.tool.annotation.Tool;
@@ -25,6 +25,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+/**
+ * 处理高置信度简单导购任务，必要时短路主 ReAct Agent。
+ */
 @Service
 public class SimpleTaskAgent {
 
@@ -41,7 +44,7 @@ public class SimpleTaskAgent {
 
     private final ChatClient.Builder builder;
     private final BuiltInTools builtInTools;
-    private final MallMcpToolCallback mallMcpToolCallback;
+    private final List<ToolCallbackProvider> toolCallbackProviders;
     private final RagTracing tracing;
     private final String knowledgeSystemPrompt;
     private final String mallSystemPrompt;
@@ -60,59 +63,20 @@ public class SimpleTaskAgent {
     @Autowired
     public SimpleTaskAgent(ChatClient.Builder builder,
                            BuiltInTools builtInTools,
-                           MallMcpClient mallMcpClient,
+                           List<ToolCallbackProvider> toolCallbackProviders,
                            RagTracing tracing) {
-        this(builder, builtInTools, mallMcpClient, tracing, new PromptTemplateStore());
-    }
-
-    public SimpleTaskAgent(ChatClient.Builder builder,
-                           BuiltInTools builtInTools,
-                           MallMcpClient mallMcpClient,
-                           RagTracing tracing,
-                           PromptTemplateStore promptTemplateStore) {
         this.builder = builder;
         this.builtInTools = builtInTools;
-        this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
+        this.toolCallbackProviders = toolCallbackProviders == null ? List.of() : List.copyOf(toolCallbackProviders);
         this.tracing = tracing == null ? new RagTracing() : tracing;
-        PromptTemplateStore store = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
+        PromptTemplateStore store = new PromptTemplateStore();
         this.knowledgeSystemPrompt = store.text("simple-task.knowledge.system");
         this.mallSystemPrompt = store.text("simple-task.mall.system");
     }
 
-    public SimpleTaskAgent(ChatClient.Builder builder,
-                           BuiltInTools builtInTools,
-                           MallMcpClient mallMcpClient) {
-        this(builder, builtInTools, mallMcpClient, new RagTracing());
-    }
-
-    SimpleTaskAgent(ChatClient simpleTaskChatClient,
-                    BuiltInTools builtInTools,
-                    MallMcpClient mallMcpClient) {
-        this(simpleTaskChatClient, builtInTools, mallMcpClient, new RagTracing());
-    }
-
-    SimpleTaskAgent(ChatClient simpleTaskChatClient,
-                    BuiltInTools builtInTools,
-                    MallMcpClient mallMcpClient,
-                    RagTracing tracing) {
-        this(simpleTaskChatClient, builtInTools, mallMcpClient, tracing, new PromptTemplateStore());
-    }
-
-    SimpleTaskAgent(ChatClient simpleTaskChatClient,
-                    BuiltInTools builtInTools,
-                    MallMcpClient mallMcpClient,
-                    RagTracing tracing,
-                    PromptTemplateStore promptTemplateStore) {
-        this.builder = null;
-        this.simpleTaskChatClient = simpleTaskChatClient;
-        this.builtInTools = builtInTools;
-        this.mallMcpToolCallback = mallMcpClient == null ? null : new MallMcpToolCallback(mallMcpClient);
-        this.tracing = tracing == null ? new RagTracing() : tracing;
-        PromptTemplateStore store = promptTemplateStore == null ? new PromptTemplateStore() : promptTemplateStore;
-        this.knowledgeSystemPrompt = store.text("simple-task.knowledge.system");
-        this.mallSystemPrompt = store.text("simple-task.mall.system");
-    }
-
+    /**
+     * 初始化简单任务专用 ChatClient，复用全局模型连接配置。
+     */
     @PostConstruct
     public void init() {
         if (simpleTaskChatClient == null && builder != null) {
@@ -120,6 +84,9 @@ public class SimpleTaskAgent {
         }
     }
 
+    /**
+     * 尝试用简单任务模型处理路由结果，不满足条件时交还主链路。
+     */
     FastLaneResult tryRun(ShoppingIntentRoute route,
                           String userMessage,
                           String sessionId,
@@ -127,11 +94,28 @@ public class SimpleTaskAgent {
         return tryRun(route, userMessage, sessionId, confidenceThreshold, "");
     }
 
+    /**
+     * 尝试用简单任务模型处理路由结果，并附带当前会话导购偏好上下文。
+     */
     FastLaneResult tryRun(ShoppingIntentRoute route,
                           String userMessage,
                           String sessionId,
                           double confidenceThreshold,
                           String preferenceContext) {
+        return tryRun(route, userMessage, sessionId, confidenceThreshold, preferenceContext, "", "", "");
+    }
+
+    /**
+     * 尝试用简单任务模型处理路由结果，并把商城认证上下文传给 MCP meta。
+     */
+    FastLaneResult tryRun(ShoppingIntentRoute route,
+                          String userMessage,
+                          String sessionId,
+                          double confidenceThreshold,
+                          String preferenceContext,
+                          String mallToken,
+                          String mallUsername,
+                          String mallPassword) {
         if (!enabled || route == null || !route.isHighConfidence(confidenceThreshold)
                 || Boolean.TRUE.equals(route.routeToCore())) {
             return FastLaneResult.notHandled();
@@ -142,7 +126,8 @@ public class SimpleTaskAgent {
 
         return switch (route.normalizedTaskType()) {
             case "FAQ_SIMPLE_QUERY" -> runKnowledgeTask(route, userMessage, preferenceContext);
-            case "SIMPLE_SHOPPING_TOOL" -> runMallTask(route, userMessage, sessionId, preferenceContext);
+            case "SIMPLE_SHOPPING_TOOL" -> runMallTask(route, userMessage, sessionId, preferenceContext,
+                    mallToken, mallUsername, mallPassword);
             default -> FastLaneResult.notHandled();
         };
     }
@@ -163,12 +148,12 @@ public class SimpleTaskAgent {
     private FastLaneResult runMallTask(ShoppingIntentRoute route,
                                        String userMessage,
                                        String sessionId,
-                                       String preferenceContext) {
+                                       String preferenceContext,
+                                       String mallToken,
+                                       String mallUsername,
+                                       String mallPassword) {
         if (!StringUtils.hasText(sessionId)) {
             return FastLaneResult.fallbackToCore("简单商城任务缺少 sessionId");
-        }
-        if (mallMcpToolCallback == null) {
-            return mallMcpFailure("MallMcpClientUnavailable");
         }
         List<ToolCallback> callbacks;
         try {
@@ -186,19 +171,54 @@ public class SimpleTaskAgent {
                 preferenceContext,
                 mallSystemPrompt,
                 callbacks,
-                Map.of("sessionId", sessionId)
+                mallToolContext(sessionId, mallToken, mallUsername, mallPassword)
         );
     }
 
     private List<ToolCallback> simpleMallToolCallbacks() {
         try {
-            return mallMcpToolCallback.getToolCallbacks().stream()
-                    .filter(callback -> SIMPLE_MALL_TOOL_NAMES.contains(toolName(callback)))
-                    .map(callback -> (ToolCallback) new LoggingToolCallback(callback, "simple-task", "simple-task", tracing))
-                    .toList();
+            List<ToolCallback> callbacks = new ArrayList<>();
+            for (ToolCallbackProvider provider : toolCallbackProviders) {
+                ToolCallback[] providedCallbacks = provider.getToolCallbacks();
+                if (providedCallbacks == null) {
+                    continue;
+                }
+                for (ToolCallback callback : providedCallbacks) {
+                    String name = toolName(callback);
+                    if (SIMPLE_MALL_TOOL_NAMES.contains(name)) {
+                        callbacks.add(new LoggingToolCallback(
+                                new MallRenderedToolCallback(callback, new MallToolResultRenderer()),
+                                "simple-task",
+                                "simple-task",
+                                tracing
+                        ));
+                    }
+                }
+            }
+            return List.copyOf(callbacks);
         }
         catch (RuntimeException ex) {
             throw new McpUnavailableException("mall-mcp 服务未启动或不可访问", ex);
+        }
+    }
+
+    private Map<String, Object> mallToolContext(String sessionId,
+                                                String mallToken,
+                                                String mallUsername,
+                                                String mallPassword) {
+        java.util.LinkedHashMap<String, Object> context = new java.util.LinkedHashMap<>();
+        // /api/react 当前把 Basic Auth 用户名同时作为应用用户和商城登录名传入。
+        putIfText(context, "userId", mallUsername);
+        context.put("sessionId", sessionId.trim());
+        putIfText(context, "mallToken", mallToken);
+        putIfText(context, "mallUsername", mallUsername);
+        putIfText(context, "mallPassword", mallPassword);
+        return Map.copyOf(context);
+    }
+
+    private void putIfText(Map<String, Object> context, String key, String value) {
+        if (StringUtils.hasText(value)) {
+            context.put(key, value.trim());
         }
     }
 
@@ -339,7 +359,7 @@ public class SimpleTaskAgent {
                 return true;
             }
             if (current instanceof ToolExecutionException toolExecutionException
-                    && MallMcpToolCallback.isMallTool(toolName(toolExecutionException.getToolDefinition()))) {
+                    && MallTool.isMallTool(toolName(toolExecutionException.getToolDefinition()))) {
                 return true;
             }
             String message = current.getMessage();
@@ -385,7 +405,7 @@ public class SimpleTaskAgent {
         while (current != null) {
             if (current instanceof ToolExecutionException toolExecutionException) {
                 String toolName = toolName(toolExecutionException.getToolDefinition());
-                if (MallMcpToolCallback.isMallTool(toolName)) {
+                if (MallTool.isMallTool(toolName)) {
                     return toolName;
                 }
             }
@@ -405,6 +425,9 @@ public class SimpleTaskAgent {
         return message;
     }
 
+    /**
+     * 暴露给简单知识库任务模型的受限 RAG 工具集合。
+     */
     static final class KnowledgeFastLaneTools {
 
         private final BuiltInTools builtInTools;
@@ -413,6 +436,9 @@ public class SimpleTaskAgent {
             this.builtInTools = builtInTools;
         }
 
+        /**
+         * 检索商品知识库；空结果或异常会触发回退主 Agent。
+         */
         @Tool(description = "检索商品知识库中的商品特点、规格、适用年龄、评价摘要和导购知识。实时价格、库存、购物车和订单信息不能用这个工具回答。")
         public String searchProductKnowledge(
                 @ToolParam(description = "用户想查询的商品知识、商品名称或问题", required = true) String query) {
@@ -432,6 +458,9 @@ public class SimpleTaskAgent {
         }
     }
 
+    /**
+     * 表示简单任务链路应放弃短路，回退给主 ReAct Agent。
+     */
     static class FastLaneFallbackException extends RuntimeException {
         FastLaneFallbackException(String message) {
             super(message);
@@ -442,6 +471,9 @@ public class SimpleTaskAgent {
         }
     }
 
+    /**
+     * 统一标记商城 MCP 不可用，避免把底层异常细节暴露给用户。
+     */
     static class McpUnavailableException extends RuntimeException {
         McpUnavailableException(String message) {
             super(StringUtils.hasText(message) ? message : "mall-mcp 服务未启动或不可访问");

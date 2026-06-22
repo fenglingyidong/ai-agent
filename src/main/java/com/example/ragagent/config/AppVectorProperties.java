@@ -9,6 +9,9 @@ import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
 
+/**
+ * 向量存储配置，集中描述 Milvus 连接、商品集合和长期记忆集合。
+ */
 @Getter
 @Validated
 @ConfigurationProperties(prefix = "app.vector")
@@ -23,6 +26,9 @@ public class AppVectorProperties {
     @Valid
     private final Memory memory = new Memory();
 
+    /**
+     * Milvus 连接和索引参数。
+     */
     @Getter
     @Setter
     public static class Milvus {
@@ -60,6 +66,9 @@ public class AppVectorProperties {
         private String indexParameters = "{\"nlist\":1024}";
     }
 
+    /**
+     * 商品知识库向量集合配置。
+     */
     @Getter
     @Setter
     public static class Product {
@@ -70,6 +79,9 @@ public class AppVectorProperties {
         private boolean bm25Enabled = true;
     }
 
+    /**
+     * 长期记忆向量集合配置。
+     */
     @Getter
     @Setter
     public static class Memory {

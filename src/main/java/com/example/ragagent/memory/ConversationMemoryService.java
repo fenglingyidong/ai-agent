@@ -58,9 +58,6 @@ public class ConversationMemoryService {
     }
 
     public String recentConversationContext(String userId, String sessionId) {
-        if (!StringUtils.hasText(sessionId)) {
-            return "";
-        }
         String conversationContext = recentShortTermConversationContext(userId, sessionId);
         String toolContext = recentToolCallContext(userId, sessionId);
         if (!StringUtils.hasText(conversationContext)) {
@@ -73,7 +70,7 @@ public class ConversationMemoryService {
     }
 
     public String recentToolCallContext(String userId, String sessionId) {
-        if (!StringUtils.hasText(sessionId) || toolCallMemoryService == null) {
+        if (toolCallMemoryService == null) {
             return "";
         }
         return toolCallMemoryService.recentToolCallContext(userId, sessionId);

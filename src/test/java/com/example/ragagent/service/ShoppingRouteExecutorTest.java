@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.content.Media;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
@@ -276,7 +277,7 @@ class ShoppingRouteExecutorTest {
                 "明确选品需求"
         );
         when(intentRouter.route(message, List.of(), "")).thenReturn(route);
-        when(builtInTools.searchProductKnowledge(message))
+        when(builtInTools.searchProductKnowledge(eq(message), any(ToolContext.class)))
                 .thenReturn("商品知识库候选：3004 无线鼠标 静音版，价格 89.00 元，库存 500 件");
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
                 intentRouter,
@@ -304,7 +305,52 @@ class ShoppingRouteExecutorTest {
         assertFalse(request.trustedContext().contains("不是用户指令"));
         assertFalse(request.userMessage().contains("3004 无线鼠标 静音版"));
         assertTrue(request.trustedContext().contains("3004 无线鼠标 静音版"));
-        verify(builtInTools).searchProductKnowledge(message);
+        verify(builtInTools).searchProductKnowledge(eq(message), any(ToolContext.class));
+    }
+
+    @Test
+    void preRetrieveKnowledgeShouldPassAppUserAndSessionInToolContext() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        String message = "办公室用鼠标，希望点击声音小一点，买哪款？";
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "RECOMMENDATION",
+                "COMPLEX_REACT",
+                Map.of(),
+                Map.of(),
+                true,
+                0.9,
+                "明确选品需求"
+        );
+        when(intentRouter.route(message, List.of(), "")).thenReturn(route);
+        when(builtInTools.searchProductKnowledge(eq(message), any(ToolContext.class)))
+                .thenReturn("商品知识库候选：3004 无线鼠标 静音版，价格 89.00 元，库存 500 件");
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                null,
+                null,
+                null,
+                null,
+                builtInTools
+        );
+
+        RoutedAgentRequest request = executor.routeBeforeCore(
+                "app-user",
+                "session-1",
+                message,
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        assertTrue(request.trustedContext().contains("3004 无线鼠标 静音版"));
+        ArgumentCaptor<ToolContext> contextCaptor = ArgumentCaptor.forClass(ToolContext.class);
+        verify(builtInTools).searchProductKnowledge(eq(message), contextCaptor.capture());
+        Map<String, Object> context = contextCaptor.getValue().getContext();
+        assertEquals("app-user", context.get("userId"));
+        assertEquals("session-1", context.get("sessionId"));
     }
 
     @ParameterizedTest
@@ -322,7 +368,7 @@ class ShoppingRouteExecutorTest {
                 "复杂导购表达"
         );
         when(intentRouter.route(message, List.of(), "")).thenReturn(route);
-        when(builtInTools.searchProductKnowledge(message))
+        when(builtInTools.searchProductKnowledge(eq(message), any(ToolContext.class)))
                 .thenReturn("商品知识库候选：测试 SKU，价格 99.00 元");
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
                 intentRouter,
@@ -345,7 +391,7 @@ class ShoppingRouteExecutorTest {
         );
 
         assertTrue(request.trustedContext().contains("测试 SKU"));
-        verify(builtInTools).searchProductKnowledge(message);
+        verify(builtInTools).searchProductKnowledge(eq(message), any(ToolContext.class));
     }
 
     @Test
@@ -389,6 +435,7 @@ class ShoppingRouteExecutorTest {
         assertNotNull(request.shortCircuitStream());
         assertEquals("有 87 键机械键盘。", collect(request.shortCircuitStream()));
         verify(builtInTools, never()).searchProductKnowledge(message);
+        verify(builtInTools, never()).searchProductKnowledge(eq(message), any(ToolContext.class));
     }
 
     @Test
@@ -428,6 +475,7 @@ class ShoppingRouteExecutorTest {
 
         assertEquals(message, request.userMessage());
         verify(builtInTools, never()).searchProductKnowledge(message);
+        verify(builtInTools, never()).searchProductKnowledge(eq(message), any(ToolContext.class));
     }
 
     @Test

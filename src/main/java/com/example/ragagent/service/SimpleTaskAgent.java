@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
@@ -171,6 +172,7 @@ public class SimpleTaskAgent {
                 route,
                 userMessage,
                 preferenceContext,
+                recentToolCallContext(userId, sessionId),
                 knowledgeSystemPrompt,
                 new KnowledgeFastLaneTools(builtInTools, toolCallMemoryService, userId, sessionId)
         );
@@ -201,6 +203,7 @@ public class SimpleTaskAgent {
                 route,
                 userMessage,
                 preferenceContext,
+                recentToolCallContext(userId, sessionId),
                 mallSystemPrompt,
                 callbacks,
                 mallToolContext(userId, sessionId, mallToken, mallUsername, mallPassword)
@@ -258,9 +261,10 @@ public class SimpleTaskAgent {
     private FastLaneResult callSimpleModelWithToolObject(ShoppingIntentRoute route,
                                                          String userMessage,
                                                          String preferenceContext,
+                                                         String toolCallContext,
                                                          String systemPrompt,
                                                          Object toolObject) {
-        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext);
+        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext, toolCallContext);
         return callSimpleModel(route, systemPrompt, userPrompt, () -> simpleTaskChatClient.prompt()
                 .options(OpenAiChatOptions.builder()
                         .model(modelName())
@@ -277,10 +281,11 @@ public class SimpleTaskAgent {
     private FastLaneResult callSimpleModelWithToolCallbacks(ShoppingIntentRoute route,
                                                             String userMessage,
                                                             String preferenceContext,
+                                                            String toolCallContext,
                                                             String systemPrompt,
                                                             List<ToolCallback> toolCallbacks,
                                                             Map<String, Object> toolContext) {
-        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext);
+        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext, toolCallContext);
         return callSimpleModel(route, systemPrompt, userPrompt, () -> simpleTaskChatClient.prompt()
                 .options(OpenAiChatOptions.builder()
                         .model(modelName())
@@ -341,7 +346,10 @@ public class SimpleTaskAgent {
         }
     }
 
-    private String buildUserPrompt(ShoppingIntentRoute route, String userMessage, String preferenceContext) {
+    private String buildUserPrompt(ShoppingIntentRoute route,
+                                   String userMessage,
+                                   String preferenceContext,
+                                   String toolCallContext) {
         String routePrompt = """
                 用户本轮输入：
                 %s
@@ -361,10 +369,33 @@ public class SimpleTaskAgent {
                 renderSlots(route.visualContext()),
                 route.reason()
         ).trim();
-        if (!StringUtils.hasText(preferenceContext)) {
-            return routePrompt;
+        StringBuilder builder = new StringBuilder();
+        appendPromptSection(builder, preferenceContext);
+        appendPromptSection(builder, toolCallContext);
+        appendPromptSection(builder, routePrompt);
+        return builder.toString();
+    }
+
+    private void appendPromptSection(StringBuilder builder, String section) {
+        if (!StringUtils.hasText(section)) {
+            return;
         }
-        return preferenceContext.trim() + System.lineSeparator() + System.lineSeparator() + routePrompt;
+        if (!builder.isEmpty()) {
+            builder.append(System.lineSeparator()).append(System.lineSeparator());
+        }
+        builder.append(section.trim());
+    }
+
+    private String recentToolCallContext(String userId, String sessionId) {
+        if (toolCallMemoryService == null) {
+            return "";
+        }
+        try {
+            return toolCallMemoryService.recentToolCallContext(userId, sessionId);
+        }
+        catch (RuntimeException ignored) {
+            return "";
+        }
     }
 
     private String renderSlots(Map<String, Object> slots) {
@@ -489,7 +520,7 @@ public class SimpleTaskAgent {
         public String searchProductKnowledge(
                 @ToolParam(description = "用户想查询的商品知识、商品名称或问题", required = true) String query) {
             try {
-                String result = builtInTools.searchProductKnowledge(query);
+                String result = builtInTools.searchProductKnowledge(query, toolContext());
                 if (!StringUtils.hasText(result) || result.contains(EMPTY_KNOWLEDGE_MESSAGE)) {
                     throw new FastLaneFallbackException("A 类 RAG 检索为空");
                 }
@@ -533,6 +564,17 @@ public class SimpleTaskAgent {
             catch (RuntimeException ignored) {
                 // 工具窗口是旁路上下文，不能改变快车道回退行为。
             }
+        }
+
+        private ToolContext toolContext() {
+            java.util.LinkedHashMap<String, Object> context = new java.util.LinkedHashMap<>();
+            if (StringUtils.hasText(userId)) {
+                context.put("userId", userId.trim());
+            }
+            if (StringUtils.hasText(sessionId)) {
+                context.put("sessionId", sessionId.trim());
+            }
+            return new ToolContext(Map.copyOf(context));
         }
     }
 

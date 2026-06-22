@@ -9,6 +9,7 @@ import com.example.ragagent.commerce.ShoppingStateService;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
 import io.opentelemetry.api.trace.Span;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.content.Media;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -157,7 +158,7 @@ public class ShoppingRouteExecutor {
         String coreAgentMessage = buildCoreAgentMessage(normalizedMessage, safeMedia.size());
         String trustedContext = buildTrustedContext(
                 preferenceContextAfterRoute,
-                maybePreRetrieveKnowledge(route, normalizedMessage)
+                maybePreRetrieveKnowledge(route, normalizedMessage, userId, sessionId)
         );
         return new RoutedAgentRequest(
                 coreAgentMessage,
@@ -367,7 +368,10 @@ public class ShoppingRouteExecutor {
         builder.append(section.trim());
     }
 
-    private String maybePreRetrieveKnowledge(ShoppingIntentRoute route, String message) {
+    private String maybePreRetrieveKnowledge(ShoppingIntentRoute route,
+                                             String message,
+                                             String userId,
+                                             String sessionId) {
         if (!shouldPreRetrieveKnowledge(route, message)) {
             setTraceAttribute("rag.pre_retrieval.required", false);
             return "";
@@ -375,7 +379,10 @@ public class ShoppingRouteExecutor {
         setTraceAttribute("rag.pre_retrieval.required", true);
 
         try {
-            String knowledge = builtInTools == null ? "" : builtInTools.searchProductKnowledge(message);
+            String knowledge = builtInTools == null ? "" : builtInTools.searchProductKnowledge(
+                    message,
+                    preRetrievalToolContext(userId, sessionId)
+            );
             if (!StringUtils.hasText(knowledge) || knowledge.contains(EMPTY_KNOWLEDGE_MESSAGE)) {
                 setTraceAttribute("rag.pre_retrieval.hit", false);
                 return "";
@@ -397,6 +404,17 @@ public class ShoppingRouteExecutor {
             setTraceAttribute("rag.pre_retrieval.error", ex.getClass().getSimpleName());
             return "";
         }
+    }
+
+    private ToolContext preRetrievalToolContext(String userId, String sessionId) {
+        java.util.LinkedHashMap<String, Object> context = new java.util.LinkedHashMap<>();
+        if (StringUtils.hasText(userId)) {
+            context.put("userId", userId.trim());
+        }
+        if (StringUtils.hasText(sessionId)) {
+            context.put("sessionId", sessionId.trim());
+        }
+        return new ToolContext(Map.copyOf(context));
     }
 
     private void setTraceAttribute(String key, boolean value) {

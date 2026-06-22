@@ -37,6 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -105,6 +106,51 @@ class SimpleTaskAgentTest {
         assertTrue(prompt.contains("品类：跑鞋"));
         assertTrue(prompt.contains("用户本轮输入："));
         assertTrue(prompt.contains("再推荐几双"));
+    }
+
+    @Test
+    void knowledgeTaskPromptShouldIncludeRecentToolCallContextAfterPreferenceContext() {
+        AgentMocks mocks = agentMocks("结合刚才详情继续推荐儿童积木。");
+        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
+        when(mocks.requestSpec.user(userPromptCaptor.capture())).thenReturn(mocks.requestSpec);
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        toolMemory.rememberSuccess(
+                "app-user",
+                "session-1",
+                "mall_get_product_detail",
+                "{\"skuId\":3020}",
+                "儿童积木 300 片售价 149 元，库存充足。"
+        );
+        SimpleTaskAgent agent = agent(mocks, mock(BuiltInTools.class), null, new RagTracing(), toolMemory);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_SELECTION",
+                "FAQ_SIMPLE_QUERY",
+                Map.of(),
+                Map.of("product_name", "儿童积木"),
+                false,
+                0.92,
+                "知识库简单查询"
+        );
+
+        FastLaneResult result = agent.tryRun(
+                route,
+                "结合刚才价格继续推荐",
+                "app-user",
+                "session-1",
+                0.7,
+                "当前会话短期导购偏好：\n- 品类：儿童积木",
+                "",
+                "",
+                ""
+        );
+
+        assertTrue(result.handled());
+        String prompt = userPromptCaptor.getValue();
+        assertTrue(prompt.contains("当前会话短期导购偏好"));
+        assertTrue(prompt.contains("最近工具调用上下文"));
+        assertTrue(prompt.contains("儿童积木 300 片售价 149 元，库存充足。"));
+        assertTrue(prompt.indexOf("当前会话短期导购偏好") < prompt.indexOf("最近工具调用上下文"));
+        assertTrue(prompt.indexOf("最近工具调用上下文") < prompt.indexOf("用户本轮输入："));
     }
 
     @Test
@@ -181,6 +227,55 @@ class SimpleTaskAgentTest {
     }
 
     @Test
+    void mallTaskPromptShouldIncludeRecentToolCallContext() {
+        AgentMocks mocks = agentMocks("儿童积木套装 300片售价 149.00 元。");
+        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
+        when(mocks.requestSpec.user(userPromptCaptor.capture())).thenReturn(mocks.requestSpec);
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        toolMemory.rememberSuccess(
+                "app-user",
+                "session-1",
+                "mall_get_product_detail",
+                "{\"skuId\":3020}",
+                "儿童积木套装 300片实时库存 260 件。"
+        );
+        SimpleTaskAgent agent = agent(
+                mocks,
+                null,
+                List.of(providerWithTools("mall_get_product_detail")),
+                new RagTracing(),
+                toolMemory
+        );
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_SELECTION",
+                "SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of("product_name", "儿童积木套装 300片"),
+                false,
+                0.95,
+                "查价格"
+        );
+
+        FastLaneResult result = agent.tryRun(
+                route,
+                "这款还有货吗",
+                "app-user",
+                "session-1",
+                0.7,
+                "",
+                "",
+                "",
+                ""
+        );
+
+        assertTrue(result.handled());
+        String prompt = userPromptCaptor.getValue();
+        assertTrue(prompt.contains("最近工具调用上下文"));
+        assertTrue(prompt.contains("儿童积木套装 300片实时库存 260 件。"));
+        assertTrue(prompt.indexOf("最近工具调用上下文") < prompt.indexOf("用户本轮输入："));
+    }
+
+    @Test
     void shouldWrapSimpleMallToolsWithTracingCallback() {
         AgentMocks mocks = agentMocks("购物车为空。");
         ToolCallbackProvider mallProvider = providerWithTools("mall_view_cart");
@@ -214,7 +309,7 @@ class SimpleTaskAgentTest {
                 "app-user",
                 "session-1"
         );
-        when(builtInTools.searchProductKnowledge("儿童积木"))
+        when(builtInTools.searchProductKnowledge(eq("儿童积木"), any(ToolContext.class)))
                 .thenReturn("儿童积木适合 3 岁以上儿童，主打益智启蒙。");
 
         String result = tools.searchProductKnowledge("儿童积木");
@@ -228,6 +323,29 @@ class SimpleTaskAgentTest {
     }
 
     @Test
+    void knowledgeToolShouldPassAppUserAndSessionInToolContext() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        SimpleTaskAgent.KnowledgeFastLaneTools tools = new SimpleTaskAgent.KnowledgeFastLaneTools(
+                builtInTools,
+                toolMemory,
+                "app-user",
+                "session-1"
+        );
+        when(builtInTools.searchProductKnowledge(eq("儿童积木"), any(ToolContext.class)))
+                .thenReturn("儿童积木适合 3 岁以上儿童。");
+
+        String result = tools.searchProductKnowledge("儿童积木");
+
+        assertEquals("儿童积木适合 3 岁以上儿童。", result);
+        ArgumentCaptor<ToolContext> contextCaptor = ArgumentCaptor.forClass(ToolContext.class);
+        verify(builtInTools).searchProductKnowledge(eq("儿童积木"), contextCaptor.capture());
+        Map<String, Object> context = contextCaptor.getValue().getContext();
+        assertEquals("app-user", context.get("userId"));
+        assertEquals("session-1", context.get("sessionId"));
+    }
+
+    @Test
     void knowledgeToolShouldRecordErrorWhenRagThrowsWithoutRawExceptionMessage() {
         ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
         BuiltInTools builtInTools = mock(BuiltInTools.class);
@@ -237,7 +355,7 @@ class SimpleTaskAgentTest {
                 "app-user",
                 "session-1"
         );
-        when(builtInTools.searchProductKnowledge("儿童积木"))
+        when(builtInTools.searchProductKnowledge(eq("儿童积木"), any(ToolContext.class)))
                 .thenThrow(new RuntimeException("backend exploded token=secret-token query={\"skuId\":3020}"));
 
         SimpleTaskAgent.FastLaneFallbackException thrown = assertThrows(SimpleTaskAgent.FastLaneFallbackException.class,
@@ -263,7 +381,7 @@ class SimpleTaskAgentTest {
         try (CapturedLogs capturedLogs = new CapturedLogs()) {
             ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
             BuiltInTools builtInTools = mock(BuiltInTools.class);
-            when(builtInTools.searchProductKnowledge("儿童积木"))
+            when(builtInTools.searchProductKnowledge(eq("儿童积木"), any(ToolContext.class)))
                     .thenThrow(new RuntimeException("backend exploded token=secret-token input={\"skuId\":3020}"));
             AgentMocks mocks = agentMocks("不会返回");
             when(mocks.requestSpec.tools(any())).thenAnswer(invocation -> {
@@ -320,7 +438,7 @@ class SimpleTaskAgentTest {
                 "app-user",
                 "session-1"
         );
-        when(builtInTools.searchProductKnowledge("未知商品"))
+        when(builtInTools.searchProductKnowledge(eq("未知商品"), any(ToolContext.class)))
                 .thenReturn("商品知识库中没有检索到相关内容。");
 
         assertThrows(SimpleTaskAgent.FastLaneFallbackException.class,

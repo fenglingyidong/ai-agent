@@ -1,5 +1,6 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.observability.RagTracing;
 import io.opentelemetry.api.trace.Span;
 import org.slf4j.Logger;
@@ -21,15 +22,25 @@ final class LoggingToolCallback implements ToolCallback {
     private final String userId;
     private final String sessionId;
     private final RagTracing tracing;
+    private final ConversationToolCallMemoryService toolCallMemoryService;
 
     LoggingToolCallback(ToolCallback delegate,
                         String userId,
                         String sessionId,
                         RagTracing tracing) {
+        this(delegate, userId, sessionId, tracing, null);
+    }
+
+    LoggingToolCallback(ToolCallback delegate,
+                        String userId,
+                        String sessionId,
+                        RagTracing tracing,
+                        ConversationToolCallMemoryService toolCallMemoryService) {
         this.delegate = delegate;
         this.userId = userId;
         this.sessionId = sessionId;
         this.tracing = tracing == null ? new RagTracing() : tracing;
+        this.toolCallMemoryService = toolCallMemoryService;
     }
 
     LoggingToolCallback(ToolCallback delegate,
@@ -65,11 +76,13 @@ final class LoggingToolCallback implements ToolCallback {
                 tracing.captureToolPayload(span, "tool.output", delegateResult);
                 tracing.setAttribute(span, "tool.status", "ok");
                 logToolOutput(delegateResult, userId, sessionId);
+                rememberToolSuccess(userId, sessionId, input, delegateResult);
                 return delegateResult;
             }
             catch (RuntimeException ex) {
                 writeToolErrorAttributes(span, ex);
                 logToolError(ex, userId, sessionId);
+                rememberToolError(userId, sessionId, input, ex);
                 toolError[0] = ex;
                 return null;
             }
@@ -99,11 +112,13 @@ final class LoggingToolCallback implements ToolCallback {
                 tracing.captureToolPayload(span, "tool.output", delegateResult);
                 tracing.setAttribute(span, "tool.status", "ok");
                 logToolOutput(delegateResult, resolvedUserId, resolvedSessionId);
+                rememberToolSuccess(resolvedUserId, resolvedSessionId, input, delegateResult);
                 return delegateResult;
             }
             catch (RuntimeException ex) {
                 writeToolErrorAttributes(span, ex);
                 logToolError(ex, resolvedUserId, resolvedSessionId);
+                rememberToolError(resolvedUserId, resolvedSessionId, input, ex);
                 toolError[0] = ex;
                 return null;
             }
@@ -112,6 +127,34 @@ final class LoggingToolCallback implements ToolCallback {
             throw toolError[0];
         }
         return result;
+    }
+
+    private void rememberToolSuccess(String currentUserId,
+                                     String currentSessionId,
+                                     String input,
+                                     String output) {
+        if (toolCallMemoryService == null) {
+            return;
+        }
+        try {
+            toolCallMemoryService.rememberSuccess(currentUserId, currentSessionId, toolName(), input, output);
+        } catch (RuntimeException ignored) {
+            // 工具窗口是旁路上下文，不能改变原工具调用返回值或异常行为。
+        }
+    }
+
+    private void rememberToolError(String currentUserId,
+                                   String currentSessionId,
+                                   String input,
+                                   RuntimeException ex) {
+        if (toolCallMemoryService == null) {
+            return;
+        }
+        try {
+            toolCallMemoryService.rememberError(currentUserId, currentSessionId, toolName(), input, ex);
+        } catch (RuntimeException ignored) {
+            // 工具窗口是旁路上下文，不能改变原工具调用返回值或异常行为。
+        }
     }
 
     private void writeToolStartAttributes(Span span, String input, String currentUserId, String currentSessionId) {

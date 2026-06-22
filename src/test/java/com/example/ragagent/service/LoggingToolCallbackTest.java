@@ -4,6 +4,8 @@ import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
+import com.example.ragagent.memory.ConversationToolCallRecord;
 import com.example.ragagent.observability.RagTracing;
 import io.opentelemetry.api.trace.Span;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -45,6 +48,96 @@ class LoggingToolCallbackTest {
 
         assertEquals("敏感输出", result);
         verify(delegate).call("敏感输入");
+    }
+
+    @Test
+    void callShouldRecordSuccessfulToolCallInToolMemoryUsingConstructorIds() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        ToolCallback delegate = delegateReturning("{\"skuId\":3020}", "{\"name\":\"键盘\"}");
+        LoggingToolCallback callback = new LoggingToolCallback(
+                delegate, "ctor-user", "ctor-session", new RagTracing(), toolMemory);
+
+        String result = callback.call("{\"skuId\":3020}");
+
+        assertEquals("{\"name\":\"键盘\"}", result);
+        ConversationToolCallRecord record = toolMemory.records("ctor-user", "ctor-session").get(0);
+        assertEquals("mall_get_product_detail", record.toolName());
+        assertEquals("{\"skuId\":3020}", record.input());
+        assertEquals("{\"name\":\"键盘\"}", record.output());
+        assertEquals(ConversationToolCallRecord.Status.OK, record.status());
+    }
+
+    @Test
+    void callWithToolContextShouldRecordSuccessfulToolCallUsingContextUserAndSession() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        ToolCallback delegate = delegateReturning("{\"skuId\":3020}", "{\"name\":\"键盘\"}");
+        LoggingToolCallback callback = new LoggingToolCallback(
+                delegate, "ctor-user", "ctor-session", new RagTracing(), toolMemory);
+
+        String result = callback.call("{\"skuId\":3020}", new ToolContext(Map.of(
+                "userId", "context-user",
+                "sessionId", "context-session"
+        )));
+
+        assertEquals("{\"name\":\"键盘\"}", result);
+        assertTrue(toolMemory.records("ctor-user", "ctor-session").isEmpty());
+        ConversationToolCallRecord record = toolMemory.records("context-user", "context-session").get(0);
+        assertEquals("mall_get_product_detail", record.toolName());
+        assertEquals("{\"skuId\":3020}", record.input());
+        assertEquals("{\"name\":\"键盘\"}", record.output());
+        assertEquals(ConversationToolCallRecord.Status.OK, record.status());
+    }
+
+    @Test
+    void callWithToolContextShouldFallbackToMallUsernameWhenUserIdIsMissing() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        ToolCallback delegate = delegateReturning("{\"skuId\":3020}", "{\"name\":\"键盘\"}");
+        LoggingToolCallback callback = new LoggingToolCallback(
+                delegate, "ctor-user", "ctor-session", new RagTracing(), toolMemory);
+
+        callback.call("{\"skuId\":3020}", new ToolContext(Map.of(
+                "mallUsername", "mall-user",
+                "sessionId", "context-session"
+        )));
+
+        assertTrue(toolMemory.records("ctor-user", "context-session").isEmpty());
+        ConversationToolCallRecord record = toolMemory.records("mall-user", "context-session").get(0);
+        assertEquals("mall_get_product_detail", record.toolName());
+        assertEquals("{\"skuId\":3020}", record.input());
+        assertEquals("{\"name\":\"键盘\"}", record.output());
+        assertEquals(ConversationToolCallRecord.Status.OK, record.status());
+    }
+
+    @Test
+    void callShouldRethrowSameRuntimeExceptionAndRecordSafeErrorInToolMemory() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        RuntimeException exception = new RuntimeException("raw exception message should stay out of memory");
+        ToolCallback delegate = delegateThrowing("{\"skuId\":3020}", exception);
+        LoggingToolCallback callback = new LoggingToolCallback(
+                delegate, "ctor-user", "ctor-session", new RagTracing(), toolMemory);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class, () -> callback.call("{\"skuId\":3020}"));
+
+        assertSame(exception, thrown);
+        ConversationToolCallRecord record = toolMemory.records("ctor-user", "ctor-session").get(0);
+        assertEquals("mall_get_product_detail", record.toolName());
+        assertEquals("{\"skuId\":3020}", record.input());
+        assertEquals(ConversationToolCallRecord.Status.ERROR, record.status());
+        assertEquals("RuntimeException", record.errorType());
+        assertFalse(record.output().contains("raw exception message"));
+        assertFalse(toolMemory.recentToolCallContext("ctor-user", "ctor-session")
+                .contains("raw exception message"));
+    }
+
+    @Test
+    void oldConstructorShouldKeepReturningDelegateResultWithoutToolMemory() {
+        ToolCallback delegate = delegateReturning("{\"skuId\":3020}", "{\"name\":\"键盘\"}");
+        LoggingToolCallback callback = new LoggingToolCallback(delegate, "ctor-user", "ctor-session", new RagTracing());
+
+        String result = callback.call("{\"skuId\":3020}");
+
+        assertEquals("{\"name\":\"键盘\"}", result);
+        verify(delegate).call("{\"skuId\":3020}");
     }
 
     @Test
@@ -162,21 +255,30 @@ class LoggingToolCallbackTest {
     }
 
     private ToolCallback delegateReturning(String output) {
+        return delegateReturning("{\"skuId\":3020,\"token\":\"secret-token\"}", output);
+    }
+
+    private ToolCallback delegateReturning(String input, String output) {
         ToolCallback delegate = mock(ToolCallback.class);
         ToolDefinition definition = mock(ToolDefinition.class);
         when(definition.name()).thenReturn("mall_get_product_detail");
         when(delegate.getToolDefinition()).thenReturn(definition);
-        when(delegate.call("{\"skuId\":3020,\"token\":\"secret-token\"}")).thenReturn(output);
-        when(delegate.call(eq("{\"skuId\":3020,\"token\":\"secret-token\"}"), any(ToolContext.class))).thenReturn(output);
+        when(delegate.call(input)).thenReturn(output);
+        when(delegate.call(eq(input), any(ToolContext.class))).thenReturn(output);
         return delegate;
     }
 
     private ToolCallback delegateThrowing(RuntimeException exception) {
+        return delegateThrowing("{\"skuId\":3020,\"token\":\"secret-token\"}", exception);
+    }
+
+    private ToolCallback delegateThrowing(String input, RuntimeException exception) {
         ToolCallback delegate = mock(ToolCallback.class);
         ToolDefinition definition = mock(ToolDefinition.class);
         when(definition.name()).thenReturn("mall_get_product_detail");
         when(delegate.getToolDefinition()).thenReturn(definition);
-        when(delegate.call(eq("{\"skuId\":3020,\"token\":\"secret-token\"}"), any(ToolContext.class))).thenThrow(exception);
+        when(delegate.call(input)).thenThrow(exception);
+        when(delegate.call(eq(input), any(ToolContext.class))).thenThrow(exception);
         return delegate;
     }
 

@@ -138,8 +138,10 @@ public class BuiltInTools {
                 builder.append("[商城实时详情 ").append(index + 1).append("]");
                 builder.append(System.lineSeparator()).append("SKU: ").append(skuId);
                 String input = "";
+                boolean mallDetailCallAttempted = false;
                 try {
                     input = mallDetailArguments(skuId).toString();
+                    mallDetailCallAttempted = true;
                     String detail = mallDetailCallback.call(input, toolContext);
                     rememberMallDetailSuccess(toolContext, input, detail);
                     builder.append(System.lineSeparator()).append("查询状态: 成功");
@@ -147,7 +149,9 @@ public class BuiltInTools {
                     successCount++;
                 }
                 catch (RuntimeException ex) {
-                    rememberMallDetailError(toolContext, input, ex);
+                    if (mallDetailCallAttempted) {
+                        rememberMallDetailError(toolContext, input, ex);
+                    }
                     builder.append(System.lineSeparator()).append("查询状态: 失败");
                     builder.append(System.lineSeparator()).append("说明: 保留上方商品知识库结果；商城实时详情暂不可用。");
                     builder.append(System.lineSeparator()).append("错误类型: ").append(ex.getClass().getSimpleName());

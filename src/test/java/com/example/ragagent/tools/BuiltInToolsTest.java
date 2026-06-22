@@ -180,6 +180,35 @@ class BuiltInToolsTest {
     }
 
     @Test
+    void searchProductKnowledgeShouldNotRecordMallRealtimeDetailWhenArgumentsFailBeforeToolCall() {
+        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
+        ToolCallback mallDetailCallback = mallDetailCallback();
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        BuiltInTools tools = new BuiltInTools(
+                documentRetriever,
+                List.of(providerWith(mallDetailCallback)),
+                new ObjectMapper(),
+                toolMemory
+        );
+        Document document = Document.builder()
+                .text("测试商品，SKU 来自异常格式。")
+                .metadata(Map.of("title", "异常 SKU 商品", "skuId", "SKU-ABC"))
+                .build();
+        when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
+
+        String result = tools.searchProductKnowledge("异常 SKU 商品", new ToolContext(Map.of(
+                "userId", "alice",
+                "sessionId", "session-1"
+        )));
+
+        assertTrue(result.contains("查询状态: 失败"));
+        assertTrue(result.contains("说明: 保留上方商品知识库结果；商城实时详情暂不可用。"));
+        assertTrue(result.contains("错误类型: NumberFormatException"));
+        assertTrue(toolMemory.records("alice", "session-1").isEmpty());
+        verify(mallDetailCallback, never()).call(anyString(), any(ToolContext.class));
+    }
+
+    @Test
     void searchProductKnowledgeShouldNotCallMallWhenRetrievedDocumentHasNoSku() {
         DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
         ToolCallback mallDetailCallback = mallDetailCallback();

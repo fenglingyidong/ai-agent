@@ -3,6 +3,7 @@ package com.example.ragagent.service;
 import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.conversation.ConversationTurnRecord;
 import com.example.ragagent.memory.ConversationMemoryService;
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.prompt.PromptTemplateStore;
@@ -47,6 +48,7 @@ public class ReActAgent {
     private static final String TOOL_CONTEXT_SESSION_ID = "sessionId";
 
     private final ConversationMemoryService conversationMemoryService;
+    private final ConversationToolCallMemoryService toolCallMemoryService;
     private final ConversationLogService conversationLogService;
     private final PromptSecurityFilter promptSecurityFilter;
     private final ChatModelRegistry chatModelRegistry;
@@ -62,6 +64,7 @@ public class ReActAgent {
                       LongTermMemoryAdvisor longTermMemoryAdvisor,
                       MessageChatMemoryAdvisor messageChatMemoryAdvisor,
                       ConversationMemoryService conversationMemoryService,
+                      ConversationToolCallMemoryService toolCallMemoryService,
                       PromptSecurityFilter promptSecurityFilter,
                       ChatModelRegistry chatModelRegistry,
                       ShoppingRouteExecutor shoppingRouteExecutor,
@@ -70,6 +73,7 @@ public class ReActAgent {
                       RagTracing tracing,
                       PromptTemplateStore promptTemplateStore) {
         this.conversationMemoryService = conversationMemoryService;
+        this.toolCallMemoryService = toolCallMemoryService;
         this.conversationLogService = conversationLogService;
         this.promptSecurityFilter = promptSecurityFilter;
         this.chatModelRegistry = chatModelRegistry;
@@ -88,7 +92,8 @@ public class ReActAgent {
         this.toolResolver = new ReactToolResolver(
                 builtInTools,
                 externalToolCallbackProviders,
-                this.tracing
+                this.tracing,
+                this.toolCallMemoryService
         );
     }
 
@@ -415,7 +420,7 @@ public class ReActAgent {
                 webSearchEnabled,
                 taskPolicies,
                 activeTools.toolNameSet(),
-                trustedContext
+                coreTrustedContext(userId, sessionId, trustedContext)
         );
         String conversationId = conversationMemoryService.buildConversationId(userId, sessionId);
         Map<String, Object> toolContext = buildToolContext(userId, sessionId, mallToken, mallUsername, mallPassword);
@@ -456,6 +461,17 @@ public class ReActAgent {
                 .prompt(prompt)
                 .context(advisorContext)
                 .build();
+    }
+
+    private String coreTrustedContext(String userId, String sessionId, String trustedContext) {
+        String toolContext = conversationMemoryService.recentToolCallContext(userId, sessionId);
+        if (!StringUtils.hasText(trustedContext)) {
+            return StringUtils.hasText(toolContext) ? toolContext.trim() : "";
+        }
+        if (!StringUtils.hasText(toolContext)) {
+            return trustedContext.trim();
+        }
+        return trustedContext.trim() + System.lineSeparator() + System.lineSeparator() + toolContext.trim();
     }
 
     private OpenAiChatOptions buildModelOptions(String modelId,

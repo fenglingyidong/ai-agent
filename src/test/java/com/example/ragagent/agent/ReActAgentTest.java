@@ -2,6 +2,7 @@ package com.example.ragagent.agent;
 
 import com.example.ragagent.conversation.ConversationLogService;
 import com.example.ragagent.memory.ConversationMemoryService;
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.memory.LongTermMemoryAdvisor;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.prompt.PromptTemplateStore;
@@ -46,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -81,6 +83,67 @@ class ReActAgentTest {
     }
 
     @Test
+    void runStreamShouldIncludeRecentToolCallContextInCoreSystemPrompt() {
+        RecordingChatModel chatModel = RecordingChatModel.responding("好的");
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        MemoryTestSupport memory = memorySupport();
+        String toolContext = """
+                最近工具调用上下文：
+                [工具调用 1] searchProductKnowledge
+                状态：OK
+                输入：机械键盘
+                结果：商品事实：SKU 3020 是热插拔机械键盘。
+                """.trim();
+        lenient().when(memory.conversationMemoryService().recentToolCallContext("user-1", "session-1"))
+                .thenReturn(toolContext);
+
+        ReActAgent agent = newAgent(chatModel, builtInTools, memory);
+
+        assertEquals("好的", collect(agent.runStream("user-1", "session-1", null, "继续推荐", false,
+                List.of(), "", "", "")));
+
+        String systemPrompt = chatModel.lastPrompt().getSystemMessage().getText();
+        assertTrue(systemPrompt.contains("最近工具调用上下文"));
+        assertTrue(systemPrompt.contains("商品事实：SKU 3020 是热插拔机械键盘。"));
+        verify(memory.conversationMemoryService()).recentToolCallContext("user-1", "session-1");
+    }
+
+    @Test
+    void runStreamShouldWireToolCallbacksToToolCallMemory() {
+        RecordingChatModel chatModel = RecordingChatModel.responding("latest answer");
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        MemoryTestSupport memory = memorySupport();
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        ToolCallbackProvider externalProvider = mock(ToolCallbackProvider.class);
+        ToolCallback externalCallback = mock(ToolCallback.class);
+        ToolDefinition externalDefinition = ToolDefinition.builder()
+                .name("webSearch")
+                .description("搜索最新商品信息")
+                .inputSchema("{}")
+                .build();
+        when(externalProvider.getToolCallbacks()).thenReturn(new ToolCallback[]{externalCallback});
+        when(externalCallback.getToolDefinition()).thenReturn(externalDefinition);
+        when(externalCallback.call("查询：机械键盘")).thenReturn("结果：推荐 SKU 3020 机械键盘");
+
+        ReActAgent agent = newAgent(chatModel, builtInTools, memory, List.of(externalProvider), toolMemory);
+
+        assertEquals("latest answer", collect(agent.runStream("user-1", "session-1", null, "today news", true,
+                List.of(), "", "", "")));
+        OpenAiChatOptions options = assertInstanceOf(OpenAiChatOptions.class, chatModel.lastPrompt().getOptions());
+        ToolCallback webSearchCallback = options.getToolCallbacks().stream()
+                .filter(callback -> "webSearch".equals(callback.getToolDefinition().name()))
+                .findFirst()
+                .orElseThrow();
+
+        assertEquals("结果：推荐 SKU 3020 机械键盘", webSearchCallback.call("查询：机械键盘"));
+
+        String context = toolMemory.recentToolCallContext("user-1", "session-1");
+        assertTrue(context.contains("webSearch"));
+        assertTrue(context.contains("查询：机械键盘"));
+        assertTrue(context.contains("结果：推荐 SKU 3020 机械键盘"));
+    }
+
+    @Test
     void runStreamShouldCaptureReactInputAndOutput() {
         RecordingChatModel chatModel = RecordingChatModel.responding("推荐 ", "轻量跑步鞋");
         BuiltInTools builtInTools = mock(BuiltInTools.class);
@@ -93,6 +156,7 @@ class ReActAgentTest {
                 memory.longTermMemoryAdvisor(),
                 memory.messageChatMemoryAdvisor(),
                 memory.conversationMemoryService(),
+                memory.toolCallMemoryService(),
                 new PromptSecurityFilter(),
                 null,
                 null,
@@ -129,6 +193,7 @@ class ReActAgentTest {
                 memory.longTermMemoryAdvisor(),
                 memory.messageChatMemoryAdvisor(),
                 memory.conversationMemoryService(),
+                memory.toolCallMemoryService(),
                 new PromptSecurityFilter(),
                 null,
                 null,
@@ -164,6 +229,7 @@ class ReActAgentTest {
                 memory.longTermMemoryAdvisor(),
                 memory.messageChatMemoryAdvisor(),
                 memory.conversationMemoryService(),
+                memory.toolCallMemoryService(),
                 new PromptSecurityFilter(),
                 null,
                 null,
@@ -198,6 +264,7 @@ class ReActAgentTest {
                 memory.longTermMemoryAdvisor(),
                 memory.messageChatMemoryAdvisor(),
                 memory.conversationMemoryService(),
+                memory.toolCallMemoryService(),
                 new PromptSecurityFilter(),
                 chatModelRegistry,
                 null,
@@ -281,6 +348,7 @@ class ReActAgentTest {
                 longTermMemoryAdvisor,
                 messageChatMemoryAdvisor,
                 conversationMemoryService,
+                new ConversationToolCallMemoryService(),
                 new PromptSecurityFilter(),
                 null,
                 shoppingRouteExecutor,
@@ -309,16 +377,25 @@ class ReActAgentTest {
     }
 
     private ReActAgent newAgent(ChatModel chatModel, BuiltInTools builtInTools, MemoryTestSupport memory) {
+        return newAgent(chatModel, builtInTools, memory, List.of(), null);
+    }
+
+    private ReActAgent newAgent(ChatModel chatModel,
+                                BuiltInTools builtInTools,
+                                MemoryTestSupport memory,
+                                List<ToolCallbackProvider> externalToolCallbackProviders,
+                                ConversationToolCallMemoryService toolCallMemoryService) {
         return new ReActAgent(
                 chatModel,
                 builtInTools,
                 memory.longTermMemoryAdvisor(),
                 memory.messageChatMemoryAdvisor(),
                 memory.conversationMemoryService(),
+                toolCallMemoryService == null ? memory.toolCallMemoryService() : toolCallMemoryService,
                 new PromptSecurityFilter(),
                 null,
                 null,
-                List.of(),
+                externalToolCallbackProviders,
                 mock(ConversationLogService.class),
                 new RagTracing(),
                 new PromptTemplateStore()
@@ -329,9 +406,15 @@ class ReActAgentTest {
         LongTermMemoryAdvisor longTermMemoryAdvisor = mock(LongTermMemoryAdvisor.class);
         MessageChatMemoryAdvisor messageChatMemoryAdvisor = memoryAdvisor();
         ConversationMemoryService conversationMemoryService = mock(ConversationMemoryService.class);
+        ConversationToolCallMemoryService toolCallMemoryService = new ConversationToolCallMemoryService();
         when(conversationMemoryService.buildConversationId(anyString(), anyString()))
                 .thenAnswer(invocation -> invocation.getArgument(0) + "::" + invocation.getArgument(1));
-        return new MemoryTestSupport(longTermMemoryAdvisor, messageChatMemoryAdvisor, conversationMemoryService);
+        return new MemoryTestSupport(
+                longTermMemoryAdvisor,
+                messageChatMemoryAdvisor,
+                conversationMemoryService,
+                toolCallMemoryService
+        );
     }
 
     private MessageChatMemoryAdvisor memoryAdvisor() {
@@ -354,7 +437,8 @@ class ReActAgentTest {
     private record MemoryTestSupport(
             LongTermMemoryAdvisor longTermMemoryAdvisor,
             MessageChatMemoryAdvisor messageChatMemoryAdvisor,
-            ConversationMemoryService conversationMemoryService
+            ConversationMemoryService conversationMemoryService,
+            ConversationToolCallMemoryService toolCallMemoryService
     ) {
     }
 

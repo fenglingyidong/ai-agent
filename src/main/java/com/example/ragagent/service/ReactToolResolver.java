@@ -1,5 +1,6 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
 import org.slf4j.Logger;
@@ -24,15 +25,18 @@ final class ReactToolResolver {
     private final List<ToolCallback> builtInToolCallbacks;
     private final List<ToolCallbackProvider> externalToolCallbackProviders;
     private final RagTracing tracing;
+    private final ConversationToolCallMemoryService toolCallMemoryService;
 
     ReactToolResolver(BuiltInTools builtInTools,
                       List<ToolCallbackProvider> externalToolCallbackProviders,
-                      RagTracing tracing) {
+                      RagTracing tracing,
+                      ConversationToolCallMemoryService toolCallMemoryService) {
         this.builtInToolCallbacks = loadBuiltInToolCallbacks(builtInTools);
         this.externalToolCallbackProviders = externalToolCallbackProviders == null
                 ? List.of()
                 : List.copyOf(externalToolCallbackProviders);
         this.tracing = tracing == null ? new RagTracing() : tracing;
+        this.toolCallMemoryService = toolCallMemoryService;
     }
 
     /**
@@ -184,7 +188,13 @@ final class ReactToolResolver {
             ToolCallback guardedCallback = MallTool.CREATE_ORDER.toolName().equals(toolName)
                     ? new OrderCreationGuardedToolCallback(renderedCallback, orderCreationAllowed)
                     : renderedCallback;
-            activeToolCallbacks.put(toolName, new LoggingToolCallback(guardedCallback, userId, sessionId, tracing));
+            activeToolCallbacks.put(toolName, new LoggingToolCallback(
+                    guardedCallback,
+                    userId,
+                    sessionId,
+                    tracing,
+                    toolCallMemoryService
+            ));
         }
     }
 

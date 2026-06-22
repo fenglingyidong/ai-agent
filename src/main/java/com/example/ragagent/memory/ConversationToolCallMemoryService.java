@@ -1,10 +1,20 @@
 package com.example.ragagent.memory;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.regex.Pattern;
@@ -23,6 +33,14 @@ public class ConversationToolCallMemoryService {
     private static final String FOLDED_OUTPUT = "完整结果已折叠；如需精确事实请重新调用工具。";
     private static final String SENSITIVE_FIELD_NAME =
             "token|authorization|password|mallToken|mallPassword|mallUsername";
+    private static final Set<String> SENSITIVE_JSON_FIELD_NAMES = Set.of(
+            "token",
+            "authorization",
+            "password",
+            "malltoken",
+            "mallpassword",
+            "mallusername"
+    );
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
             "(?i)(\"(?:" + SENSITIVE_FIELD_NAME + ")\"\\s*:\\s*\")([^\"]*)(\")"
     );
@@ -31,6 +49,7 @@ public class ConversationToolCallMemoryService {
                     + SENSITIVE_FIELD_NAME + ")\\s*[:=])|[,;\\r\\n]|$)"
     );
     private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)Bearer\\s+\\S+");
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ConcurrentMap<String, List<ConversationToolCallRecord>> recordsByConversationId =
             new ConcurrentHashMap<>();
@@ -122,13 +141,57 @@ public class ConversationToolCallMemoryService {
         if (!StringUtils.hasText(value)) {
             return "";
         }
-        String sanitized = SENSITIVE_JSON_FIELD.matcher(value.trim()).replaceAll("$1[REDACTED]$3");
+        String trimmed = value.trim();
+        String sanitized = sanitizeJson(trimmed);
+        if (sanitized == null) {
+            sanitized = SENSITIVE_JSON_FIELD.matcher(trimmed).replaceAll("$1[REDACTED]$3");
+        }
         sanitized = SENSITIVE_TEXT_FIELD.matcher(sanitized).replaceAll("$1$2[REDACTED]");
         sanitized = BEARER_TOKEN.matcher(sanitized).replaceAll("Bearer [REDACTED]");
         if (sanitized.length() <= MAX_TEXT_LENGTH) {
             return sanitized;
         }
         return sanitized.substring(0, MAX_TEXT_LENGTH) + System.lineSeparator() + "内容已截断。";
+    }
+
+    private String sanitizeJson(String value) {
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(value);
+            redactSensitiveJsonFields(root);
+            return OBJECT_MAPPER.writeValueAsString(root);
+        } catch (JsonProcessingException ex) {
+            return null;
+        }
+    }
+
+    private void redactSensitiveJsonFields(JsonNode node) {
+        if (node == null) {
+            return;
+        }
+        if (node.isObject()) {
+            ObjectNode objectNode = (ObjectNode) node;
+            Iterator<Map.Entry<String, JsonNode>> fields = objectNode.fields();
+            while (fields.hasNext()) {
+                Map.Entry<String, JsonNode> field = fields.next();
+                if (isSensitiveFieldName(field.getKey())) {
+                    objectNode.set(field.getKey(), TextNode.valueOf("[REDACTED]"));
+                } else {
+                    redactSensitiveJsonFields(field.getValue());
+                }
+            }
+            return;
+        }
+        if (node.isArray()) {
+            ArrayNode arrayNode = (ArrayNode) node;
+            for (JsonNode item : arrayNode) {
+                redactSensitiveJsonFields(item);
+            }
+        }
+    }
+
+    private boolean isSensitiveFieldName(String fieldName) {
+        return fieldName != null
+                && SENSITIVE_JSON_FIELD_NAMES.contains(fieldName.toLowerCase(Locale.ROOT));
     }
 
     private void foldOlderRecords(List<ConversationToolCallRecord> records) {

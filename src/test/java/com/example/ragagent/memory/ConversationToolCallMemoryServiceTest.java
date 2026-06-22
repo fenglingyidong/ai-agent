@@ -53,6 +53,33 @@ class ConversationToolCallMemoryServiceTest {
     }
 
     @Test
+    void recentToolCallContextShouldRedactStructuredJsonSensitiveValues() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+
+        service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                "{\"token\":123,\"password\":true,"
+                        + "\"authorization\":{\"scheme\":\"Basic\",\"value\":\"abc123\"},"
+                        + "\"nested\":{\"mallToken\":\"mall-secret\"},"
+                        + "\"items\":[{\"mallPassword\":\"pass\",\"mallUsername\":\"alice\"}]}",
+                "{\"ok\":true}");
+
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertFalse(context.contains("\"token\":123"));
+        assertFalse(context.contains("\"password\":true"));
+        assertFalse(context.contains("abc123"));
+        assertFalse(context.contains("mall-secret"));
+        assertFalse(context.contains("\"mallPassword\":\"pass\""));
+        assertFalse(context.contains("\"mallUsername\":\"alice\""));
+        assertTrue(context.contains("\"token\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"password\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"authorization\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"mallToken\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"mallPassword\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"mallUsername\":\"[REDACTED]\""));
+    }
+
+    @Test
     void recentToolCallContextShouldRenderErrorWithoutRawExceptionMessage() {
         ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
 

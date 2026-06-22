@@ -132,6 +132,29 @@ class ConversationToolCallMemoryServiceTest {
     }
 
     @Test
+    void recordsAndContextShouldStayBoundedForLongConversations() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+        for (int index = 1; index <= 25; index++) {
+            service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                    "{\"skuId\":" + index + ",\"note\":\"input-" + index + "\"}",
+                    "result-" + index);
+        }
+
+        List<ConversationToolCallRecord> records = service.records("alice", "session-1");
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertEquals(20, records.size());
+        assertTrue(records.get(0).input().contains("更早工具调用已折叠"));
+        assertTrue(records.get(0).output().contains("更早工具调用已折叠"));
+        assertFalse(context.contains("result-1"));
+        assertFalse(context.contains("input-1"));
+        assertTrue(context.contains("result-23"));
+        assertTrue(context.contains("result-24"));
+        assertTrue(context.contains("result-25"));
+        assertFalse(context.contains("[工具调用 21]"));
+    }
+
+    @Test
     void recentToolCallContextShouldRedactNonJsonSensitiveFormats() {
         ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
 
@@ -150,6 +173,53 @@ class ConversationToolCallMemoryServiceTest {
         assertFalse(context.contains("abc123"));
         assertFalse(context.contains("abc+/=:xyz"));
         assertTrue(context.contains("[REDACTED]"));
+    }
+
+    @Test
+    void recentToolCallContextShouldRedactExtendedSensitiveFields() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+
+        service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                "accessToken=access-secret refresh_token: refresh-secret skuId=3020",
+                "{\"authToken\":\"auth-secret\",\"apiKey\":\"key-secret\","
+                        + "\"clientSecret\":\"client-secret\",\"nested\":{\"ACCESS_TOKEN\":\"upper-secret\"},"
+                        + "\"skuId\":3020}");
+
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertFalse(context.contains("access-secret"));
+        assertFalse(context.contains("refresh-secret"));
+        assertFalse(context.contains("auth-secret"));
+        assertFalse(context.contains("key-secret"));
+        assertFalse(context.contains("client-secret"));
+        assertFalse(context.contains("upper-secret"));
+        assertTrue(context.contains("accessToken=[REDACTED]"));
+        assertTrue(context.contains("refresh_token: [REDACTED]"));
+        assertTrue(context.contains("\"authToken\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"apiKey\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"clientSecret\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"ACCESS_TOKEN\":\"[REDACTED]\""));
+        assertTrue(context.contains("skuId=3020"));
+        assertTrue(context.contains("\"skuId\":3020"));
+    }
+
+    @Test
+    void extendedSensitiveRedactionShouldPreserveAdjacentNormalFacts() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+
+        service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                "authToken=auth-secret skuId=3020 product=键盘",
+                "apiKey: key-secret stock=260 clientSecret=client-secret price=199");
+
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertFalse(context.contains("auth-secret"));
+        assertFalse(context.contains("key-secret"));
+        assertFalse(context.contains("client-secret"));
+        assertTrue(context.contains("skuId=3020"));
+        assertTrue(context.contains("product=键盘"));
+        assertTrue(context.contains("stock=260"));
+        assertTrue(context.contains("price=199"));
     }
 
     @Test

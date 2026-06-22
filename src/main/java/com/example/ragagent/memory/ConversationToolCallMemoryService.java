@@ -27,19 +27,32 @@ public class ConversationToolCallMemoryService {
 
     private static final String DEFAULT_USER_ID = "anonymous";
     private static final String DEFAULT_SESSION_ID = "default";
+    private static final int MAX_RECORD_WINDOW_SIZE = 20;
     private static final int FULL_RESULT_WINDOW_SIZE = 3;
     private static final int MAX_TEXT_LENGTH = 4000;
     private static final String FOLDED_INPUT = "完整结果已折叠；如需精确事实请重新调用工具。";
     private static final String FOLDED_OUTPUT = "完整结果已折叠；如需精确事实请重新调用工具。";
+    private static final String FOLDED_HISTORY_TOOL_NAME = "历史工具调用";
     private static final String SENSITIVE_FIELD_NAME =
-            "token|authorization|password|mallToken|mallPassword|mallUsername";
+            "token|authorization|password|mallToken|mallPassword|mallUsername|accessToken|access_token"
+                    + "|refreshToken|refresh_token|authToken|auth_token|apiKey|api_key|clientSecret|client_secret";
     private static final Set<String> SENSITIVE_JSON_FIELD_NAMES = Set.of(
             "token",
             "authorization",
             "password",
             "malltoken",
             "mallpassword",
-            "mallusername"
+            "mallusername",
+            "accesstoken",
+            "access_token",
+            "refreshtoken",
+            "refresh_token",
+            "authtoken",
+            "auth_token",
+            "apikey",
+            "api_key",
+            "clientsecret",
+            "client_secret"
     );
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
             "(?i)(\"(?:" + SENSITIVE_FIELD_NAME + ")\"\\s*:\\s*\")([^\"]*)(\")"
@@ -48,7 +61,8 @@ public class ConversationToolCallMemoryService {
             "(?i)\\b(" + SENSITIVE_FIELD_NAME + ")(\\s*[:=]\\s*)(.*?)(?=(?:\\s+"
                     + "[A-Za-z][A-Za-z0-9_\\-]*\\s*[:=])|[,;\\r\\n]|$)"
     );
-    private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)Bearer\\s+[^\\s,;\"')}\\]]+");
+    private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)Bearer\\s+[A-Za-z0-9._+\\-/:=]+");
+    private static final Pattern FOLDED_HISTORY_COUNT = Pattern.compile("^(\\d+) 条更早工具调用已折叠");
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final ConcurrentMap<String, List<ConversationToolCallRecord>> recordsByConversationId =
@@ -93,6 +107,10 @@ public class ConversationToolCallMemoryService {
             ConversationToolCallRecord record = records.get(index);
             builder.append(System.lineSeparator());
             builder.append("[工具调用 ").append(index + 1).append("] ");
+            if (isFoldedHistoryRecord(record)) {
+                builder.append(record.input());
+                continue;
+            }
             if (index < fullFromIndex) {
                 builder.append("已调用 ").append(record.toolName())
                         .append("，完整结果已折叠；如需精确事实请重新调用工具。");
@@ -133,6 +151,7 @@ public class ConversationToolCallMemoryService {
         );
         synchronized (records) {
             records.add(record);
+            boundRecords(records);
             foldOlderRecords(records);
         }
     }
@@ -205,11 +224,48 @@ public class ConversationToolCallMemoryService {
                 && SENSITIVE_JSON_FIELD_NAMES.contains(fieldName.toLowerCase(Locale.ROOT));
     }
 
+    private void boundRecords(List<ConversationToolCallRecord> records) {
+        if (records.size() <= MAX_RECORD_WINDOW_SIZE) {
+            return;
+        }
+        int removeCount = records.size() - MAX_RECORD_WINDOW_SIZE + 1;
+        int foldedCount = removeCount;
+        if (isFoldedHistoryRecord(records.get(0))) {
+            foldedCount = foldedHistoryCount(records.get(0)) + removeCount - 1;
+        }
+        records.subList(0, removeCount).clear();
+        records.add(0, foldedHistoryRecord(foldedCount));
+    }
+
+    private ConversationToolCallRecord foldedHistoryRecord(int count) {
+        String foldedText = count + " 条更早工具调用已折叠；如需精确事实请重新调用工具。";
+        return new ConversationToolCallRecord(
+                FOLDED_HISTORY_TOOL_NAME,
+                foldedText,
+                foldedText,
+                ConversationToolCallRecord.Status.OK,
+                ""
+        );
+    }
+
+    private boolean isFoldedHistoryRecord(ConversationToolCallRecord record) {
+        return FOLDED_HISTORY_TOOL_NAME.equals(record.toolName());
+    }
+
+    private int foldedHistoryCount(ConversationToolCallRecord record) {
+        java.util.regex.Matcher matcher = FOLDED_HISTORY_COUNT.matcher(record.input());
+        if (!matcher.find()) {
+            return 0;
+        }
+        return Integer.parseInt(matcher.group(1));
+    }
+
     private void foldOlderRecords(List<ConversationToolCallRecord> records) {
         int fullFromIndex = Math.max(0, records.size() - FULL_RESULT_WINDOW_SIZE);
         for (int index = 0; index < fullFromIndex; index++) {
             ConversationToolCallRecord record = records.get(index);
-            if (FOLDED_INPUT.equals(record.input()) && FOLDED_OUTPUT.equals(record.output())) {
+            if (isFoldedHistoryRecord(record)
+                    || (FOLDED_INPUT.equals(record.input()) && FOLDED_OUTPUT.equals(record.output()))) {
                 continue;
             }
             records.set(index, new ConversationToolCallRecord(

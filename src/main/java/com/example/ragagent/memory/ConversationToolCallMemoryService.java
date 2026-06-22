@@ -19,10 +19,18 @@ public class ConversationToolCallMemoryService {
     private static final String DEFAULT_SESSION_ID = "default";
     private static final int FULL_RESULT_WINDOW_SIZE = 3;
     private static final int MAX_TEXT_LENGTH = 4000;
+    private static final String FOLDED_INPUT = "完整结果已折叠；如需精确事实请重新调用工具。";
+    private static final String FOLDED_OUTPUT = "完整结果已折叠；如需精确事实请重新调用工具。";
+    private static final String SENSITIVE_FIELD_NAME =
+            "token|authorization|password|mallToken|mallPassword|mallUsername";
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
-            "(?i)(\"(?:token|authorization|password|mallToken|mallPassword|mallUsername)\"\\s*:\\s*\")([^\"]*)(\")"
+            "(?i)(\"(?:" + SENSITIVE_FIELD_NAME + ")\"\\s*:\\s*\")([^\"]*)(\")"
     );
-    private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)Bearer\\s+[A-Za-z0-9._\\-]+");
+    private static final Pattern SENSITIVE_TEXT_FIELD = Pattern.compile(
+            "(?i)\\b(" + SENSITIVE_FIELD_NAME + ")(\\s*[:=]\\s*)(.*?)(?=(?:\\s+\\b(?:"
+                    + SENSITIVE_FIELD_NAME + ")\\s*[:=])|[,;\\r\\n]|$)"
+    );
+    private static final Pattern BEARER_TOKEN = Pattern.compile("(?i)Bearer\\s+\\S+");
 
     private final ConcurrentMap<String, List<ConversationToolCallRecord>> recordsByConversationId =
             new ConcurrentHashMap<>();
@@ -88,10 +96,13 @@ public class ConversationToolCallMemoryService {
 
     public List<ConversationToolCallRecord> records(String userId, String sessionId) {
         List<ConversationToolCallRecord> records = recordsByConversationId.get(buildConversationId(userId, sessionId));
-        if (records == null || records.isEmpty()) {
+        if (records == null) {
             return List.of();
         }
         synchronized (records) {
+            if (records.isEmpty()) {
+                return List.of();
+            }
             return List.copyOf(records);
         }
     }
@@ -103,6 +114,7 @@ public class ConversationToolCallMemoryService {
         );
         synchronized (records) {
             records.add(record);
+            foldOlderRecords(records);
         }
     }
 
@@ -111,11 +123,29 @@ public class ConversationToolCallMemoryService {
             return "";
         }
         String sanitized = SENSITIVE_JSON_FIELD.matcher(value.trim()).replaceAll("$1[REDACTED]$3");
+        sanitized = SENSITIVE_TEXT_FIELD.matcher(sanitized).replaceAll("$1$2[REDACTED]");
         sanitized = BEARER_TOKEN.matcher(sanitized).replaceAll("Bearer [REDACTED]");
         if (sanitized.length() <= MAX_TEXT_LENGTH) {
             return sanitized;
         }
         return sanitized.substring(0, MAX_TEXT_LENGTH) + System.lineSeparator() + "内容已截断。";
+    }
+
+    private void foldOlderRecords(List<ConversationToolCallRecord> records) {
+        int fullFromIndex = Math.max(0, records.size() - FULL_RESULT_WINDOW_SIZE);
+        for (int index = 0; index < fullFromIndex; index++) {
+            ConversationToolCallRecord record = records.get(index);
+            if (FOLDED_INPUT.equals(record.input()) && FOLDED_OUTPUT.equals(record.output())) {
+                continue;
+            }
+            records.set(index, new ConversationToolCallRecord(
+                    record.toolName(),
+                    FOLDED_INPUT,
+                    FOLDED_OUTPUT,
+                    record.status(),
+                    record.errorType()
+            ));
+        }
     }
 
     private String buildConversationId(String userId, String sessionId) {

@@ -2,7 +2,11 @@ package com.example.ragagent.memory;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ConversationToolCallMemoryServiceTest {
@@ -63,5 +67,74 @@ class ConversationToolCallMemoryServiceTest {
         assertTrue(context.contains("结果：工具调用失败，完整错误已省略。"));
         assertFalse(context.contains("failed token="));
         assertFalse(context.contains("secret-token"));
+    }
+
+    @Test
+    void recordsShouldReturnSnapshotWithOlderCallsFolded() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+        for (int index = 1; index <= 5; index++) {
+            service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                    "{\"skuId\":" + index + ",\"note\":\"input-" + index + "\"}",
+                    "result-" + index);
+        }
+
+        List<ConversationToolCallRecord> records = service.records("alice", "session-1");
+
+        assertEquals(5, records.size());
+        assertEquals("mall_get_product_detail", records.get(0).toolName());
+        assertEquals(ConversationToolCallRecord.Status.OK, records.get(0).status());
+        assertEquals("", records.get(0).errorType());
+        assertTrue(records.get(0).input().contains("完整结果已折叠"));
+        assertTrue(records.get(0).output().contains("完整结果已折叠"));
+        assertFalse(records.get(0).input().contains("input-1"));
+        assertFalse(records.get(0).input().contains("\"skuId\":1"));
+        assertFalse(records.get(0).output().contains("result-1"));
+        assertTrue(records.get(1).input().contains("完整结果已折叠"));
+        assertTrue(records.get(1).output().contains("完整结果已折叠"));
+        assertFalse(records.get(1).input().contains("input-2"));
+        assertFalse(records.get(1).output().contains("result-2"));
+        assertTrue(records.get(2).input().contains("\"skuId\":3"));
+        assertTrue(records.get(2).output().contains("result-3"));
+        assertTrue(records.get(3).input().contains("\"skuId\":4"));
+        assertTrue(records.get(3).output().contains("result-4"));
+        assertTrue(records.get(4).input().contains("\"skuId\":5"));
+        assertTrue(records.get(4).output().contains("result-5"));
+
+        assertThrows(UnsupportedOperationException.class, () -> records.add(records.get(0)));
+        assertEquals(5, service.records("alice", "session-1").size());
+    }
+
+    @Test
+    void recentToolCallContextShouldRedactNonJsonSensitiveFormats() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+
+        service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                "token=secret-token password: demo123 mallToken=mall-secret "
+                        + "mallPassword: pass mallUsername=alice authorization=Basic abc123",
+                "Authorization: Bearer abc+/=:xyz");
+
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertFalse(context.contains("secret-token"));
+        assertFalse(context.contains("demo123"));
+        assertFalse(context.contains("mall-secret"));
+        assertFalse(context.contains("mallPassword: pass"));
+        assertFalse(context.contains("alice"));
+        assertFalse(context.contains("abc123"));
+        assertFalse(context.contains("abc+/=:xyz"));
+        assertTrue(context.contains("[REDACTED]"));
+    }
+
+    @Test
+    void recentToolCallContextShouldTruncateLongText() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+        String longInput = "a".repeat(5000);
+
+        service.rememberSuccess("alice", "session-1", "mall_get_product_detail", longInput, "ok");
+
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertTrue(context.contains("内容已截断。"));
+        assertTrue(context.length() < 4300);
     }
 }

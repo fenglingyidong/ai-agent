@@ -98,7 +98,7 @@ class ShoppingRouteExecutorTest {
                 "查价格"
         );
         when(intentRouter.route("儿童积木套装 300片要多少钱", List.of(), "")).thenReturn(route);
-        when(simpleTaskAgent.tryRun(route, "儿童积木套装 300片要多少钱", "session-1", 0.7, "", "", "", ""))
+        when(simpleTaskAgent.tryRun(route, "儿童积木套装 300片要多少钱", "user-1", "session-1", 0.7, "", "", "", ""))
                 .thenReturn(FastLaneResult.handled(Flux.just("儿童积木套装 300片的价格是 149.00 元。")));
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, simpleTaskAgent);
 
@@ -114,7 +114,7 @@ class ShoppingRouteExecutorTest {
 
         assertNotNull(request.shortCircuitStream());
         assertEquals("儿童积木套装 300片的价格是 149.00 元。", collect(request.shortCircuitStream()));
-        verify(simpleTaskAgent).tryRun(route, "儿童积木套装 300片要多少钱", "session-1", 0.7, "", "", "", "");
+        verify(simpleTaskAgent).tryRun(route, "儿童积木套装 300片要多少钱", "user-1", "session-1", 0.7, "", "", "", "");
     }
 
     @Test
@@ -131,7 +131,7 @@ class ShoppingRouteExecutorTest {
                 "知识库简单查询"
         );
         when(intentRouter.route("儿童积木套装有什么特点", List.of(), "")).thenReturn(route);
-        when(simpleTaskAgent.tryRun(route, "儿童积木套装有什么特点", "session-1", 0.7, "", "", "", ""))
+        when(simpleTaskAgent.tryRun(route, "儿童积木套装有什么特点", "user-1", "session-1", 0.7, "", "", "", ""))
                 .thenReturn(FastLaneResult.handled("根据知识库，我查到：儿童积木适合启蒙。"));
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, simpleTaskAgent);
 
@@ -364,7 +364,7 @@ class ShoppingRouteExecutorTest {
                 "简单商品事实查询"
         );
         when(intentRouter.route(message, List.of(), "")).thenReturn(route);
-        when(simpleTaskAgent.tryRun(route, message, "session-1", 0.7, "", "", "", ""))
+        when(simpleTaskAgent.tryRun(route, message, "user-1", "session-1", 0.7, "", "", "", ""))
                 .thenReturn(FastLaneResult.handled("有 87 键机械键盘。"));
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
                 intentRouter,
@@ -519,7 +519,7 @@ class ShoppingRouteExecutorTest {
                 "LOW"
         );
         when(intentRouter.route(message, List.of(), "")).thenReturn(route);
-        when(simpleTaskAgent.tryRun(route, message, "session-1", 0.7, "", "Bearer token", "", ""))
+        when(simpleTaskAgent.tryRun(route, message, "user-1", "session-1", 0.7, "", "Bearer token", "", ""))
                 .thenReturn(FastLaneResult.notHandled());
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(intentRouter, simpleTaskAgent, policyRegistry);
 
@@ -541,7 +541,7 @@ class ShoppingRouteExecutorTest {
         assertFalse(request.userMessage().contains("Planner 选择策略"));
         assertEquals(List.of("PRODUCT_SELECTION"),
                 request.taskPolicies().stream().map(ShoppingTaskPolicy::id).toList());
-        verify(simpleTaskAgent).tryRun(route, message, "session-1", 0.7, "", "Bearer token", "", "");
+        verify(simpleTaskAgent).tryRun(route, message, "user-1", "session-1", 0.7, "", "Bearer token", "", "");
     }
 
     @Test
@@ -774,6 +774,7 @@ class ShoppingRouteExecutorTest {
         when(simpleTaskAgent.tryRun(
                 eq(route),
                 eq("再推荐几双"),
+                eq("user-1"),
                 eq("session-1"),
                 eq(0.7),
                 preferenceContextCaptor.capture(),

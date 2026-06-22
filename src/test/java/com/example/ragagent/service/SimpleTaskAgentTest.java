@@ -5,6 +5,8 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
+import com.example.ragagent.memory.ConversationToolCallRecord;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
 import io.opentelemetry.api.trace.Span;
@@ -12,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.support.ToolCallbacks;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.ToolCallbackProvider;
@@ -202,14 +205,126 @@ class SimpleTaskAgentTest {
     }
 
     @Test
+    void knowledgeToolShouldRecordSuccessfulSearchInToolMemory() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        SimpleTaskAgent.KnowledgeFastLaneTools tools = new SimpleTaskAgent.KnowledgeFastLaneTools(
+                builtInTools,
+                toolMemory,
+                "app-user",
+                "session-1"
+        );
+        when(builtInTools.searchProductKnowledge("儿童积木"))
+                .thenReturn("儿童积木适合 3 岁以上儿童，主打益智启蒙。");
+
+        String result = tools.searchProductKnowledge("儿童积木");
+
+        assertEquals("儿童积木适合 3 岁以上儿童，主打益智启蒙。", result);
+        ConversationToolCallRecord record = toolMemory.records("app-user", "session-1").get(0);
+        assertEquals("searchProductKnowledge", record.toolName());
+        assertEquals("儿童积木", record.input());
+        assertEquals("儿童积木适合 3 岁以上儿童，主打益智启蒙。", record.output());
+        assertEquals(ConversationToolCallRecord.Status.OK, record.status());
+    }
+
+    @Test
+    void knowledgeToolShouldRecordErrorWhenRagThrowsWithoutRawExceptionMessage() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        BuiltInTools builtInTools = mock(BuiltInTools.class);
+        SimpleTaskAgent.KnowledgeFastLaneTools tools = new SimpleTaskAgent.KnowledgeFastLaneTools(
+                builtInTools,
+                toolMemory,
+                "app-user",
+                "session-1"
+        );
+        when(builtInTools.searchProductKnowledge("儿童积木"))
+                .thenThrow(new RuntimeException("backend exploded token=secret-token query={\"skuId\":3020}"));
+
+        assertThrows(SimpleTaskAgent.FastLaneFallbackException.class,
+                () -> tools.searchProductKnowledge("儿童积木"));
+
+        ConversationToolCallRecord record = toolMemory.records("app-user", "session-1").get(0);
+        assertEquals("searchProductKnowledge", record.toolName());
+        assertEquals("儿童积木", record.input());
+        assertEquals(ConversationToolCallRecord.Status.ERROR, record.status());
+        assertEquals("FastLaneFallbackException", record.errorType());
+        assertFalse(record.output().contains("backend exploded"));
+        String context = toolMemory.recentToolCallContext("app-user", "session-1");
+        assertFalse(context.contains("backend exploded"));
+        assertFalse(context.contains("secret-token"));
+        assertFalse(context.contains("\"skuId\":3020"));
+    }
+
+    @Test
     void shouldFallbackToCoreWhenKnowledgeToolReturnsEmpty() {
         BuiltInTools builtInTools = mock(BuiltInTools.class);
-        SimpleTaskAgent.KnowledgeFastLaneTools tools = new SimpleTaskAgent.KnowledgeFastLaneTools(builtInTools);
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        SimpleTaskAgent.KnowledgeFastLaneTools tools = new SimpleTaskAgent.KnowledgeFastLaneTools(
+                builtInTools,
+                toolMemory,
+                "app-user",
+                "session-1"
+        );
         when(builtInTools.searchProductKnowledge("未知商品"))
                 .thenReturn("商品知识库中没有检索到相关内容。");
 
         assertThrows(SimpleTaskAgent.FastLaneFallbackException.class,
                 () -> tools.searchProductKnowledge("未知商品"));
+        ConversationToolCallRecord record = toolMemory.records("app-user", "session-1").get(0);
+        assertEquals("searchProductKnowledge", record.toolName());
+        assertEquals("未知商品", record.input());
+        assertEquals(ConversationToolCallRecord.Status.ERROR, record.status());
+        assertEquals("FastLaneFallbackException", record.errorType());
+        assertFalse(record.output().contains("未知商品"));
+    }
+
+    @Test
+    void simpleMallToolCallbackShouldRecordToolMemoryWithAppUserAndKeepMallAuthContext() {
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        AgentMocks mocks = agentMocks("儿童积木套装 300片售价 149.00 元。");
+        ToolCallbackProvider mallProvider = providerWithTools("mall_get_product_detail");
+        SimpleTaskAgent agent = agent(mocks, null, List.of(mallProvider), new RagTracing(), toolMemory);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "PRODUCT_SELECTION",
+                "SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of("product_name", "儿童积木套装 300片"),
+                false,
+                0.95,
+                "查商品详情"
+        );
+
+        FastLaneResult result = agent.tryRun(
+                route,
+                "儿童积木套装 300片详情",
+                "app-user",
+                "session-1",
+                0.7,
+                "",
+                "Bearer mall-token",
+                "mall-user",
+                "mall-password"
+        );
+
+        assertTrue(result.handled());
+        ArgumentCaptor<Map<String, Object>> contextCaptor = ArgumentCaptor.forClass(Map.class);
+        verify(mocks.requestSpec).toolContext(contextCaptor.capture());
+        Map<String, Object> toolContext = contextCaptor.getValue();
+        assertEquals("app-user", toolContext.get("userId"));
+        assertEquals("session-1", toolContext.get("sessionId"));
+        assertEquals("Bearer mall-token", toolContext.get("mallToken"));
+        assertEquals("mall-user", toolContext.get("mallUsername"));
+        assertEquals("mall-password", toolContext.get("mallPassword"));
+
+        capturedToolCallbacks(mocks).get(0)
+                .call("{\"skuId\":3020}", new ToolContext(toolContext));
+
+        assertTrue(toolMemory.records("mall-user", "session-1").isEmpty());
+        ConversationToolCallRecord record = toolMemory.records("app-user", "session-1").get(0);
+        assertEquals("mall_get_product_detail", record.toolName());
+        assertEquals("{\"skuId\":3020}", record.input());
+        assertEquals(ConversationToolCallRecord.Status.OK, record.status());
+        assertTrue(record.output().contains("工具结果事实"));
     }
 
     @Test
@@ -389,6 +504,16 @@ class SimpleTaskAgentTest {
                                   List<ToolCallbackProvider> providers,
                                   RagTracing tracing) {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.builder, builtInTools, providers, tracing);
+        agent.init();
+        return agent;
+    }
+
+    private SimpleTaskAgent agent(AgentMocks mocks,
+                                  BuiltInTools builtInTools,
+                                  List<ToolCallbackProvider> providers,
+                                  RagTracing tracing,
+                                  ConversationToolCallMemoryService toolMemory) {
+        SimpleTaskAgent agent = new SimpleTaskAgent(mocks.builder, builtInTools, providers, tracing, toolMemory);
         agent.init();
         return agent;
     }

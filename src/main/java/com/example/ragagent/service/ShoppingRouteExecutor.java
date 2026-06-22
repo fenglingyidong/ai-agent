@@ -141,6 +141,7 @@ public class ShoppingRouteExecutor {
             FastLaneResult simpleTaskResult = simpleTaskAgent.tryRun(
                     route,
                     normalizedMessage,
+                    userId,
                     sessionId,
                     confidenceThreshold(),
                     preferenceContextAfterRoute,

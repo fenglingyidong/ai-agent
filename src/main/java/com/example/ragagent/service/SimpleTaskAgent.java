@@ -1,5 +1,6 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.prompt.PromptTemplateStore;
 import com.example.ragagent.tools.BuiltInTools;
@@ -46,6 +47,7 @@ public class SimpleTaskAgent {
     private final BuiltInTools builtInTools;
     private final List<ToolCallbackProvider> toolCallbackProviders;
     private final RagTracing tracing;
+    private final ConversationToolCallMemoryService toolCallMemoryService;
     private final String knowledgeSystemPrompt;
     private final String mallSystemPrompt;
 
@@ -60,15 +62,24 @@ public class SimpleTaskAgent {
 
     private ChatClient simpleTaskChatClient;
 
-    @Autowired
     public SimpleTaskAgent(ChatClient.Builder builder,
                            BuiltInTools builtInTools,
                            List<ToolCallbackProvider> toolCallbackProviders,
                            RagTracing tracing) {
+        this(builder, builtInTools, toolCallbackProviders, tracing, null);
+    }
+
+    @Autowired
+    public SimpleTaskAgent(ChatClient.Builder builder,
+                           BuiltInTools builtInTools,
+                           List<ToolCallbackProvider> toolCallbackProviders,
+                           RagTracing tracing,
+                           ConversationToolCallMemoryService toolCallMemoryService) {
         this.builder = builder;
         this.builtInTools = builtInTools;
         this.toolCallbackProviders = toolCallbackProviders == null ? List.of() : List.copyOf(toolCallbackProviders);
         this.tracing = tracing == null ? new RagTracing() : tracing;
+        this.toolCallMemoryService = toolCallMemoryService;
         PromptTemplateStore store = new PromptTemplateStore();
         this.knowledgeSystemPrompt = store.text("simple-task.knowledge.system");
         this.mallSystemPrompt = store.text("simple-task.mall.system");
@@ -102,7 +113,7 @@ public class SimpleTaskAgent {
                           String sessionId,
                           double confidenceThreshold,
                           String preferenceContext) {
-        return tryRun(route, userMessage, sessionId, confidenceThreshold, preferenceContext, "", "", "");
+        return tryRun(route, userMessage, "", sessionId, confidenceThreshold, preferenceContext, "", "", "");
     }
 
     /**
@@ -110,6 +121,22 @@ public class SimpleTaskAgent {
      */
     FastLaneResult tryRun(ShoppingIntentRoute route,
                           String userMessage,
+                          String sessionId,
+                          double confidenceThreshold,
+                          String preferenceContext,
+                          String mallToken,
+                          String mallUsername,
+                          String mallPassword) {
+        return tryRun(route, userMessage, "", sessionId, confidenceThreshold, preferenceContext,
+                mallToken, mallUsername, mallPassword);
+    }
+
+    /**
+     * 尝试用简单任务模型处理路由结果，并把应用用户身份与商城认证上下文传给工具窗口。
+     */
+    FastLaneResult tryRun(ShoppingIntentRoute route,
+                          String userMessage,
+                          String userId,
                           String sessionId,
                           double confidenceThreshold,
                           String preferenceContext,
@@ -125,14 +152,18 @@ public class SimpleTaskAgent {
         }
 
         return switch (route.normalizedTaskType()) {
-            case "FAQ_SIMPLE_QUERY" -> runKnowledgeTask(route, userMessage, preferenceContext);
+            case "FAQ_SIMPLE_QUERY" -> runKnowledgeTask(route, userMessage, userId, sessionId, preferenceContext);
             case "SIMPLE_SHOPPING_TOOL" -> runMallTask(route, userMessage, sessionId, preferenceContext,
-                    mallToken, mallUsername, mallPassword);
+                    userId, mallToken, mallUsername, mallPassword);
             default -> FastLaneResult.notHandled();
         };
     }
 
-    private FastLaneResult runKnowledgeTask(ShoppingIntentRoute route, String userMessage, String preferenceContext) {
+    private FastLaneResult runKnowledgeTask(ShoppingIntentRoute route,
+                                            String userMessage,
+                                            String userId,
+                                            String sessionId,
+                                            String preferenceContext) {
         if (builtInTools == null) {
             return FastLaneResult.fallbackToCore("RAG 检索工具不可用");
         }
@@ -141,7 +172,7 @@ public class SimpleTaskAgent {
                 userMessage,
                 preferenceContext,
                 knowledgeSystemPrompt,
-                new KnowledgeFastLaneTools(builtInTools)
+                new KnowledgeFastLaneTools(builtInTools, toolCallMemoryService, userId, sessionId)
         );
     }
 
@@ -149,6 +180,7 @@ public class SimpleTaskAgent {
                                        String userMessage,
                                        String sessionId,
                                        String preferenceContext,
+                                       String userId,
                                        String mallToken,
                                        String mallUsername,
                                        String mallPassword) {
@@ -157,7 +189,7 @@ public class SimpleTaskAgent {
         }
         List<ToolCallback> callbacks;
         try {
-            callbacks = simpleMallToolCallbacks();
+            callbacks = simpleMallToolCallbacks(userId, sessionId);
         }
         catch (McpUnavailableException ex) {
             return mallMcpFailure(ex);
@@ -171,11 +203,11 @@ public class SimpleTaskAgent {
                 preferenceContext,
                 mallSystemPrompt,
                 callbacks,
-                mallToolContext(sessionId, mallToken, mallUsername, mallPassword)
+                mallToolContext(userId, sessionId, mallToken, mallUsername, mallPassword)
         );
     }
 
-    private List<ToolCallback> simpleMallToolCallbacks() {
+    private List<ToolCallback> simpleMallToolCallbacks(String userId, String sessionId) {
         try {
             List<ToolCallback> callbacks = new ArrayList<>();
             for (ToolCallbackProvider provider : toolCallbackProviders) {
@@ -188,9 +220,10 @@ public class SimpleTaskAgent {
                     if (SIMPLE_MALL_TOOL_NAMES.contains(name)) {
                         callbacks.add(new LoggingToolCallback(
                                 new MallRenderedToolCallback(callback, new MallToolResultRenderer()),
-                                "simple-task",
-                                "simple-task",
-                                tracing
+                                userId,
+                                sessionId,
+                                tracing,
+                                toolCallMemoryService
                         ));
                     }
                 }
@@ -202,13 +235,13 @@ public class SimpleTaskAgent {
         }
     }
 
-    private Map<String, Object> mallToolContext(String sessionId,
+    private Map<String, Object> mallToolContext(String userId,
+                                                String sessionId,
                                                 String mallToken,
                                                 String mallUsername,
                                                 String mallPassword) {
         java.util.LinkedHashMap<String, Object> context = new java.util.LinkedHashMap<>();
-        // /api/react 当前把 Basic Auth 用户名同时作为应用用户和商城登录名传入。
-        putIfText(context, "userId", mallUsername);
+        putIfText(context, "userId", userId);
         context.put("sessionId", sessionId.trim());
         putIfText(context, "mallToken", mallToken);
         putIfText(context, "mallUsername", mallUsername);
@@ -431,9 +464,22 @@ public class SimpleTaskAgent {
     static final class KnowledgeFastLaneTools {
 
         private final BuiltInTools builtInTools;
+        private final ConversationToolCallMemoryService toolCallMemoryService;
+        private final String userId;
+        private final String sessionId;
 
         KnowledgeFastLaneTools(BuiltInTools builtInTools) {
+            this(builtInTools, null, "", "");
+        }
+
+        KnowledgeFastLaneTools(BuiltInTools builtInTools,
+                               ConversationToolCallMemoryService toolCallMemoryService,
+                               String userId,
+                               String sessionId) {
             this.builtInTools = builtInTools;
+            this.toolCallMemoryService = toolCallMemoryService;
+            this.userId = userId;
+            this.sessionId = sessionId;
         }
 
         /**
@@ -447,13 +493,45 @@ public class SimpleTaskAgent {
                 if (!StringUtils.hasText(result) || result.contains(EMPTY_KNOWLEDGE_MESSAGE)) {
                     throw new FastLaneFallbackException("A 类 RAG 检索为空");
                 }
-                return result.trim();
+                String trimmedResult = result.trim();
+                rememberSuccess(query, trimmedResult);
+                return trimmedResult;
             }
             catch (FastLaneFallbackException ex) {
+                rememberError(query, ex);
                 throw ex;
             }
             catch (RuntimeException ex) {
-                throw new FastLaneFallbackException("A 类 RAG 检索失败：" + safeToolMessage(ex), ex);
+                FastLaneFallbackException fallback = new FastLaneFallbackException(
+                        "A 类 RAG 检索失败：" + safeToolMessage(ex),
+                        ex
+                );
+                rememberError(query, fallback);
+                throw fallback;
+            }
+        }
+
+        private void rememberSuccess(String input, String output) {
+            if (toolCallMemoryService == null) {
+                return;
+            }
+            try {
+                toolCallMemoryService.rememberSuccess(userId, sessionId, "searchProductKnowledge", input, output);
+            }
+            catch (RuntimeException ignored) {
+                // 工具窗口是旁路上下文，不能改变快车道工具返回值。
+            }
+        }
+
+        private void rememberError(String input, FastLaneFallbackException ex) {
+            if (toolCallMemoryService == null) {
+                return;
+            }
+            try {
+                toolCallMemoryService.rememberError(userId, sessionId, "searchProductKnowledge", input, ex);
+            }
+            catch (RuntimeException ignored) {
+                // 工具窗口是旁路上下文，不能改变快车道回退行为。
             }
         }
     }

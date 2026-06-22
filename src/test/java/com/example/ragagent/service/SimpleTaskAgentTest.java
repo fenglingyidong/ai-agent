@@ -240,9 +240,12 @@ class SimpleTaskAgentTest {
         when(builtInTools.searchProductKnowledge("儿童积木"))
                 .thenThrow(new RuntimeException("backend exploded token=secret-token query={\"skuId\":3020}"));
 
-        assertThrows(SimpleTaskAgent.FastLaneFallbackException.class,
+        SimpleTaskAgent.FastLaneFallbackException thrown = assertThrows(SimpleTaskAgent.FastLaneFallbackException.class,
                 () -> tools.searchProductKnowledge("儿童积木"));
 
+        assertFalse(thrown.getMessage().contains("backend exploded"));
+        assertFalse(thrown.getMessage().contains("secret-token"));
+        assertFalse(thrown.getMessage().contains("skuId"));
         ConversationToolCallRecord record = toolMemory.records("app-user", "session-1").get(0);
         assertEquals("searchProductKnowledge", record.toolName());
         assertEquals("儿童积木", record.input());
@@ -253,6 +256,58 @@ class SimpleTaskAgentTest {
         assertFalse(context.contains("backend exploded"));
         assertFalse(context.contains("secret-token"));
         assertFalse(context.contains("\"skuId\":3020"));
+    }
+
+    @Test
+    void knowledgeFallbackShouldNotExposeRagExceptionDetailsInResultOrInfoLogs() {
+        try (CapturedLogs capturedLogs = new CapturedLogs()) {
+            ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+            BuiltInTools builtInTools = mock(BuiltInTools.class);
+            when(builtInTools.searchProductKnowledge("儿童积木"))
+                    .thenThrow(new RuntimeException("backend exploded token=secret-token input={\"skuId\":3020}"));
+            AgentMocks mocks = agentMocks("不会返回");
+            when(mocks.requestSpec.tools(any())).thenAnswer(invocation -> {
+                SimpleTaskAgent.KnowledgeFastLaneTools tools = invocation.getArgument(0);
+                tools.searchProductKnowledge("儿童积木");
+                return mocks.requestSpec;
+            });
+            SimpleTaskAgent agent = agent(mocks, builtInTools, null, new RagTracing(), toolMemory);
+            ShoppingIntentRoute route = new ShoppingIntentRoute(
+                    "PRODUCT_SELECTION",
+                    "FAQ_SIMPLE_QUERY",
+                    Map.of(),
+                    Map.of("product_name", "儿童积木"),
+                    false,
+                    0.95,
+                    "知识库简单查询"
+            );
+
+            FastLaneResult result = agent.tryRun(
+                    route,
+                    "儿童积木有什么特点",
+                    "app-user",
+                    "session-1",
+                    0.7,
+                    "",
+                    "",
+                    "",
+                    ""
+            );
+
+            assertTrue(result.fallbackToCore());
+            assertFalse(result.fallbackReason().contains("backend exploded"));
+            assertFalse(result.fallbackReason().contains("secret-token"));
+            assertFalse(result.fallbackReason().contains("skuId"));
+            String logs = capturedLogs.formattedMessages();
+            assertFalse(logs.contains("backend exploded"));
+            assertFalse(logs.contains("secret-token"));
+            assertFalse(logs.contains("\"skuId\":3020"));
+            ConversationToolCallRecord record = toolMemory.records("app-user", "session-1").get(0);
+            assertEquals(ConversationToolCallRecord.Status.ERROR, record.status());
+            assertFalse(record.output().contains("backend exploded"));
+            assertFalse(toolMemory.recentToolCallContext("app-user", "session-1")
+                    .contains("backend exploded"));
+        }
     }
 
     @Test

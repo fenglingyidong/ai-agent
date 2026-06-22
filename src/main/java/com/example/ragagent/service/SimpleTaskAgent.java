@@ -503,7 +503,7 @@ public class SimpleTaskAgent {
             }
             catch (RuntimeException ex) {
                 FastLaneFallbackException fallback = new FastLaneFallbackException(
-                        "A 类 RAG 检索失败：" + safeToolMessage(ex),
+                        "A 类 RAG 检索失败",
                         ex
                 );
                 rememberError(query, fallback);
@@ -560,10 +560,6 @@ public class SimpleTaskAgent {
         McpUnavailableException(String message, Throwable cause) {
             super(StringUtils.hasText(message) ? message : "mall-mcp 服务未启动或不可访问", cause);
         }
-    }
-
-    private static String safeToolMessage(RuntimeException ex) {
-        return ex == null || !StringUtils.hasText(ex.getMessage()) ? "unknown error" : ex.getMessage();
     }
 
     private String llmInput(String systemPrompt, String userPrompt) {

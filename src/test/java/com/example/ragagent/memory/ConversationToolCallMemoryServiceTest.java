@@ -204,6 +204,49 @@ class ConversationToolCallMemoryServiceTest {
     }
 
     @Test
+    void toolNameShouldBeSanitizedAndLengthLimitedBeforeStored() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+        String toolName = "mall_get_product_detail token=tool-secret " + "x".repeat(300);
+
+        service.rememberSuccess("alice", "session-1", toolName, "{\"skuId\":3020}", "ok");
+
+        ConversationToolCallRecord record = service.records("alice", "session-1").get(0);
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertFalse(record.toolName().contains("tool-secret"));
+        assertFalse(context.contains("tool-secret"));
+        assertTrue(record.toolName().contains("[REDACTED]"));
+        assertTrue(record.toolName().length() <= 120);
+        assertTrue(context.contains("输入：{\"skuId\":3020}"));
+    }
+
+    @Test
+    void recentToolCallContextShouldRedactKebabHeaderSensitiveFieldsAndPreserveFacts() {
+        ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
+
+        service.rememberSuccess("alice", "session-1", "mall_get_product_detail",
+                "api-key=key-secret skuId=3020 product=键盘 access-token: access-secret",
+                "{\"client-secret\":\"client-secret\",\"auth-token\":\"auth-secret\","
+                        + "\"x-api-key\":\"x-secret\",\"stock\":260}");
+
+        String context = service.recentToolCallContext("alice", "session-1");
+
+        assertFalse(context.contains("key-secret"));
+        assertFalse(context.contains("access-secret"));
+        assertFalse(context.contains("client-secret\":\"client-secret"));
+        assertFalse(context.contains("auth-secret"));
+        assertFalse(context.contains("x-secret"));
+        assertTrue(context.contains("api-key=[REDACTED]"));
+        assertTrue(context.contains("access-token: [REDACTED]"));
+        assertTrue(context.contains("\"client-secret\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"auth-token\":\"[REDACTED]\""));
+        assertTrue(context.contains("\"x-api-key\":\"[REDACTED]\""));
+        assertTrue(context.contains("skuId=3020"));
+        assertTrue(context.contains("product=键盘"));
+        assertTrue(context.contains("\"stock\":260"));
+    }
+
+    @Test
     void extendedSensitiveRedactionShouldPreserveAdjacentNormalFacts() {
         ConversationToolCallMemoryService service = new ConversationToolCallMemoryService();
 

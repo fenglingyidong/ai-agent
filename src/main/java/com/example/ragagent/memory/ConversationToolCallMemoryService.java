@@ -30,12 +30,14 @@ public class ConversationToolCallMemoryService {
     private static final int MAX_RECORD_WINDOW_SIZE = 20;
     private static final int FULL_RESULT_WINDOW_SIZE = 3;
     private static final int MAX_TEXT_LENGTH = 4000;
+    private static final int MAX_TOOL_NAME_LENGTH = 120;
     private static final String FOLDED_INPUT = "完整结果已折叠；如需精确事实请重新调用工具。";
     private static final String FOLDED_OUTPUT = "完整结果已折叠；如需精确事实请重新调用工具。";
     private static final String FOLDED_HISTORY_TOOL_NAME = "历史工具调用";
     private static final String SENSITIVE_FIELD_NAME =
             "token|authorization|password|mallToken|mallPassword|mallUsername|accessToken|access_token"
-                    + "|refreshToken|refresh_token|authToken|auth_token|apiKey|api_key|clientSecret|client_secret";
+                    + "|access-token|refreshToken|refresh_token|refresh-token|authToken|auth_token|auth-token"
+                    + "|apiKey|api_key|api-key|x-api-key|clientSecret|client_secret|client-secret";
     private static final Set<String> SENSITIVE_JSON_FIELD_NAMES = Set.of(
             "token",
             "authorization",
@@ -45,14 +47,20 @@ public class ConversationToolCallMemoryService {
             "mallusername",
             "accesstoken",
             "access_token",
+            "access-token",
             "refreshtoken",
             "refresh_token",
+            "refresh-token",
             "authtoken",
             "auth_token",
+            "auth-token",
             "apikey",
             "api_key",
+            "api-key",
+            "x-api-key",
             "clientsecret",
-            "client_secret"
+            "client_secret",
+            "client-secret"
     );
     private static final Pattern SENSITIVE_JSON_FIELD = Pattern.compile(
             "(?i)(\"(?:" + SENSITIVE_FIELD_NAME + ")\"\\s*:\\s*\")([^\"]*)(\")"
@@ -74,7 +82,7 @@ public class ConversationToolCallMemoryService {
                                 String input,
                                 String output) {
         append(userId, sessionId, new ConversationToolCallRecord(
-                toolName,
+                sanitizeToolName(toolName),
                 sanitize(input),
                 sanitize(output),
                 ConversationToolCallRecord.Status.OK,
@@ -88,7 +96,7 @@ public class ConversationToolCallMemoryService {
                               String input,
                               RuntimeException ex) {
         append(userId, sessionId, new ConversationToolCallRecord(
-                toolName,
+                sanitizeToolName(toolName),
                 sanitize(input),
                 "工具调用失败，完整错误已省略。",
                 ConversationToolCallRecord.Status.ERROR,
@@ -171,6 +179,14 @@ public class ConversationToolCallMemoryService {
             return sanitized;
         }
         return sanitized.substring(0, MAX_TEXT_LENGTH) + System.lineSeparator() + "内容已截断。";
+    }
+
+    private String sanitizeToolName(String toolName) {
+        String sanitized = sanitize(toolName);
+        if (sanitized.length() <= MAX_TOOL_NAME_LENGTH) {
+            return sanitized;
+        }
+        return sanitized.substring(0, MAX_TOOL_NAME_LENGTH - 3) + "...";
     }
 
     private String sanitizeJson(String value) {

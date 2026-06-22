@@ -45,7 +45,6 @@
 - `output`：工具输出，按安全规则裁剪后保存。
 - `status`：`OK` 或 `ERROR`。
 - `errorType`：失败时记录异常类型，成功时为空。
-- `createdAtEpochMillis`：调用发生时间。
 
 存储位置优先复用短期记忆组件相同的会话键：`userId::sessionId`。实现上可在 `ConversationMemoryService` 内维护工具调用窗口接口，也可拆出 `ConversationToolCallMemoryService`，但对外应只暴露追加记录和渲染上下文两个简单方法。
 
@@ -63,7 +62,7 @@ RAG 的处理规则如下：
 
 - 模型显式调用 `searchProductKnowledge` 时，记录一条 `searchProductKnowledge`。
 - `searchProductKnowledge` 内部进行商城实时详情补强时，每次 `mall_get_product_detail` 也记录一条独立工具调用。
-- 所有记录按真实发生顺序进入同一时间线，因此 5 次任意工具调用只保留最后 3 次完整结果。
+- 所有记录按会话内追加顺序进入同一时间线，因此 5 次任意工具调用只保留最后 3 次完整结果。
 
 ## 上下文渲染
 
@@ -75,7 +74,7 @@ RAG 的处理规则如下：
 
 渲染规则：
 
-- 统一按创建时间升序展示，便于模型理解先后关系。
+- 统一按会话内追加顺序展示，便于模型理解先后关系。
 - 若会话中工具调用总数不超过 3 条，全部展示完整输入输出。
 - 若超过 3 条，旧条目只展示折叠占位符，最新 3 条展示完整输入输出。
 - 折叠占位符必须说明工具名，并要求模型如需精确事实则重新调用工具。

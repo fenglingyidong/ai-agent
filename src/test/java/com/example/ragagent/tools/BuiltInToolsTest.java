@@ -1,5 +1,7 @@
 package com.example.ragagent.tools;
 
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
+import com.example.ragagent.memory.ConversationToolCallRecord;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -103,6 +105,78 @@ class BuiltInToolsTest {
         assertTrue(result.contains("[商城实时详情 1]"));
         assertTrue(result.contains("查询状态: 失败"));
         assertTrue(result.contains("保留上方商品知识库结果"));
+    }
+
+    @Test
+    void searchProductKnowledgeShouldRecordMallRealtimeDetailToolCall() {
+        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
+        ToolCallback mallDetailCallback = mallDetailCallback();
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        BuiltInTools tools = new BuiltInTools(
+                documentRetriever,
+                List.of(providerWith(mallDetailCallback)),
+                new ObjectMapper(),
+                toolMemory
+        );
+        Document document = Document.builder()
+                .text("机械键盘 红轴 87键，价格桶：100-200 元。")
+                .metadata(Map.of("title", "机械键盘 红轴 87键", "skuId", "3002"))
+                .build();
+        when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
+        when(mallDetailCallback.call(anyString(), any(ToolContext.class)))
+                .thenReturn("{\"ok\":true,\"data\":{\"skuId\":3002,\"stock\":260}}");
+
+        tools.searchProductKnowledge("87键机械键盘", new ToolContext(Map.of(
+                "userId", "alice",
+                "sessionId", "session-1"
+        )));
+
+        List<ConversationToolCallRecord> records = toolMemory.records("alice", "session-1");
+        assertEquals(1, records.size());
+        ConversationToolCallRecord record = records.get(0);
+        assertEquals("mall_get_product_detail", record.toolName());
+        assertEquals(ConversationToolCallRecord.Status.OK, record.status());
+        assertTrue(record.input().contains("\"skuId\":3002"));
+        assertTrue(record.output().contains("\"stock\":260"));
+    }
+
+    @Test
+    void searchProductKnowledgeShouldRecordMallRealtimeDetailToolCallErrorWithoutRawExceptionMessage() {
+        DocumentRetriever documentRetriever = mock(DocumentRetriever.class);
+        ToolCallback mallDetailCallback = mallDetailCallback();
+        ConversationToolCallMemoryService toolMemory = new ConversationToolCallMemoryService();
+        BuiltInTools tools = new BuiltInTools(
+                documentRetriever,
+                List.of(providerWith(mallDetailCallback)),
+                new ObjectMapper(),
+                toolMemory
+        );
+        Document document = Document.builder()
+                .text("彩色中性笔套装 24支，价格桶：0-50 元。")
+                .metadata(Map.of("title", "中性笔套装 彩色 24支", "skuId", "4072"))
+                .build();
+        when(documentRetriever.retrieve(any(Query.class))).thenReturn(List.of(document));
+        when(mallDetailCallback.call(anyString(), any(ToolContext.class)))
+                .thenThrow(new IllegalStateException("mall-mcp 服务未启动或不可访问 token=secret"));
+
+        String result = tools.searchProductKnowledge("彩色中性笔套装", new ToolContext(Map.of(
+                "userId", "alice",
+                "sessionId", "session-1"
+        )));
+
+        assertTrue(result.contains("查询状态: 失败"));
+        assertTrue(result.contains("说明: 保留上方商品知识库结果；商城实时详情暂不可用。"));
+        assertTrue(result.contains("错误类型: IllegalStateException"));
+        List<ConversationToolCallRecord> records = toolMemory.records("alice", "session-1");
+        assertEquals(1, records.size());
+        ConversationToolCallRecord record = records.get(0);
+        assertEquals("mall_get_product_detail", record.toolName());
+        assertEquals(ConversationToolCallRecord.Status.ERROR, record.status());
+        assertEquals("IllegalStateException", record.errorType());
+        assertTrue(record.input().contains("\"skuId\":4072"));
+        assertTrue(record.output().contains("工具调用失败，完整错误已省略。"));
+        assertTrue(!record.output().contains("mall-mcp 服务未启动"));
+        assertTrue(!record.output().contains("secret"));
     }
 
     @Test

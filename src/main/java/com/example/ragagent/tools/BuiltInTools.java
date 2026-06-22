@@ -1,5 +1,6 @@
 package com.example.ragagent.tools;
 
+import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.observability.RagTracing;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -41,6 +42,9 @@ public class BuiltInTools {
     @Autowired
     private RagTracing tracing;
 
+    @Autowired(required = false)
+    private ConversationToolCallMemoryService toolCallMemoryService;
+
     public BuiltInTools() {
     }
 
@@ -51,10 +55,18 @@ public class BuiltInTools {
     public BuiltInTools(DocumentRetriever documentRetriever,
                         List<ToolCallbackProvider> toolCallbackProviders,
                         ObjectMapper objectMapper) {
+        this(documentRetriever, toolCallbackProviders, objectMapper, null);
+    }
+
+    public BuiltInTools(DocumentRetriever documentRetriever,
+                        List<ToolCallbackProvider> toolCallbackProviders,
+                        ObjectMapper objectMapper,
+                        ConversationToolCallMemoryService toolCallMemoryService) {
         this.documentRetriever = documentRetriever;
         this.toolCallbackProviders = toolCallbackProviders == null ? List.of() : List.copyOf(toolCallbackProviders);
         this.objectMapper = objectMapper == null ? new ObjectMapper() : objectMapper;
         this.tracing = new RagTracing();
+        this.toolCallMemoryService = toolCallMemoryService;
     }
 
     /**
@@ -125,13 +137,17 @@ public class BuiltInTools {
                 builder.append(System.lineSeparator()).append(System.lineSeparator());
                 builder.append("[商城实时详情 ").append(index + 1).append("]");
                 builder.append(System.lineSeparator()).append("SKU: ").append(skuId);
+                String input = "";
                 try {
-                    String detail = mallDetailCallback.call(mallDetailArguments(skuId).toString(), toolContext);
+                    input = mallDetailArguments(skuId).toString();
+                    String detail = mallDetailCallback.call(input, toolContext);
+                    rememberMallDetailSuccess(toolContext, input, detail);
                     builder.append(System.lineSeparator()).append("查询状态: 成功");
                     builder.append(System.lineSeparator()).append(detail);
                     successCount++;
                 }
                 catch (RuntimeException ex) {
+                    rememberMallDetailError(toolContext, input, ex);
                     builder.append(System.lineSeparator()).append("查询状态: 失败");
                     builder.append(System.lineSeparator()).append("说明: 保留上方商品知识库结果；商城实时详情暂不可用。");
                     builder.append(System.lineSeparator()).append("错误类型: ").append(ex.getClass().getSimpleName());
@@ -143,6 +159,48 @@ public class BuiltInTools {
             activeTracing.setAttribute(span, "rag.mall_enrich.sku_ids", String.join(",", skuIds));
             return null;
         });
+    }
+
+    private void rememberMallDetailSuccess(ToolContext toolContext, String input, String detail) {
+        if (toolCallMemoryService == null) {
+            return;
+        }
+        try {
+            toolCallMemoryService.rememberSuccess(
+                    contextValue(toolContext, "userId"),
+                    contextValue(toolContext, "sessionId"),
+                    "mall_get_product_detail",
+                    input,
+                    detail
+            );
+        }
+        catch (RuntimeException ignored) {
+        }
+    }
+
+    private void rememberMallDetailError(ToolContext toolContext, String input, RuntimeException ex) {
+        if (toolCallMemoryService == null) {
+            return;
+        }
+        try {
+            toolCallMemoryService.rememberError(
+                    contextValue(toolContext, "userId"),
+                    contextValue(toolContext, "sessionId"),
+                    "mall_get_product_detail",
+                    input,
+                    ex
+            );
+        }
+        catch (RuntimeException ignored) {
+        }
+    }
+
+    private String contextValue(ToolContext toolContext, String key) {
+        if (toolContext == null || toolContext.getContext() == null) {
+            return "";
+        }
+        Object value = toolContext.getContext().get(key);
+        return value == null ? "" : value.toString();
     }
 
     private ToolCallback mallProductDetailCallback() {

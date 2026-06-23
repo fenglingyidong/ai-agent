@@ -59,7 +59,7 @@ class ShoppingTaskPolicyRegistryTest {
     }
 
     @Test
-    void shouldFallbackToCartConfirmationForCreateOrder() {
+    void shouldKeepOrderCreationOutOfCartConfirmationPolicy() {
         ShoppingIntentRoute route = new ShoppingIntentRoute(
                 "CART_CONFIRMATION",
                 "COMPLEX_REACT",
@@ -79,7 +79,10 @@ class ShoppingTaskPolicyRegistryTest {
 
         assertEquals(List.of("CART_CONFIRMATION"), policies.stream().map(ShoppingTaskPolicy::id).toList());
         assertTrue(policies.get(0).confirmationRequired());
-        assertTrue(policies.get(0).allowedToolNames().contains("mall_create_order"));
+        assertTrue(policies.get(0).allowedToolNames().contains("mall_prepare_order"));
+        assertTrue(policies.get(0).allowedToolNames().stream().noneMatch("mall_create_order"::equals));
+        assertTrue(policies.get(0).promptFragment().contains("最终下单不由大模型执行"));
+        assertTrue(policies.get(0).promptFragment().contains("前端确认卡片"));
     }
 
     @Test

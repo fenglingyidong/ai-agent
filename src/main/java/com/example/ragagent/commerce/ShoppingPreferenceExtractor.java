@@ -35,7 +35,7 @@ public class ShoppingPreferenceExtractor {
                                                                 ShoppingIntentRoute route,
                                                                 Long turnNo) {
         String text = StringUtils.hasText(userMessage) ? userMessage.trim() : "";
-        BudgetValues budget = extractBudgetFromText(text);
+        Integer budget = extractBudgetFromText(text);
 
         String category = extractCategory(text);
         String brand = null;
@@ -50,7 +50,7 @@ public class ShoppingPreferenceExtractor {
         SlotValues preferenceDelta = readSlots(route == null ? null : route.preferenceDelta(), false);
         if (preferenceDelta.hasAny()) {
             category = defaultIfBlank(preferenceDelta.category(), category);
-            budget = budget.overrideWith(preferenceDelta.budget());
+            budget = defaultIfNull(preferenceDelta.budget(), budget);
             brand = defaultIfBlank(preferenceDelta.brand(), brand);
             size = defaultIfBlank(preferenceDelta.size(), size);
             color = defaultIfBlank(preferenceDelta.color(), color);
@@ -62,7 +62,7 @@ public class ShoppingPreferenceExtractor {
         SlotValues textSlots = readSlots(route == null ? null : route.textSlots(), false);
         if (textSlots.hasAny()) {
             category = defaultIfBlank(textSlots.category(), category);
-            budget = budget.overrideWith(textSlots.budget());
+            budget = defaultIfNull(textSlots.budget(), budget);
             brand = defaultIfBlank(textSlots.brand(), brand);
             size = defaultIfBlank(textSlots.size(), size);
             color = defaultIfBlank(textSlots.color(), color);
@@ -76,8 +76,8 @@ public class ShoppingPreferenceExtractor {
             if (!StringUtils.hasText(textSlots.category())) {
                 category = defaultIfBlank(visualSlots.category(), category);
             }
-            if (!textSlots.budget().hasAny()) {
-                budget = budget.overrideWith(visualSlots.budget());
+            if (textSlots.budget() == null) {
+                budget = defaultIfNull(visualSlots.budget(), budget);
             }
             if (!StringUtils.hasText(textSlots.brand())) {
                 brand = defaultIfBlank(visualSlots.brand(), brand);
@@ -100,7 +100,7 @@ public class ShoppingPreferenceExtractor {
         Set<String> clearFields = extractClearFields(text);
         clearFields.addAll(extractClearFieldsFromRoute(route == null ? null : route.preferenceDelta()));
         boolean hasAnyField = StringUtils.hasText(category)
-                || budget.hasAny()
+                || budget != null
                 || StringUtils.hasText(brand)
                 || StringUtils.hasText(size)
                 || StringUtils.hasText(color)
@@ -112,8 +112,7 @@ public class ShoppingPreferenceExtractor {
 
         return new ShoppingStateService.ShoppingPreferencePatch(
                 category,
-                budget.min(),
-                budget.max(),
+                budget,
                 brand,
                 size,
                 color,
@@ -126,9 +125,9 @@ public class ShoppingPreferenceExtractor {
         );
     }
 
-    private BudgetValues extractBudgetFromText(String text) {
+    private Integer extractBudgetFromText(String text) {
         if (!StringUtils.hasText(text)) {
-            return BudgetValues.empty();
+            return null;
         }
         BudgetRangeMatch range = matchBudgetRange(BUDGET_RANGE_WITH_PREFIX, text);
         if (range.matched()) {
@@ -144,44 +143,44 @@ public class ShoppingPreferenceExtractor {
         }
         Integer max = matchBudgetMax(BUDGET_MAX_WITH_BUDGET_PREFIX, text);
         if (max != null) {
-            return new BudgetValues(null, max);
+            return max;
         }
         max = matchBudgetMax(BUDGET_MAX_WITH_LIMIT_PREFIX, text);
         if (max != null) {
-            return new BudgetValues(null, max);
+            return max;
         }
         max = matchBudgetMax(BUDGET_MAX_WITH_UNIT_SUFFIX, text);
-        return max == null ? BudgetValues.empty() : new BudgetValues(null, max);
+        return max;
     }
 
-    private BudgetValues extractBudgetFromSlot(Object raw) {
+    private Integer extractBudgetFromSlot(Object raw) {
         if (raw == null) {
-            return BudgetValues.empty();
+            return null;
         }
         if (raw instanceof Number number) {
-            return new BudgetValues(null, number.intValue());
+            return number.intValue();
         }
         String text = raw.toString().trim();
         if (!StringUtils.hasText(text)) {
-            return BudgetValues.empty();
+            return null;
         }
         BudgetRangeMatch range = matchBudgetRange(BUDGET_SLOT_RANGE, text);
         if (range.matched()) {
             return range.budget();
         }
         Integer max = matchBudgetMax(Pattern.compile("(\\d+)"), text);
-        return max == null ? BudgetValues.empty() : new BudgetValues(null, max);
+        return max;
     }
 
-    private BudgetValues extractBudgetFromSlots(Map<String, Object> slots) {
+    private Integer extractBudgetFromSlots(Map<String, Object> slots) {
         if (slots == null || slots.isEmpty()) {
-            return BudgetValues.empty();
+            return null;
         }
-        BudgetValues budget = extractBudgetFromSlot(slots.get("budget"));
+        Integer budget = extractBudgetFromSlot(slots.get("budget"));
         Integer min = parsePositiveNumber(slots.get("budget_min"));
         Integer max = parsePositiveNumber(slots.get("budget_max"));
         if (min != null || max != null) {
-            return new BudgetValues(min, max);
+            return max != null ? max : min;
         }
         return budget;
     }
@@ -194,9 +193,9 @@ public class ShoppingPreferenceExtractor {
         Integer min = parsePositiveInt(matcher.group(1));
         Integer max = parsePositiveInt(matcher.group(2));
         if (min == null || max == null || min > max) {
-            return BudgetRangeMatch.matched(BudgetValues.empty());
+            return BudgetRangeMatch.matched(null);
         }
-        return BudgetRangeMatch.matched(new BudgetValues(min, max));
+        return BudgetRangeMatch.matched(max);
     }
 
     private Integer matchBudgetMax(Pattern pattern, String text) {
@@ -342,33 +341,15 @@ public class ShoppingPreferenceExtractor {
     }
 
     /**
-     * 表示从文本或槽位中解析出的预算上下界。
-     */
-    private record BudgetValues(Integer min, Integer max) {
-
-        static BudgetValues empty() {
-            return new BudgetValues(null, null);
-        }
-
-        boolean hasAny() {
-            return min != null || max != null;
-        }
-
-        BudgetValues overrideWith(BudgetValues other) {
-            return other != null && other.hasAny() ? other : this;
-        }
-    }
-
-    /**
      * 区分“没有命中预算表达式”和“命中但值无效”的解析结果。
      */
-    private record BudgetRangeMatch(boolean matched, BudgetValues budget) {
+    private record BudgetRangeMatch(boolean matched, Integer budget) {
 
         static BudgetRangeMatch notMatched() {
-            return new BudgetRangeMatch(false, BudgetValues.empty());
+            return new BudgetRangeMatch(false, null);
         }
 
-        static BudgetRangeMatch matched(BudgetValues budget) {
+        static BudgetRangeMatch matched(Integer budget) {
             return new BudgetRangeMatch(true, budget);
         }
     }
@@ -378,24 +359,28 @@ public class ShoppingPreferenceExtractor {
      */
     private record SlotValues(String category,
                               String brand,
-                              BudgetValues budget,
+                              Integer budget,
                               String size,
                               String color,
                               String style,
                               String usageScenario) {
 
         static SlotValues empty() {
-            return new SlotValues(null, null, BudgetValues.empty(), null, null, null, null);
+            return new SlotValues(null, null, null, null, null, null, null);
         }
 
         boolean hasAny() {
             return StringUtils.hasText(category)
                     || StringUtils.hasText(brand)
-                    || budget.hasAny()
+                    || budget != null
                     || StringUtils.hasText(size)
                     || StringUtils.hasText(color)
                     || StringUtils.hasText(style)
                     || StringUtils.hasText(usageScenario);
         }
+    }
+
+    private Integer defaultIfNull(Integer value, Integer fallback) {
+        return value != null ? value : fallback;
     }
 }

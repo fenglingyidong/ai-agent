@@ -23,7 +23,7 @@ class ShoppingPreferenceExtractorTest {
         );
 
         assertEquals("跑鞋", patch.category());
-        assertEquals(500, patch.budgetMax());
+        assertEquals(500, patch.budget());
         assertEquals(ShoppingPreferenceSource.USER_EXPLICIT.name(), patch.source());
         assertEquals(1L, patch.turnNo());
     }
@@ -54,7 +54,7 @@ class ShoppingPreferenceExtractorTest {
         assertEquals("儿童积木", patch.category());
         assertEquals("乐高", patch.brand());
         assertEquals("生日礼物", patch.usageScenario());
-        assertEquals(300, patch.budgetMax());
+        assertEquals(300, patch.budget());
         assertEquals(ShoppingPreferenceSource.ROUTER_SLOT.name(), patch.source());
     }
 
@@ -88,7 +88,7 @@ class ShoppingPreferenceExtractorTest {
         );
 
         assertEquals("跑鞋", patch.category());
-        assertEquals(500, patch.budgetMax());
+        assertEquals(500, patch.budget());
         assertEquals("通勤", patch.usageScenario());
         assertTrue(patch.clearFields().contains("brand"));
         assertEquals(ShoppingPreferenceSource.ROUTER_SLOT.name(), patch.source());
@@ -115,8 +115,7 @@ class ShoppingPreferenceExtractorTest {
                 4L
         );
 
-        assertEquals(null, patch.budgetMin());
-        assertEquals(300, patch.budgetMax());
+        assertEquals(300, patch.budget());
     }
 
     @ParameterizedTest
@@ -128,8 +127,7 @@ class ShoppingPreferenceExtractorTest {
                 1L
         );
 
-        assertEquals(300, patch.budgetMin());
-        assertEquals(500, patch.budgetMax());
+        assertEquals(500, patch.budget());
     }
 
     @Test
@@ -155,8 +153,7 @@ class ShoppingPreferenceExtractorTest {
                 5L
         );
 
-        assertEquals(300, patch.budgetMin());
-        assertEquals(500, patch.budgetMax());
+        assertEquals(500, patch.budget());
         assertEquals(ShoppingPreferenceSource.ROUTER_SLOT.name(), patch.source());
         assertEquals(0.87, patch.confidence());
     }
@@ -169,8 +166,7 @@ class ShoppingPreferenceExtractorTest {
                 7L
         );
 
-        assertEquals(null, patch.budgetMin());
-        assertEquals(null, patch.budgetMax());
+        assertEquals(null, patch.budget());
         assertEquals("跑鞋", patch.category());
     }
 
@@ -182,7 +178,7 @@ class ShoppingPreferenceExtractorTest {
                 8L
         );
 
-        assertEquals(null, patch.budgetMax());
+        assertEquals(null, patch.budget());
         assertEquals("耳机", patch.category());
     }
 
@@ -195,7 +191,7 @@ class ShoppingPreferenceExtractorTest {
                 9L
         );
 
-        assertEquals(500, patch.budgetMax());
+        assertEquals(500, patch.budget());
     }
 
     @ParameterizedTest
@@ -207,8 +203,7 @@ class ShoppingPreferenceExtractorTest {
                 11L
         );
 
-        assertEquals(null, patch.budgetMin());
-        assertEquals(null, patch.budgetMax());
+        assertEquals(null, patch.budget());
     }
 
     @Test
@@ -234,8 +229,7 @@ class ShoppingPreferenceExtractorTest {
                 10L
         );
 
-        assertEquals(null, patch.budgetMin());
-        assertEquals(null, patch.budgetMax());
+        assertEquals(null, patch.budget());
         assertEquals("跑鞋", patch.category());
     }
 

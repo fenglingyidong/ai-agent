@@ -1,0 +1,43 @@
+runId=api-20260622-rerun-after-quota
+endpoint=http://localhost:18082/api/react
+modelId=qwen
+conversationCount=5
+START M01 session=api-20260622-rerun-after-quota-M01
+TURN M01.1 request
+TURN M01.1 status=200 seconds=10.857 answerChars=344
+TURN M01.2 request
+TURN M01.2 status=200 seconds=9.286 answerChars=347
+TURN M01.3 request
+TURN M01.3 status=200 seconds=4.291 answerChars=102
+START M02 session=api-20260622-rerun-after-quota-M02
+TURN M02.1 request
+TURN M02.1 status=200 seconds=12.474 answerChars=433
+TURN M02.2 request
+TURN M02.2 status=500 seconds=2.398 answerChars=110
+TURN M02.3 request
+TURN M02.3 status=200 seconds=5.217 answerChars=113
+START M03 session=api-20260622-rerun-after-quota-M03
+TURN M03.1 request
+TURN M03.1 status=200 seconds=5.997 answerChars=189
+TURN M03.2 request
+TURN M03.2 status=200 seconds=4.301 answerChars=79
+TURN M03.3 request
+TURN M03.3 status=200 seconds=4.211 answerChars=130
+START M04 session=api-20260622-rerun-after-quota-M04
+TURN M04.1 request
+TURN M04.1 status=200 seconds=7.351 answerChars=165
+TURN M04.2 request
+TURN M04.2 status=200 seconds=5.660 answerChars=122
+TURN M04.3 request
+TURN M04.3 status=200 seconds=4.605 answerChars=86
+START M05 session=api-20260622-rerun-after-quota-M05
+TURN M05.1 request
+TURN M05.1 status=200 seconds=4.075 answerChars=82
+TURN M05.2 request
+TURN M05.2 status=200 seconds=4.158 answerChars=50
+TURN M05.3 request
+TURN M05.3 status=200 seconds=4.852 answerChars=68
+TURN M05.4 skip type=ui_action
+results=docs/evaluation/artifacts/api-20260622-rerun-after-quota-mall-sku-rag-multiturn-results.json
+traceSummary=docs/evaluation/artifacts/api-20260622-rerun-after-quota-langfuse-trace-summary.jsonl
+durationSeconds=89.737

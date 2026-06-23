@@ -72,6 +72,65 @@ describe("appStore", () => {
         expect(store.state.messages[1].status).toBe("completed");
     });
 
+    it("adds an in-chat checkout confirmation card after checkout intent", async () => {
+        const api = {
+            streamReactChat: vi.fn(async (_auth, _payload, onChunk) => {
+                onChunk("请确认购物车。");
+            }),
+            listSessions: vi.fn().mockResolvedValue([]),
+            loadMockCheckoutConfirmation: vi.fn().mockResolvedValue({
+                sessionId: "session-1",
+                items: [{ skuId: "1001", name: "旗舰降噪耳机 黑色", unitPrice: "699.00", quantity: 1, subtotal: "699.00" }],
+                totalAmount: "699.00",
+                empty: false
+            })
+        };
+        const store = createAppStore(api, memoryStorage());
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+        store.state.currentSessionId = "session-1";
+
+        await store.sendMessage({ message: "看看购物车，然后下单。", files: [], imageUrl: "" });
+
+        expect(api.loadMockCheckoutConfirmation).toHaveBeenCalledWith(store.state.auth, "session-1");
+        expect(store.state.messages.at(-1)).toMatchObject({
+            role: "assistant",
+            content: "请确认购物车内容后再下单。",
+            status: "completed",
+            orderConfirmation: {
+                totalAmount: "699.00"
+            }
+        });
+    });
+
+    it("confirms and cancels checkout card deterministically", async () => {
+        const api = {
+            confirmMockCheckout: vi.fn().mockResolvedValue({ orderId: "MOCK-1", status: "CREATED" }),
+            cancelMockCheckout: vi.fn().mockResolvedValue({ status: "CLEARED" })
+        };
+        const store = createAppStore(api, memoryStorage());
+        store.state.auth = { apiBase: "http://localhost:18082", username: "alice", password: "demo123" };
+        store.state.currentSessionId = "session-1";
+        store.state.messages = [{
+            id: "checkout-1",
+            role: "assistant",
+            content: "请确认购物车内容后再下单。",
+            status: "completed",
+            createdAt: 100,
+            mediaUrls: [],
+            errorMessage: "",
+            orderConfirmation: { sessionId: "session-1", items: [], totalAmount: "0.00", empty: false }
+        }];
+
+        await store.confirmCheckout("checkout-1");
+        await store.cancelCheckout("checkout-1");
+
+        expect(api.confirmMockCheckout).toHaveBeenCalledWith(store.state.auth, "session-1");
+        expect(api.cancelMockCheckout).toHaveBeenCalledWith(store.state.auth, "session-1");
+        expect(store.state.messages[0].orderConfirmation.status).toBe("cancelled");
+        expect(store.state.messages.at(-2).content).toBe("已创建订单 MOCK-1。");
+        expect(store.state.messages.at(-1).content).toBe("已取消下单并清空购物车。");
+    });
+
     it("notifies watchers when streamed chunks update the assistant message", async () => {
         const api = {
             streamReactChat: vi.fn(async (_auth, _payload, onChunk) => {

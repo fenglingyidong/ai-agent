@@ -1,0 +1,15 @@
+runId=dryrun-m05-ui-action
+endpoint=http://127.0.0.1:1/api/react
+modelId=qwen
+conversationCount=1
+START M05 session=dryrun-m05-ui-action-M05
+TURN M05.1 request
+TURN M05.1 status=0 seconds=2.420 answerChars=0
+TURN M05.2 request
+TURN M05.2 status=0 seconds=2.052 answerChars=0
+TURN M05.3 request
+TURN M05.3 status=0 seconds=2.057 answerChars=0
+TURN M05.4 skip type=ui_action
+results=docs/evaluation/artifacts/dryrun-m05-ui-action-mall-sku-rag-multiturn-results.json
+traceSummary=docs/evaluation/artifacts/dryrun-m05-ui-action-langfuse-trace-summary.jsonl
+durationSeconds=6.531

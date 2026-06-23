@@ -249,7 +249,7 @@ class ShoppingIntentRouterTest {
                   "visual_context": {},
                   "preference_delta": {
                     "category": "跑鞋",
-                    "budget_max": 500,
+                    "budget": 500,
                     "usage_scenario": "通勤",
                     "clear_fields": ["brand"]
                   },
@@ -262,7 +262,7 @@ class ShoppingIntentRouterTest {
         ShoppingIntentRoute route = router.route("预算500以内，通勤跑鞋，品牌不限", List.of());
 
         assertEquals("跑鞋", route.preferenceDelta().get("category"));
-        assertEquals(500, route.preferenceDelta().get("budget_max"));
+        assertEquals(500, route.preferenceDelta().get("budget"));
         assertEquals("通勤", route.preferenceDelta().get("usage_scenario"));
         assertEquals(List.of("brand"), route.preferenceDelta().get("clear_fields"));
     }
@@ -282,7 +282,7 @@ class ShoppingIntentRouterTest {
                 """);
         ShoppingIntentRouter router = router(mocks);
 
-        router.route("再推荐几双", List.of(), "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内");
+        router.route("再推荐几双", List.of(), "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元左右");
 
         ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
         verify(mocks.requestSpec).user(userPromptCaptor.capture());
@@ -309,7 +309,7 @@ class ShoppingIntentRouterTest {
         ShoppingIntentRouter router = router(mocks);
         Media media = new Media(MediaType.IMAGE_PNG, new ByteArrayResource(new byte[]{1, 2, 3}));
         String preferenceContext = withPreferenceContext
-                ? "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元以内"
+                ? "当前会话短期导购偏好：\n- 品类：跑鞋\n- 预算：500元左右"
                 : "";
 
         router.route("再推荐几双", List.of(media), preferenceContext);

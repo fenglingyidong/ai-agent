@@ -1,0 +1,43 @@
+runId=api-20260622-redis-rerun-multiturn
+endpoint=http://localhost:18082/api/react
+modelId=qwen
+conversationCount=5
+START M01 session=api-20260622-redis-rerun-multiturn-M01
+TURN M01.1 request
+TURN M01.1 status=200 seconds=12.532 answerChars=355
+TURN M01.2 request
+TURN M01.2 status=200 seconds=10.006 answerChars=344
+TURN M01.3 request
+TURN M01.3 status=200 seconds=4.101 answerChars=84
+START M02 session=api-20260622-redis-rerun-multiturn-M02
+TURN M02.1 request
+TURN M02.1 status=200 seconds=9.191 answerChars=209
+TURN M02.2 request
+TURN M02.2 status=200 seconds=5.642 answerChars=109
+TURN M02.3 request
+TURN M02.3 status=200 seconds=5.177 answerChars=106
+START M03 session=api-20260622-redis-rerun-multiturn-M03
+TURN M03.1 request
+TURN M03.1 status=200 seconds=6.945 answerChars=219
+TURN M03.2 request
+TURN M03.2 status=200 seconds=7.328 answerChars=253
+TURN M03.3 request
+TURN M03.3 status=200 seconds=5.017 answerChars=184
+START M04 session=api-20260622-redis-rerun-multiturn-M04
+TURN M04.1 request
+TURN M04.1 status=200 seconds=9.575 answerChars=249
+TURN M04.2 request
+TURN M04.2 status=200 seconds=5.201 answerChars=100
+TURN M04.3 request
+TURN M04.3 status=200 seconds=4.859 answerChars=87
+START M05 session=api-20260622-redis-rerun-multiturn-M05
+TURN M05.1 request
+TURN M05.1 status=200 seconds=3.775 answerChars=41
+TURN M05.2 request
+TURN M05.2 status=200 seconds=3.785 answerChars=37
+TURN M05.3 request
+TURN M05.3 status=200 seconds=4.149 answerChars=68
+TURN M05.4 skip type=ui_action
+results=docs/evaluation/artifacts/api-20260622-redis-rerun-multiturn-mall-sku-rag-multiturn-results.json
+traceSummary=docs/evaluation/artifacts/api-20260622-redis-rerun-multiturn-langfuse-trace-summary.jsonl
+durationSeconds=97.288

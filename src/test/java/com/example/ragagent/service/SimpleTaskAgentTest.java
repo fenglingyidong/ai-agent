@@ -5,6 +5,7 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
 import ch.qos.logback.core.read.ListAppender;
+import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.memory.ConversationToolCallRecord;
 import com.example.ragagent.observability.RagTracing;
@@ -151,6 +152,46 @@ class SimpleTaskAgentTest {
         assertTrue(prompt.contains("儿童积木 300 片售价 149 元，库存充足。"));
         assertTrue(prompt.indexOf("当前会话短期导购偏好") < prompt.indexOf("最近工具调用上下文"));
         assertTrue(prompt.indexOf("最近工具调用上下文") < prompt.indexOf("用户本轮输入："));
+    }
+
+    @Test
+    void tryRunShouldIncludeRecentChatMemoryInSimpleTaskPrompt() {
+        AgentMocks mocks = agentMocks("已加入购物车");
+        ArgumentCaptor<String> userPromptCaptor = ArgumentCaptor.forClass(String.class);
+        when(mocks.requestSpec.user(userPromptCaptor.capture())).thenReturn(mocks.requestSpec);
+        ConversationMemoryService memoryService = mock(ConversationMemoryService.class);
+        when(memoryService.recentConversationContext("alice", "session-1")).thenReturn("""
+                最近 2 轮短期对话上下文：
+                用户：婴儿湿巾 80 抽 12 包这款多少钱？
+                助手：婴儿湿巾 80抽 12包 SKU 4056，价格 99.00 元，库存 300 件。
+
+                使用规则：
+                - 本轮出现“那、这个、它、加 N 件”等省略指代时，优先结合最近上下文解析。
+                - 如果最近上下文中没有唯一可确定商品，禁止猜 SKU 或订单信息，先要求用户确认。
+                """.trim());
+        SimpleTaskAgent agent = agent(mocks, null, List.of(providerWithTools("mall_add_to_cart")),
+                new RagTracing(), memoryService);
+        ShoppingIntentRoute route = new ShoppingIntentRoute(
+                "CART_CONFIRMATION",
+                "SIMPLE_SHOPPING_TOOL",
+                Map.of(),
+                Map.of(),
+                false,
+                0.95,
+                "加购商品"
+        );
+
+        FastLaneResult result = agent.tryRun(route, "那加 2 件到购物车。", "alice",
+                "session-1", 0.7, "", "Bearer token", "alice", "demo123");
+
+        assertTrue(result.handled());
+        String prompt = userPromptCaptor.getValue();
+        assertTrue(prompt.contains("最近 2 轮短期对话上下文"));
+        assertTrue(prompt.contains("用户：婴儿湿巾 80 抽 12 包这款多少钱？"));
+        assertTrue(prompt.contains("助手：婴儿湿巾 80抽 12包 SKU 4056"));
+        assertTrue(prompt.contains("禁止猜 SKU"));
+        assertTrue(prompt.contains("那加 2 件到购物车。"));
+        verify(memoryService).recentConversationContext("alice", "session-1");
     }
 
     @Test
@@ -677,6 +718,18 @@ class SimpleTaskAgentTest {
                                   List<ToolCallbackProvider> providers,
                                   RagTracing tracing) {
         SimpleTaskAgent agent = new SimpleTaskAgent(mocks.builder, builtInTools, providers, tracing);
+        agent.init();
+        return agent;
+    }
+
+    private SimpleTaskAgent agent(AgentMocks mocks,
+                                  BuiltInTools builtInTools,
+                                  List<ToolCallbackProvider> providers,
+                                  RagTracing tracing,
+                                  ConversationMemoryService conversationMemoryService) {
+        SimpleTaskAgent agent = conversationMemoryService == null
+                ? new SimpleTaskAgent(mocks.builder, builtInTools, providers, tracing)
+                : new SimpleTaskAgent(mocks.builder, builtInTools, providers, conversationMemoryService, tracing);
         agent.init();
         return agent;
     }

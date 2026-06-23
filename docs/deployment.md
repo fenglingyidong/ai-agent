@@ -126,6 +126,8 @@ mvn.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8"
 
 合并或拉取新代码后，必须重启 RAGAgent 后端；否则前端可能会调用到旧进程，出现新接口 404，例如 `GET /api/conversations`。
 
+当前后端还会在进程内维护会话级工具调用上下文窗口，不需要额外环境变量；只要同一用户持续使用同一个 `sessionId`，简单任务快车道和主 ReAct 就都能读到最近工具调用事实。窗口最近 3 次保留完整输入输出，更早记录折叠显示；输入输出中的 `token`、`authorization`、`password`、`mallUsername` 等敏感字段会自动脱敏。
+
 ## 启动前端
 
 终端 6：启动 Vue3 前端。
@@ -155,10 +157,10 @@ $auth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($pair))
 
 $env:LANGFUSE_ENABLED="true"
 $env:LANGFUSE_BASE_URL="http://localhost:3001"
-$env:LANGFUSE_CAPTURE_PROMPT="false"
-$env:LANGFUSE_CAPTURE_TOOL_PAYLOAD="false"
-$env:LANGFUSE_CAPTURE_RAG_CONTENT="false"
-$env:LANGFUSE_MAX_CAPTURE_CHARS="8000"
+$env:LANGFUSE_CAPTURE_PROMPT="true"
+$env:LANGFUSE_CAPTURE_TOOL_PAYLOAD="true"
+$env:LANGFUSE_CAPTURE_RAG_CONTENT="true"
+$env:LANGFUSE_MAX_CAPTURE_CHARS="20000"
 $env:LANGFUSE_OTLP_TRACING_ENABLED="true"
 $env:LANGFUSE_OTLP_TRACES_ENDPOINT="http://localhost:3001/api/public/otel/v1/traces"
 $env:LANGFUSE_OTLP_AUTHORIZATION="Basic $auth"
@@ -168,7 +170,7 @@ mvn.cmd spring-boot:run "-Dspring-boot.run.jvmArguments=-Dfile.encoding=UTF-8"
 
 当前项目通过 Spring Boot OTLP tracing 导出到 Langfuse，不需要再挂 OpenTelemetry Java Agent，也不要和旧的 `OTEL_*` / `-javaagent` 启动方式混用，避免重复 trace 或 HTTP 自动采集噪音。
 
-如果是在个人本地做 RAG/MCP 评测排查，需要查看 prompt、工具输入输出和 RAG 召回正文片段，可在启动前临时改为：
+如果是在个人本地做 RAG/MCP 评测排查，需要查看 prompt、工具输入输出和 RAG 召回正文片段，主要修改字段为：
 
 ```powershell
 $env:LANGFUSE_CAPTURE_PROMPT="true"
@@ -178,6 +180,8 @@ $env:LANGFUSE_MAX_CAPTURE_CHARS="20000"
 ```
 
 这些字段只有在链路实际调用工具时才会出现。模型没有调用 `searchProductKnowledge` 或商城 MCP 时，Langfuse 不会产生对应的 `tool.*` / `rag.*` 业务 span。
+
+如果你在本地排查多轮会话中的“上一轮刚查过的商品为什么这一轮没继承”，除了看 Langfuse 里的 `tool.*` / `rag.*` span，也要核对前端请求是否复用了同一个 `sessionId`。工具调用上下文窗口按 `userId` + `sessionId` 隔离，换会话后不会继承上一会话的工具结果。
 
 开启 `LANGFUSE_CAPTURE_PROMPT=true` 后，除了项目手工记录的 `llm.react.input`，Spring AI 内建的 chat model observation 也会把每轮 Prompt 写入 `langfuse.observation.input`。如果 Langfuse 里看不到这些内建 observation，先确认 `LANGFUSE_OTLP_TRACING_ENABLED=true`、`LANGFUSE_OTLP_AUTHORIZATION` 已设置，并且后端是在上述命令启动后重新运行的。
 
@@ -214,5 +218,6 @@ $owners | ForEach-Object { Stop-Process -Id $_ }
 - **RAGAgent Redis 容器名冲突**：已有 `rag-agent-redis` 容器在运行。若是同一项目旧容器，可执行 `docker compose up -d redis` 复用；若要重建，先确认数据可丢弃，再执行 `docker rm -f rag-agent-redis`。
 - **MySQL 连接失败**：确认 `mall-mysql` 在运行，且 `3307` 映射正常。
 - **商城工具不可用**：确认 `mall-gateway` 在 `8100`，`mall-mcp` 在 `8120`，并且 `MCP_CONTEXT_SECRET` 两边一致。
+- **多轮里没有继承上轮工具事实**：确认前端没有重新生成 `sessionId`，并确认当前问题仍落在同一个后端进程上。工具调用上下文窗口是进程内会话状态，按 `userId` + `sessionId` 隔离。
 - **Langfuse 页面打不开**：确认 `langfuse-langfuse-web-1` 已启动，且 `observability/langfuse/docker-compose.yml` 中 Web 服务监听 `0.0.0.0`。
 - **`Failed to export spans` / `HTTP status code 401`**：Langfuse OTLP 鉴权失败。重新从 Langfuse 项目设置复制同一项目的 public key 和 secret key，确认 `$pair` 形如 `pk-lf-...:sk-lf-...`，重新生成 `$auth`，并在同一个 PowerShell 窗口里重启后端。不要继续使用占位值 `pk-lf-xxx:sk-lf-xxx`，也不要混用旧的 `OTEL_EXPORTER_OTLP_HEADERS`。

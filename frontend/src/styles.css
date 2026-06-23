@@ -300,6 +300,71 @@ textarea {
     font-size: 12px;
 }
 
+.order-confirmation-card {
+    width: min(560px, 100%);
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid #b7cef8;
+    border-radius: 8px;
+    background: #ffffff;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+}
+
+.order-confirmation-head,
+.order-confirmation-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.order-confirmation-head span {
+    color: #2f6fed;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.order-items {
+    display: grid;
+    gap: 8px;
+}
+
+.order-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-top: 1px solid #edf1f5;
+}
+
+.order-item div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+}
+
+.order-item strong,
+.order-item small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.order-item small,
+.order-item span,
+.order-confirmation-foot small,
+.order-empty {
+    color: #667085;
+    font-size: 12px;
+}
+
+.order-actions {
+    display: flex;
+    gap: 8px;
+}
+
 .composer {
     display: grid;
     gap: 10px;

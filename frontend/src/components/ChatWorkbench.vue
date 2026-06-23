@@ -19,7 +19,12 @@ defineProps({ store: { type: Object, required: true } });
         type="error"
         :closable="false"
       />
-      <MessageList :messages="store.state.messages" />
+      <MessageList
+        :messages="store.state.messages"
+        :action-disabled="store.state.isStreaming"
+        @confirm-checkout="store.confirmCheckout"
+        @cancel-checkout="store.cancelCheckout"
+      />
       <ChatComposer :store="store" />
     </section>
   </main>

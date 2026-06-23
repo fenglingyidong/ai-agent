@@ -29,6 +29,7 @@ flowchart LR
 - **分层路由架构**：在 ReAct 主链路前增加 `ShoppingIntentRouter`，用小模型 JSON 路由把请求拆成 FAQ 快车道、单步商城工具快车道和复杂 ReAct 三类，降低简单任务对主模型和工具编排的依赖。
 - **商品事实约束**：商品推荐、价格、库存、SKU 等事实信息优先来自 RAG 检索或 `mall_*` MCP 工具，避免把关键交易信息交给模型自由生成。
 - **多层记忆与知识存储**：Redis 承接短期对话窗口、导购偏好和 RAG 父块热点缓存，偏好使用 Hash 保存当前状态、List 保存最近 5 次增量变化；MySQL 记录原文会话流水和 RAG 父块事实源，Milvus 保存长期摘要向量和商品子块向量，把“即时上下文、可追溯日志、长期记忆、商品知识”拆成不同存储职责。
+- **工具调用上下文窗口**：会话级 `ConversationToolCallMemoryService` 统一记录主 ReAct、简单任务快车道和 RAG 内部商城详情补强产生的工具事实；最近 3 次工具调用保留完整输入输出，更早记录折叠展示，并对敏感字段脱敏、对超长文本截断。
 - **MCP 商城边界**：商城商品、购物车和订单能力通过独立 `mall-mcp` 服务暴露，Agent 侧只消费 MCP 工具，不直连商城 REST，便于隔离业务系统和 Agent 编排层。
 - **安全工具编排**：`PromptSecurityFilter` 前置处理注入与敏感值脱敏，`mall_create_order` 在 Java 侧设置确认门禁，确保高风险工具调用不只依赖模型自觉。
 
@@ -109,6 +110,10 @@ Content-Type: application/json
 
 商城商品、购物车和订单经独立 `mall-mcp` 服务暴露，MCP endpoint 为 `http://localhost:8120/mcp`。工具清单、上下文接口、`mall_create_order` 硬门禁等细节见 [docs/architecture.md#mcp-边界](docs/architecture.md#mcp-边界)。
 
+### 工具调用上下文窗口
+
+Agent 会把同一会话内最近的工具调用结果追加到统一上下文窗口，供简单任务快车道和主 ReAct 共同消费。窗口按追加顺序维护，最近 3 次保留完整输入输出，更早记录只保留“已调用过该工具”的折叠提示；`token`、`authorization`、`password`、`mallUsername` 等敏感字段会脱敏，超长结果会截断。实现边界见 [docs/architecture.md#记忆设计](docs/architecture.md#记忆设计)。
+
 其他接口：`GET /api/models/chat`、`GET /api/conversations`、`POST /api/rag/documents/import`。
 
 ## 文档索引
@@ -128,6 +133,7 @@ Content-Type: application/json
 | `ShoppingIntentRouterTest` | JSON 路由解析、图文 media 透传 |
 | `ShoppingRouteExecutorTest` / `SimpleTaskAgentTest` | 快车道短路、限定工具、MCP 不可用失败 |
 | `ShoppingStateServiceTest` / `ShoppingPreferencePromptRendererTest` | 偏好 Hash/List 存储、TTL、最近变化渲染 |
+| `ConversationToolCallMemoryServiceTest` / `ConversationMemoryServiceTest` / `LoggingToolCallbackTest` | 工具调用窗口折叠、脱敏、错误记录、短期上下文拼接 |
 | `PromptSecurityFilterTest` | 注入过滤与敏感值恢复 |
 | `ParentChildHybridDocumentRetrieverTest` | Dense + BM25 融合与截断 |
 | `LongTermMemoryAdvisorTest` / `RedisChatMemoryRepositoryTest` | 短期窗口淘汰、长期摘要触发 |

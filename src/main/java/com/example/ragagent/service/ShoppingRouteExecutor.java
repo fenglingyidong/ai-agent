@@ -6,6 +6,7 @@ import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingPreferenceSnapshot;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
+import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.tools.BuiltInTools;
 import io.opentelemetry.api.trace.Span;
@@ -64,6 +65,9 @@ public class ShoppingRouteExecutor {
     @Autowired(required = false)
     private RagTracing tracing;
 
+    @Autowired(required = false)
+    private ConversationMemoryService conversationMemoryService;
+
     public ShoppingRouteExecutor() {
     }
 
@@ -102,6 +106,24 @@ public class ShoppingRouteExecutor {
                                  ShoppingPreferenceExtractor shoppingPreferenceExtractor,
                                  ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer,
                                  BuiltInTools builtInTools) {
+        this(intentRouter,
+                simpleTaskAgent,
+                taskPolicyRegistry,
+                shoppingStateService,
+                shoppingPreferenceExtractor,
+                shoppingPreferencePromptRenderer,
+                builtInTools,
+                null);
+    }
+
+    public ShoppingRouteExecutor(ShoppingIntentRouter intentRouter,
+                                 SimpleTaskAgent simpleTaskAgent,
+                                 ShoppingTaskPolicyRegistry taskPolicyRegistry,
+                                 ShoppingStateService shoppingStateService,
+                                 ShoppingPreferenceExtractor shoppingPreferenceExtractor,
+                                 ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer,
+                                 BuiltInTools builtInTools,
+                                 ConversationMemoryService conversationMemoryService) {
         this.intentRouter = intentRouter;
         this.simpleTaskAgent = simpleTaskAgent;
         this.taskPolicyRegistry = taskPolicyRegistry;
@@ -109,6 +131,7 @@ public class ShoppingRouteExecutor {
         this.shoppingPreferenceExtractor = shoppingPreferenceExtractor;
         this.shoppingPreferencePromptRenderer = shoppingPreferencePromptRenderer;
         this.builtInTools = builtInTools;
+        this.conversationMemoryService = conversationMemoryService;
         this.tracing = new RagTracing();
     }
 
@@ -130,7 +153,11 @@ public class ShoppingRouteExecutor {
 
         // 路由前先注入已有偏好，让小模型能结合当前状态和近期变化识别本轮意图。
         String preferenceContextBeforeRoute = renderPreferenceContext(loadPreferenceSnapshot(userId, sessionId));
-        ShoppingIntentRoute route = intentRouter.route(normalizedMessage, safeMedia, preferenceContextBeforeRoute);
+        String routeContextBeforeRoute = buildRouteContext(
+                preferenceContextBeforeRoute,
+                recentConversationContext(userId, sessionId)
+        );
+        ShoppingIntentRoute route = intentRouter.route(normalizedMessage, safeMedia, routeContextBeforeRoute);
         // 路由结果可能带来新的偏好槽位，合并后重新渲染给快车道或主 Agent 使用。
         String preferenceContextAfterRoute = updateAndRenderPreferenceContext(userId, sessionId, normalizedMessage, route);
         List<ShoppingTaskPolicy> taskPolicies = resolveTaskPolicies(route);
@@ -156,9 +183,10 @@ public class ShoppingRouteExecutor {
         }
         boolean mallToolsAllowedForCore = mallToolsAllowedByPolicy && allowMallToolsForCore(route, normalizedMessage, safeMedia.size());
         String coreAgentMessage = buildCoreAgentMessage(normalizedMessage, safeMedia.size());
+        // 暂停 Java 侧预检 RAG；多轮指代场景需要先重新设计检索 query，再恢复 maybePreRetrieveKnowledge(route, normalizedMessage)。
         String trustedContext = buildTrustedContext(
                 preferenceContextAfterRoute,
-                maybePreRetrieveKnowledge(route, normalizedMessage, userId, sessionId)
+                ""
         );
         return new RoutedAgentRequest(
                 coreAgentMessage,
@@ -234,6 +262,17 @@ public class ShoppingRouteExecutor {
         }
         String rendered = shoppingPreferencePromptRenderer.render(snapshot);
         return StringUtils.hasText(rendered) ? rendered : "";
+    }
+
+    private String recentConversationContext(String userId, String sessionId) {
+        return conversationMemoryService == null ? "" : conversationMemoryService.recentConversationContext(userId, sessionId);
+    }
+
+    private String buildRouteContext(String preferenceContext, String recentConversationContext) {
+        StringBuilder builder = new StringBuilder();
+        appendTrustedContextSection(builder, preferenceContext);
+        appendTrustedContextSection(builder, recentConversationContext);
+        return builder.toString();
     }
 
     private boolean isOrderCreationAllowed(ShoppingIntentRoute route, String message) {

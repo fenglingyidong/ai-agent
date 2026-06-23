@@ -1,0 +1,44 @@
+runId=api-20260622-1910-json-multiturn
+endpoint=http://localhost:18082/api/react
+modelId=qwen
+conversationCount=5
+START M01 session=api-20260622-1910-json-multiturn-M01
+TURN M01.1 request
+TURN M01.1 status=200 seconds=9.701 answerChars=327
+TURN M01.2 request
+TURN M01.2 status=200 seconds=11.599 answerChars=275
+TURN M01.3 request
+TURN M01.3 status=200 seconds=5.916 answerChars=80
+START M02 session=api-20260622-1910-json-multiturn-M02
+TURN M02.1 request
+TURN M02.1 status=200 seconds=13.821 answerChars=450
+TURN M02.2 request
+TURN M02.2 status=500 seconds=2.756 answerChars=110
+TURN M02.3 request
+TURN M02.3 status=200 seconds=5.073 answerChars=121
+START M03 session=api-20260622-1910-json-multiturn-M03
+TURN M03.1 request
+TURN M03.1 status=200 seconds=7.851 answerChars=219
+TURN M03.2 request
+TURN M03.2 status=200 seconds=9.946 answerChars=301
+TURN M03.3 request
+TURN M03.3 status=200 seconds=5.092 answerChars=152
+START M04 session=api-20260622-1910-json-multiturn-M04
+TURN M04.1 request
+TURN M04.1 status=200 seconds=8.650 answerChars=238
+TURN M04.2 request
+TURN M04.2 status=200 seconds=4.108 answerChars=60
+TURN M04.3 request
+TURN M04.3 status=200 seconds=5.888 answerChars=56
+START M05 session=api-20260622-1910-json-multiturn-M05
+TURN M05.1 request
+TURN M05.1 status=200 seconds=5.695 answerChars=85
+TURN M05.2 request
+TURN M05.2 status=200 seconds=5.157 answerChars=35
+TURN M05.3 request
+TURN M05.3 status=200 seconds=4.761 answerChars=69
+TURN M05.4 request
+TURN M05.4 status=200 seconds=4.731 answerChars=66
+results=docs/evaluation/artifacts/api-20260622-1910-json-multiturn-mall-sku-rag-multiturn-results.json
+traceSummary=docs/evaluation/artifacts/api-20260622-1910-json-multiturn-langfuse-trace-summary.jsonl
+durationSeconds=110.749

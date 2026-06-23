@@ -11,8 +11,7 @@ import lombok.Setter;
 public class ShoppingPreferenceState {
 
     private String category;
-    private Integer budgetMin;
-    private Integer budgetMax;
+    private Integer budget;
     private String brand;
     private String size;
     private String color;

@@ -44,8 +44,7 @@ public class ShoppingStateService {
     };
     private static final List<String> PREFERENCE_FIELDS = List.of(
             "category",
-            "budgetMin",
-            "budgetMax",
+            "budget",
             "brand",
             "size",
             "color",
@@ -116,7 +115,6 @@ public class ShoppingStateService {
         }
         ShoppingPreferenceState before = loadPreference(userId, sessionId);
         ShoppingPreferenceState state = mergePolicy.merge(copyOf(before), patch);
-        validateBudgetRange(state);
         savePreference(userId, sessionId, before, state);
         return state;
     }
@@ -155,18 +153,10 @@ public class ShoppingStateService {
         redisTemplate.expire(changesKey, preferenceTtl);
     }
 
-    private void validateBudgetRange(ShoppingPreferenceState state) {
-        if (state.getBudgetMin() != null && state.getBudgetMax() != null
-                && state.getBudgetMin() > state.getBudgetMax()) {
-            throw new IllegalArgumentException("budgetMin must be less than or equal to budgetMax");
-        }
-    }
-
     private ShoppingPreferenceState fromHash(Map<Object, Object> entries) {
         ShoppingPreferenceState state = new ShoppingPreferenceState();
         state.setCategory(readString(entries, "category"));
-        state.setBudgetMin(readInteger(entries, "budgetMin"));
-        state.setBudgetMax(readInteger(entries, "budgetMax"));
+        state.setBudget(readBudget(entries));
         state.setBrand(readString(entries, "brand"));
         state.setSize(readString(entries, "size"));
         state.setColor(readString(entries, "color"));
@@ -223,8 +213,7 @@ public class ShoppingStateService {
             return copy;
         }
         copy.setCategory(source.getCategory());
-        copy.setBudgetMin(source.getBudgetMin());
-        copy.setBudgetMax(source.getBudgetMax());
+        copy.setBudget(source.getBudget());
         copy.setBrand(source.getBrand());
         copy.setSize(source.getSize());
         copy.setColor(source.getColor());
@@ -243,8 +232,7 @@ public class ShoppingStateService {
         }
         return switch (field) {
             case "category" -> state.getCategory();
-            case "budgetMin" -> state.getBudgetMin();
-            case "budgetMax" -> state.getBudgetMax();
+            case "budget" -> state.getBudget();
             case "brand" -> state.getBrand();
             case "size" -> state.getSize();
             case "color" -> state.getColor();
@@ -281,6 +269,18 @@ public class ShoppingStateService {
             log.warn("Failed to parse shopping preference integer field. field={}, value={}", field, text);
             return null;
         }
+    }
+
+    private Integer readBudget(Map<Object, Object> entries) {
+        Integer budget = readInteger(entries, "budget");
+        if (budget != null) {
+            return budget;
+        }
+        Integer legacyMax = readInteger(entries, "budgetMax");
+        if (legacyMax != null) {
+            return legacyMax;
+        }
+        return readInteger(entries, "budgetMin");
     }
 
     private Long readLong(Map<Object, Object> entries, String field) {
@@ -330,9 +330,7 @@ public class ShoppingStateService {
             @Size(max = 64)
             String category,
             @PositiveOrZero
-            Integer budgetMin,
-            @PositiveOrZero
-            Integer budgetMax,
+            Integer budget,
             @Size(max = 64)
             String brand,
             @Size(max = 64)
@@ -349,8 +347,7 @@ public class ShoppingStateService {
             Long turnNo
     ) {
         public ShoppingPreferencePatch(String category,
-                                       Integer budgetMin,
-                                       Integer budgetMax,
+                                       Integer budget,
                                        String brand,
                                        String size,
                                        String color,
@@ -358,8 +355,7 @@ public class ShoppingStateService {
                                        String usageScenario) {
             this(
                     category,
-                    budgetMin,
-                    budgetMax,
+                    budget,
                     brand,
                     size,
                     color,

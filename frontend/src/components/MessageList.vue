@@ -1,9 +1,12 @@
 <script setup>
 import { nextTick, ref, watch } from "vue";
+import OrderConfirmationCard from "./OrderConfirmationCard.vue";
 
 const props = defineProps({
-  messages: { type: Array, required: true }
+  messages: { type: Array, required: true },
+  actionDisabled: { type: Boolean, default: false }
 });
+const emit = defineEmits(["confirm-checkout", "cancel-checkout"]);
 const viewport = ref(null);
 
 watch(() => props.messages.map((message) => message.content).join(""), async () => {
@@ -30,6 +33,13 @@ function time(value) {
         <el-image v-for="url in message.mediaUrls" :key="url" :src="url" fit="cover" :preview-src-list="message.mediaUrls" />
       </div>
       <div class="message-bubble">{{ message.content || (message.status === "processing" ? "正在思考..." : "") }}</div>
+      <OrderConfirmationCard
+        v-if="message.orderConfirmation"
+        :confirmation="message.orderConfirmation"
+        :disabled="actionDisabled"
+        @confirm="emit('confirm-checkout', message.id)"
+        @cancel="emit('cancel-checkout', message.id)"
+      />
       <small v-if="message.errorMessage" class="message-error">{{ message.errorMessage }}</small>
     </article>
   </section>

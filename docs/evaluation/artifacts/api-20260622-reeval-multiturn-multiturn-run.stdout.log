@@ -1,0 +1,43 @@
+runId=api-20260622-reeval-multiturn
+endpoint=http://localhost:18082/api/react
+modelId=qwen
+conversationCount=5
+START M01 session=api-20260622-reeval-multiturn-M01
+TURN M01.1 request
+TURN M01.1 status=200 seconds=10.977 answerChars=398
+TURN M01.2 request
+TURN M01.2 status=200 seconds=5.968 answerChars=308
+TURN M01.3 request
+TURN M01.3 status=200 seconds=3.965 answerChars=178
+START M02 session=api-20260622-reeval-multiturn-M02
+TURN M02.1 request
+TURN M02.1 status=200 seconds=6.378 answerChars=334
+TURN M02.2 request
+TURN M02.2 status=200 seconds=5.757 answerChars=285
+TURN M02.3 request
+TURN M02.3 status=200 seconds=4.672 answerChars=201
+START M03 session=api-20260622-reeval-multiturn-M03
+TURN M03.1 request
+TURN M03.1 status=200 seconds=6.013 answerChars=317
+TURN M03.2 request
+TURN M03.2 status=200 seconds=7.014 answerChars=354
+TURN M03.3 request
+TURN M03.3 status=200 seconds=7.090 answerChars=241
+START M04 session=api-20260622-reeval-multiturn-M04
+TURN M04.1 request
+TURN M04.1 status=200 seconds=3.581 answerChars=156
+TURN M04.2 request
+TURN M04.2 status=200 seconds=3.785 answerChars=71
+TURN M04.3 request
+TURN M04.3 status=200 seconds=3.682 answerChars=49
+START M05 session=api-20260622-reeval-multiturn-M05
+TURN M05.1 request
+TURN M05.1 status=200 seconds=1.803 answerChars=39
+TURN M05.2 request
+TURN M05.2 status=200 seconds=3.746 answerChars=71
+TURN M05.3 request
+TURN M05.3 status=200 seconds=1.709 answerChars=17
+TURN M05.4 skip type=ui_action
+results=docs/evaluation/artifacts/api-20260622-reeval-multiturn-mall-sku-rag-multiturn-results.json
+traceSummary=docs/evaluation/artifacts/api-20260622-reeval-multiturn-langfuse-trace-summary.jsonl
+durationSeconds=76.146

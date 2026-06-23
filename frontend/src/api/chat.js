@@ -27,6 +27,25 @@ export async function deleteSession(auth, sessionId) {
     });
 }
 
+export async function loadMockCheckoutConfirmation(auth, sessionId) {
+    const params = new URLSearchParams({ sessionId });
+    return requestJson(auth, `/api/mock/checkout/confirmation?${params.toString()}`);
+}
+
+export async function confirmMockCheckout(auth, sessionId) {
+    return requestJson(auth, "/api/mock/checkout/confirm", {
+        method: "POST",
+        body: { sessionId }
+    });
+}
+
+export async function cancelMockCheckout(auth, sessionId) {
+    return requestJson(auth, "/api/mock/checkout/cancel", {
+        method: "POST",
+        body: { sessionId }
+    });
+}
+
 export async function streamReactChat(auth, payload, onChunk, signal) {
     const formData = new FormData();
     formData.set("sessionId", payload.sessionId);

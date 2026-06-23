@@ -1,0 +1,122 @@
+{
+  "runId": "dryrun-m05-ui-action",
+  "source": "docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.md",
+  "questions": "docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.json",
+  "endpoint": "http://127.0.0.1:1/api/react",
+  "modelId": "qwen",
+  "webSearchEnabled": false,
+  "durationSeconds": 6.531,
+  "conversations": [
+    {
+      "id": "M05",
+      "title": "商品确认到下单",
+      "focus": "商品确认、加购、订单预览、前端确认卡片和确定性下单接口。",
+      "sessionId": "dryrun-m05-ui-action-M05",
+      "expectedToolChain": [
+        {
+          "turn": 1,
+          "tools": [
+            "mall_get_product_detail"
+          ],
+          "note": "或等价商城实时详情"
+        },
+        {
+          "turn": 2,
+          "tools": [
+            "mall_add_to_cart"
+          ]
+        },
+        {
+          "turn": 3,
+          "tools": [
+            "mall_view_cart",
+            "mall_prepare_order"
+          ],
+          "note": "并展示前端确认下单卡片"
+        },
+        {
+          "turn": 4,
+          "tools": [
+            "/api/mock/checkout/confirm"
+          ],
+          "note": "点击确认卡片的确认按钮后由确定性接口处理，不经过大模型"
+        }
+      ],
+      "deductions": [
+        "任意轮次由大模型调用 mall_create_order。",
+        "Turn 3 未展示确认下单卡片。",
+        "没有复述订单摘要。",
+        "确定性 checkout 接口失败却回复下单成功。",
+        "编造订单号或收货信息。"
+      ],
+      "turns": [
+        {
+          "id": "M05-T1",
+          "question": "婴儿湿巾 80 抽 12 包这款多少钱？适合囤吗？",
+          "sessionId": "dryrun-m05-ui-action-M05",
+          "status": 0,
+          "durationSeconds": 2.42,
+          "answer": "",
+          "error": "[WinError 10061] 由于目标计算机积极拒绝，无法连接。",
+          "turn": 1,
+          "type": "chat",
+          "expectedAnswerPoints": [
+            "确认 4056_婴儿湿巾 80抽 12包，品牌 PureNest。",
+            "明确价格 99.00 元，库存 300 件。",
+            "说明大包装更适合家庭囤货。"
+          ]
+        },
+        {
+          "id": "M05-T2",
+          "question": "那加 2 件到购物车。",
+          "sessionId": "dryrun-m05-ui-action-M05",
+          "status": 0,
+          "durationSeconds": 2.052,
+          "answer": "",
+          "error": "[WinError 10061] 由于目标计算机积极拒绝，无法连接。",
+          "turn": 2,
+          "type": "chat",
+          "expectedAnswerPoints": [
+            "调用 mall_add_to_cart，加入 SKU 4056，数量 2。",
+            "回复复述商品、数量、单价 99.00 元和预计小计 198.00 元。"
+          ]
+        },
+        {
+          "id": "M05-T3",
+          "question": "看看购物车，然后下单。",
+          "sessionId": "dryrun-m05-ui-action-M05",
+          "status": 0,
+          "durationSeconds": 2.057,
+          "answer": "",
+          "error": "[WinError 10061] 由于目标计算机积极拒绝，无法连接。",
+          "turn": 3,
+          "type": "chat",
+          "expectedAnswerPoints": [
+            "调用 mall_view_cart 或 mall_prepare_order。",
+            "展示购物车或订单预览：商品、数量、单价、小计、收货摘要或缺失信息。",
+            "不能直接调用 mall_create_order。",
+            "必须在聊天消息里展示确认下单卡片，卡片包含购物车内容、总价、确认和取消按钮。"
+          ]
+        },
+        {
+          "id": "M05-T4",
+          "question": "点击确认下单卡片的“确认”按钮。",
+          "sessionId": "dryrun-m05-ui-action-M05",
+          "status": "SKIPPED",
+          "durationSeconds": 0,
+          "answer": "",
+          "error": "ui_action is not sent to /api/react",
+          "turn": 4,
+          "type": "ui_action",
+          "expectedAnswerPoints": [
+            "不调用大模型，不调用 mall_create_order。",
+            "前端调用确定性 checkout 接口；mock 阶段调用 /api/mock/checkout/confirm。",
+            "若创建成功，回复订单创建成功和接口返回的订单信息。",
+            "若接口失败，说明失败原因，不编造订单号。",
+            "点击取消按钮时调用 /api/mock/checkout/cancel；mock 阶段取消后清空购物车。"
+          ]
+        }
+      ]
+    }
+  ]
+}

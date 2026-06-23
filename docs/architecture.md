@@ -40,8 +40,9 @@ flowchart LR
 - **`ReactStreamExecutor`（`service/`）**：主链路流式执行器。负责 Spring AI advisor 前后置、`ChatModel` 流式输出、敏感值恢复、fallback、对话流水和 `llm.react` tracing 收口。
 - **`ShoppingIntentRouter`（`service/`）**：轻量意图路由器。把请求分类为 `A_FAQ_SIMPLE_QUERY`、`B_SIMPLE_SHOPPING_TOOL`、`C_COMPLEX_REACT`，输出固定结构 JSON，默认模型 `qwen3-vl-8b-instruct`。
 - **`ShoppingRouteExecutor`（`service/`）**：决定是否短路。置信度低于阈值（默认 `0.7`）或意图属于复杂场景时回落到主链路；否则委托 `SimpleTaskAgent` 走快车道。
-- **`SimpleTaskAgent`（`service/`）**：A/B 快车道执行器，仅允许调用受限工具集（A 路径只有 `searchProductKnowledge`，B 路径只有 `mall_search_products` / `mall_get_product_detail` / `mall_add_to_cart` / `mall_view_cart` / `mall_prepare_order`）。
-- **`BuiltInTools`（`tools/`）**：注册 `searchProductKnowledge` 和 `updateShoppingPreference` 两个内置工具。
+- **`SimpleTaskAgent`（`service/`）**：A/B 快车道执行器，仅允许调用受限工具集（A 路径只有 `searchProductKnowledge`，B 路径只有 `mall_search_products` / `mall_get_product_detail` / `mall_add_to_cart` / `mall_view_cart` / `mall_prepare_order`）；快车道 prompt 也会读取本会话最近工具调用上下文。
+- **`BuiltInTools`（`tools/`）**：注册 `searchProductKnowledge` 和 `updateShoppingPreference` 两个内置工具；`searchProductKnowledge` 在命中 SKU 时可触发内部 `mall_get_product_detail` 实时补强，并把补强结果写入同一工具调用窗口。
+- **`ConversationToolCallMemoryService`（`memory/`）**：会话级工具调用上下文窗口。负责按 `userId` + `sessionId` 追加工具记录、统一脱敏、超长截断，以及“最近 3 次完整保留、较早记录折叠”的渲染策略。
 - **`PromptSecurityFilter`（`security/`）**：基于正则的注入识别与敏感值占位符化，并在响应阶段恢复占位符。
 - **`mall-mcp` 集成**：通过 `MallMcpClient` 与独立的 `mall-mcp` 服务交互，所有 `mall_*` 工具均经 MCP 协议暴露，不直连商城 REST。
 
@@ -61,7 +62,7 @@ flowchart LR
 1. `ChatController.react` 接收 multipart 请求，拼装 `Media` 列表（最多 4 张图，支持上传或 URL）。
 2. `PromptSecurityFilter.secure(...)` 对用户文本做注入过滤和敏感值脱敏，得到 `SecuredPrompt`。
 3. `ShoppingRouteExecutor.routeBeforeCore(...)` 调用 `ShoppingIntentRouter` 取得意图 JSON；满足快车道条件时短路到 `SimpleTaskAgent`，否则把脱敏后的消息和媒体交给 `ReActAgent`。
-4. `ReActAgent` 委托 `ReactToolResolver` 解析当前工具集合，委托 `ReactPromptBuilder` 渲染 system prompt，并把请求交给 `ReactStreamExecutor` 流式输出 Token；流结束时恢复敏感值并写入 tracing 与对话流水。
+4. `ReActAgent` 委托 `ReactToolResolver` 解析当前工具集合，委托 `ReactPromptBuilder` 渲染 system prompt，并把“可信业务上下文 + 最近工具调用上下文”一起交给 `ReactStreamExecutor` 流式输出 Token；流结束时恢复敏感值并写入 tracing 与对话流水。
 5. 用户提问和助手最终可见回答的原文流水由 `ConversationLogService` 异步写入 MySQL。
 
 ## 存储设计
@@ -73,7 +74,9 @@ flowchart LR
 ## 记忆设计
 
 - **短期记忆**：`MessageChatMemoryAdvisor` 基于 Redis 窗口缓存最近若干轮对话，按 `userId` + `sessionId` 隔离。
+- **工具调用上下文窗口**：`ConversationToolCallMemoryService` 在进程内按 `userId` + `sessionId` 维护工具调用记录。`LoggingToolCallback` 会记录主 ReAct 与简单商城快车道工具调用，`SimpleTaskAgent.KnowledgeFastLaneTools` 会记录简单 RAG 快车道调用，`BuiltInTools.searchProductKnowledge(...)` 内部的 `mall_get_product_detail` 实时补强也会写入同一窗口。窗口按追加顺序渲染“最近工具调用上下文”，最近 3 次保留完整输入输出，较早记录折叠展示；`token`、`authorization`、`password`、`mallUsername` 等敏感字段会脱敏，超长输入输出会截断。
 - **长期摘要**：`LongTermMemoryAdvisor` 在 `before(...)` 阶段调用 `LongTermMemoryService`，根据当前用户问题在 `memory_index` 检索摘要，命中后通过 `augmentSystemMessage` 注入到 system 上下文。摘要的写入由后台任务在对话累积到阈值后触发。
+- **短期上下文拼接**：`ConversationMemoryService` 会把最近 2 轮短期对话上下文与“最近工具调用上下文”拼接后提供给简单任务链路；主 ReAct 则单独读取最近工具调用上下文，并追加到可信 system context。
 - **短期偏好状态**：`ShoppingStateService` 用 Redis Hash 保存当前 `ShoppingPreferenceState`（品类、预算、品牌、尺码、颜色、风格、使用场景），用 Redis List 保存最近 5 次按轮次聚合的增量 JSON。每次实际字段变化后，服务执行 `HSET` / `HDEL`、`RPUSH`、`LTRIM -5 -1`，并刷新两类 key 的 TTL。偏好可由路由后的自动抽取或 `BuiltInTools.updateShoppingPreference` 工具维护。每轮 `/api/react` 请求都会把当前偏好和最近变化摘要注入路由小模型、简单任务快车道和主 Agent；当前 Hash 是事实源，最近变化只作为上下文线索。用户显式修改偏好以本轮表达为准，类目切换时会清理品牌、尺码、颜色、风格、使用场景等强相关旧字段。
 
 ## MCP 边界

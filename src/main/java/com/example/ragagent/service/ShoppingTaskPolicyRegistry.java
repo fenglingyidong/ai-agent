@@ -70,7 +70,7 @@ public class ShoppingTaskPolicyRegistry {
                 Set.of(CART_CONFIRMATION),
                 Set.of("skuId", "quantity"),
                 Set.of("mall_get_product_detail", "mall_add_to_cart", "mall_view_cart",
-                        "mall_prepare_order", "mall_create_order"),
+                        "mall_prepare_order"),
                 true,
                 skill("cart-confirmation")
         ));

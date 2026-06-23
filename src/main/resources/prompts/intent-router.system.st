@@ -22,8 +22,8 @@ intent 选择：
 
 preference_delta：
 - 只填本轮明确新增或修改的偏好；没有输出{}；禁止继承历史偏好。
-- 字段：category、brand、budget_min、budget_max、size、color、style、usage_scenario、clear_fields。
-- budget_min、budget_max 用数字；clear_fields 可包含 brand、budget、category、size、color、style、usage_scenario。
+- 字段：category、brand、budget、size、color、style、usage_scenario、clear_fields。
+- budget 用数字，表示用户本轮明确给出的预算值；“400 以内”“400 左右”“300 到 500”都只填一个预算值，范围表达取上限；clear_fields 可包含 brand、budget、category、size、color、style、usage_scenario。
 - “品牌不限”“预算不限”等清除偏好写入 clear_fields。
 
 confidence：

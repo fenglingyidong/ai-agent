@@ -130,6 +130,24 @@ function resolveErrorMessage(error, fallback, { networkFallback = false } = {}) 
     return error?.message || fallback;
 }
 
+function shouldShowCheckoutConfirmation(message) {
+    return /下单|确认订单|提交订单/.test(message || "");
+}
+
+function createAssistantMessage(content, extra = {}) {
+    return {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content,
+        modelId: "",
+        status: "completed",
+        createdAt: Date.now(),
+        mediaUrls: [],
+        errorMessage: "",
+        ...extra
+    };
+}
+
 export function createAppStore(api = defaultApi, storage) {
     const safeStorage = resolveStorage(storage);
     const preferences = loadPreferences(safeStorage);
@@ -368,6 +386,20 @@ export function createAppStore(api = defaultApi, storage) {
             catch (error) {
                 state.error = resolveErrorMessage(error, "会话列表刷新失败。", { networkFallback: true });
             }
+            if (shouldShowCheckoutConfirmation(effectiveMessage) && api.loadMockCheckoutConfirmation) {
+                try {
+                    const confirmation = await api.loadMockCheckoutConfirmation(state.auth, state.currentSessionId);
+                    state.messages.push(createAssistantMessage("请确认购物车内容后再下单。", {
+                        orderConfirmation: {
+                            ...confirmation,
+                            status: confirmation.empty ? "empty" : "pending"
+                        }
+                    }));
+                }
+                catch (error) {
+                    state.error = resolveErrorMessage(error, "加载下单确认失败。", { networkFallback: true });
+                }
+            }
         }
         catch (error) {
             state.error = resolveErrorMessage(error, "请求失败。", { networkFallback: true });
@@ -386,6 +418,45 @@ export function createAppStore(api = defaultApi, storage) {
         finally {
             state.isStreaming = false;
             abortController = null;
+        }
+    }
+
+    function findCheckoutMessage(messageId) {
+        return state.messages.find((message) => message.id === messageId && message.orderConfirmation);
+    }
+
+    async function confirmCheckout(messageId) {
+        const message = findCheckoutMessage(messageId);
+        if (!message || !api.confirmMockCheckout) {
+            return;
+        }
+        clearError();
+        try {
+            const result = await api.confirmMockCheckout(state.auth, message.orderConfirmation.sessionId || state.currentSessionId);
+            message.orderConfirmation.status = "confirmed";
+            message.orderConfirmation.orderId = result.orderId || "";
+            state.messages.push(createAssistantMessage(`已创建订单 ${result.orderId || "MOCK"}。`));
+        }
+        catch (error) {
+            state.error = resolveErrorMessage(error, "确认下单失败。", { networkFallback: true });
+            throw error;
+        }
+    }
+
+    async function cancelCheckout(messageId) {
+        const message = findCheckoutMessage(messageId);
+        if (!message || !api.cancelMockCheckout) {
+            return;
+        }
+        clearError();
+        try {
+            await api.cancelMockCheckout(state.auth, message.orderConfirmation.sessionId || state.currentSessionId);
+            message.orderConfirmation.status = "cancelled";
+            state.messages.push(createAssistantMessage("已取消下单并清空购物车。"));
+        }
+        catch (error) {
+            state.error = resolveErrorMessage(error, "取消下单失败。", { networkFallback: true });
+            throw error;
         }
     }
 
@@ -414,6 +485,8 @@ export function createAppStore(api = defaultApi, storage) {
         selectSession,
         removeSession,
         sendMessage,
+        confirmCheckout,
+        cancelCheckout,
         stopStreaming,
         refreshSessions,
         loadMoreSessions,

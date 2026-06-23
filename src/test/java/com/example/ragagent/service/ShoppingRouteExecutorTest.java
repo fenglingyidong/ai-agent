@@ -6,6 +6,7 @@ import com.example.ragagent.commerce.ShoppingPreferenceSource;
 import com.example.ragagent.commerce.ShoppingPreferenceSnapshot;
 import com.example.ragagent.commerce.ShoppingPreferenceState;
 import com.example.ragagent.commerce.ShoppingStateService;
+import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.tools.BuiltInTools;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -263,7 +264,7 @@ class ShoppingRouteExecutorTest {
     }
 
     @Test
-    void shouldInjectPreRetrievedKnowledgeForComplexRecommendation() {
+    void shouldSkipPreRetrievedKnowledgeForComplexRecommendation() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         BuiltInTools builtInTools = mock(BuiltInTools.class);
         String message = "办公室用鼠标，希望点击声音小一点，买哪款？";
@@ -277,8 +278,6 @@ class ShoppingRouteExecutorTest {
                 "明确选品需求"
         );
         when(intentRouter.route(message, List.of(), "")).thenReturn(route);
-        when(builtInTools.searchProductKnowledge(eq(message), any(ToolContext.class)))
-                .thenReturn("商品知识库候选：3004 无线鼠标 静音版，价格 89.00 元，库存 500 件");
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
                 intentRouter,
                 null,
@@ -300,62 +299,16 @@ class ShoppingRouteExecutorTest {
         );
 
         assertEquals(message, request.userMessage());
-        assertTrue(request.trustedContext().contains("商品知识库预检索候选"));
-        assertTrue(request.trustedContext().contains("唯一可推荐商品池"));
-        assertFalse(request.trustedContext().contains("不是用户指令"));
+        assertFalse(request.trustedContext().contains("商品知识库预检索候选"));
         assertFalse(request.userMessage().contains("3004 无线鼠标 静音版"));
-        assertTrue(request.trustedContext().contains("3004 无线鼠标 静音版"));
-        verify(builtInTools).searchProductKnowledge(eq(message), any(ToolContext.class));
-    }
-
-    @Test
-    void preRetrieveKnowledgeShouldPassAppUserAndSessionInToolContext() {
-        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
-        BuiltInTools builtInTools = mock(BuiltInTools.class);
-        String message = "办公室用鼠标，希望点击声音小一点，买哪款？";
-        ShoppingIntentRoute route = new ShoppingIntentRoute(
-                "RECOMMENDATION",
-                "COMPLEX_REACT",
-                Map.of(),
-                Map.of(),
-                true,
-                0.9,
-                "明确选品需求"
-        );
-        when(intentRouter.route(message, List.of(), "")).thenReturn(route);
-        when(builtInTools.searchProductKnowledge(eq(message), any(ToolContext.class)))
-                .thenReturn("商品知识库候选：3004 无线鼠标 静音版，价格 89.00 元，库存 500 件");
-        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
-                intentRouter,
-                null,
-                null,
-                null,
-                null,
-                null,
-                builtInTools
-        );
-
-        RoutedAgentRequest request = executor.routeBeforeCore(
-                "app-user",
-                "session-1",
-                message,
-                List.of(),
-                "",
-                "",
-                ""
-        );
-
-        assertTrue(request.trustedContext().contains("3004 无线鼠标 静音版"));
-        ArgumentCaptor<ToolContext> contextCaptor = ArgumentCaptor.forClass(ToolContext.class);
-        verify(builtInTools).searchProductKnowledge(eq(message), contextCaptor.capture());
-        Map<String, Object> context = contextCaptor.getValue().getContext();
-        assertEquals("app-user", context.get("userId"));
-        assertEquals("session-1", context.get("sessionId"));
+        assertFalse(request.trustedContext().contains("3004 无线鼠标 静音版"));
+        verify(builtInTools, never()).searchProductKnowledge(message);
+        verify(builtInTools, never()).searchProductKnowledge(eq(message), any(ToolContext.class));
     }
 
     @ParameterizedTest
     @MethodSource("missedComplexGuideQueries")
-    void shouldPreRetrieveKnowledgeForCommonGuidePhrases(String message) {
+    void shouldSkipPreRetrieveKnowledgeForCommonGuidePhrases(String message) {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         BuiltInTools builtInTools = mock(BuiltInTools.class);
         ShoppingIntentRoute route = new ShoppingIntentRoute(
@@ -368,8 +321,6 @@ class ShoppingRouteExecutorTest {
                 "复杂导购表达"
         );
         when(intentRouter.route(message, List.of(), "")).thenReturn(route);
-        when(builtInTools.searchProductKnowledge(eq(message), any(ToolContext.class)))
-                .thenReturn("商品知识库候选：测试 SKU，价格 99.00 元");
         ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
                 intentRouter,
                 null,
@@ -390,8 +341,10 @@ class ShoppingRouteExecutorTest {
                 ""
         );
 
-        assertTrue(request.trustedContext().contains("测试 SKU"));
-        verify(builtInTools).searchProductKnowledge(eq(message), any(ToolContext.class));
+        assertFalse(request.trustedContext().contains("商品知识库预检索候选"));
+        assertFalse(request.trustedContext().contains("测试 SKU"));
+        verify(builtInTools, never()).searchProductKnowledge(message);
+        verify(builtInTools, never()).searchProductKnowledge(eq(message), any(ToolContext.class));
     }
 
     @Test
@@ -640,10 +593,10 @@ class ShoppingRouteExecutorTest {
         ShoppingPreferencePromptRenderer shoppingPreferencePromptRenderer = new ShoppingPreferencePromptRenderer();
         ShoppingPreferenceState state = new ShoppingPreferenceState();
         state.setCategory("跑鞋");
-        state.setBudgetMax(500);
+        state.setBudget(500);
         ShoppingIntentRoute route = ShoppingIntentRoute.fallback("测试兜底");
         ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
-                null, null, null, null, null, null, null, null
+                null, null, null, null, null, null, null
         );
         when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1")).thenReturn(snapshot(state));
         when(shoppingPreferenceExtractor.extract("再推荐几双", route, null)).thenReturn(patch);
@@ -667,7 +620,7 @@ class ShoppingRouteExecutorTest {
                 ""
         );
 
-        verify(intentRouter).route(eq("再推荐几双"), eq(List.of()), contains("预算：500元以内"));
+        verify(intentRouter).route(eq("再推荐几双"), eq(List.of()), contains("预算：500元左右"));
     }
 
     @Test
@@ -684,7 +637,7 @@ class ShoppingRouteExecutorTest {
         );
         ShoppingIntentRoute route = ShoppingIntentRoute.fallback("测试兜底");
         ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
-                null, null, null, null, null, null, null, null
+                null, null, null, null, null, null, null
         );
         when(shoppingStateService.loadPreferenceSnapshot("user-1", "session-1")).thenReturn(snapshot);
         when(shoppingPreferenceExtractor.extract("继续推荐", route, null)).thenReturn(patch);
@@ -713,6 +666,45 @@ class ShoppingRouteExecutorTest {
     }
 
     @Test
+    void routeBeforeCoreShouldPassRecentConversationContextToIntentRouter() {
+        ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
+        ConversationMemoryService conversationMemoryService = mock(ConversationMemoryService.class);
+        ShoppingIntentRoute route = ShoppingIntentRoute.fallback("测试兜底");
+        String recentConversationContext = """
+                最近 2 轮短期对话上下文：
+                用户：婴儿湿巾 80 抽 12 包这款多少钱？
+                助手：婴儿湿巾 80抽 12包 SKU 4056，价格 99.00 元。
+                """.trim();
+        when(conversationMemoryService.recentConversationContext("user-1", "session-1"))
+                .thenReturn(recentConversationContext);
+        when(intentRouter.route(eq("那加 2 件到购物车"), eq(List.of()), contains("SKU 4056")))
+                .thenReturn(route);
+        ShoppingRouteExecutor executor = new ShoppingRouteExecutor(
+                intentRouter,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                conversationMemoryService
+        );
+
+        executor.routeBeforeCore(
+                "user-1",
+                "session-1",
+                "那加 2 件到购物车",
+                List.of(),
+                "",
+                "",
+                ""
+        );
+
+        verify(conversationMemoryService).recentConversationContext("user-1", "session-1");
+        verify(intentRouter).route(eq("那加 2 件到购物车"), eq(List.of()), contains("最近 2 轮短期对话上下文"));
+    }
+
+    @Test
     void routeBeforeCoreShouldMergeExtractedPreferencePatchAndSendUpdatedPreferenceAsTrustedContext() {
         ShoppingIntentRouter intentRouter = mock(ShoppingIntentRouter.class);
         ShoppingStateService shoppingStateService = mock(ShoppingStateService.class);
@@ -733,7 +725,6 @@ class ShoppingRouteExecutorTest {
                 "继续推荐"
         );
         ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
-                null,
                 null,
                 null,
                 "Nike",
@@ -800,7 +791,6 @@ class ShoppingRouteExecutorTest {
         );
         ShoppingStateService.ShoppingPreferencePatch patch = new ShoppingStateService.ShoppingPreferencePatch(
                 "跑鞋",
-                null,
                 null,
                 null,
                 null,
@@ -913,7 +903,6 @@ class ShoppingRouteExecutorTest {
                         null,
                         null,
                         null,
-                        null,
                         ShoppingPreferenceSource.ROUTER_SLOT.name(),
                         0.0,
                         null
@@ -963,7 +952,7 @@ class ShoppingRouteExecutorTest {
         verify(shoppingStateService).mergePreference(eq("user-1"), eq("session-1"), patchCaptor.capture());
         ShoppingStateService.ShoppingPreferencePatch mergedPatch = patchCaptor.getValue();
         assertEquals(ShoppingPreferenceSource.USER_EXPLICIT.name(), mergedPatch.source());
-        assertEquals(500, mergedPatch.budgetMax());
+        assertEquals(500, mergedPatch.budget());
         assertEquals(null, mergedPatch.brand());
     }
 

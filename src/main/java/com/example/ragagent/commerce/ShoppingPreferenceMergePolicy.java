@@ -24,11 +24,8 @@ public class ShoppingPreferenceMergePolicy {
             }
             state.setCategory(category);
         }
-        if (patch.budgetMin() != null) {
-            state.setBudgetMin(patch.budgetMin());
-        }
-        if (patch.budgetMax() != null) {
-            state.setBudgetMax(patch.budgetMax());
+        if (patch.budget() != null) {
+            state.setBudget(patch.budget());
         }
         if (StringUtils.hasText(patch.brand())) {
             state.setBrand(patch.brand().trim());
@@ -60,12 +57,7 @@ public class ShoppingPreferenceMergePolicy {
             }
             switch (field.trim()) {
                 case "category" -> state.setCategory(null);
-                case "budget" -> {
-                    state.setBudgetMin(null);
-                    state.setBudgetMax(null);
-                }
-                case "budgetMin" -> state.setBudgetMin(null);
-                case "budgetMax" -> state.setBudgetMax(null);
+                case "budget", "budgetMin", "budgetMax" -> state.setBudget(null);
                 case "brand" -> state.setBrand(null);
                 case "size" -> state.setSize(null);
                 case "color" -> state.setColor(null);

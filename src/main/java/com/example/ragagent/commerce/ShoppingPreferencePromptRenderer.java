@@ -100,21 +100,8 @@ public class ShoppingPreferencePromptRenderer {
     }
 
     private String renderBudget(ShoppingPreferenceState state) {
-        Integer min = state.getBudgetMin();
-        Integer max = state.getBudgetMax();
-        if (min != null && max != null) {
-            if (min > max) {
-                return "";
-            }
-            return min + "-" + max + "元";
-        }
-        if (max != null) {
-            return max + "元以内";
-        }
-        if (min != null) {
-            return min + "元以上";
-        }
-        return "";
+        Integer budget = state.getBudget();
+        return budget == null ? "" : budget + "元左右";
     }
 
     private String renderRecentChanges(ShoppingPreferenceState state, List<Map<String, Object>> recentChanges) {
@@ -148,10 +135,9 @@ public class ShoppingPreferencePromptRenderer {
     private void appendBudgetChange(List<String> lines,
                                     ShoppingPreferenceState state,
                                     Map<String, List<Object>> valuesByField) {
-        if (!valuesByField.containsKey("budgetMin") && !valuesByField.containsKey("budgetMax")) {
+        if (!valuesByField.containsKey("budget")) {
             return;
         }
-        // 预算由上下限两个槽位共同表达，使用 Hash 当前状态补全未出现在增量中的另一侧。
         String budget = renderBudget(state);
         if (StringUtils.hasText(budget)) {
             lines.add("- 预算最近调整为：" + budget);

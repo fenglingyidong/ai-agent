@@ -43,8 +43,7 @@ class ShoppingStateServiceTest {
         TestFixture fixture = fixture(Duration.ofDays(7));
         when(fixture.hashOperations.entries(STATE_KEY)).thenReturn(Map.of(
                 "category", "跑鞋",
-                "budgetMin", "100",
-                "budgetMax", "300",
+                "budget", "300",
                 "brand", "Stride",
                 "confidence", "0.92",
                 "updatedTurnNo", "6"
@@ -53,11 +52,35 @@ class ShoppingStateServiceTest {
         ShoppingPreferenceState state = fixture.service.loadPreference("alice", "session-1");
 
         assertEquals("跑鞋", state.getCategory());
-        assertEquals(100, state.getBudgetMin());
-        assertEquals(300, state.getBudgetMax());
+        assertEquals(300, state.getBudget());
         assertEquals("Stride", state.getBrand());
         assertEquals(0.92, state.getConfidence());
         assertEquals(6L, state.getUpdatedTurnNo());
+    }
+
+    @Test
+    void mergePreferenceShouldOverrideBudgetAsSingleField() {
+        TestFixture fixture = fixture(Duration.ofDays(7));
+        when(fixture.hashOperations.entries(STATE_KEY)).thenReturn(Map.of(
+                "category", "猫粮,猫砂",
+                "budget", "450"
+        ));
+
+        ShoppingPreferenceState state = fixture.service.mergePreference(
+                "alice",
+                "session-1",
+                new ShoppingStateService.ShoppingPreferencePatch(
+                        null,
+                        400,
+                        null,
+                        null,
+                        null,
+                        null,
+                        null
+                )
+        );
+
+        assertEquals(400, state.getBudget());
     }
 
     @Test
@@ -76,22 +99,22 @@ class ShoppingStateServiceTest {
         TestFixture fixture = fixture(Duration.ofDays(7));
         when(fixture.hashOperations.entries(STATE_KEY)).thenReturn(Map.of(
                 "brand", "OPPO",
-                "budgetMax", "500"
+                "budget", "500"
         ));
         when(fixture.listOperations.range(CHANGES_KEY, 0, -1)).thenReturn(List.of(
                 "{\"brand\":\"华为\"}",
                 "{\"brand\":\"OPPO\"}",
-                "{\"budgetMax\":500}"
+                "{\"budget\":500}"
         ));
 
         ShoppingPreferenceSnapshot snapshot = fixture.service.loadPreferenceSnapshot("alice", "session-1");
 
         assertEquals("OPPO", snapshot.state().getBrand());
-        assertEquals(500, snapshot.state().getBudgetMax());
+        assertEquals(500, snapshot.state().getBudget());
         assertEquals(3, snapshot.recentChanges().size());
         assertEquals("华为", snapshot.recentChanges().get(0).get("brand"));
         assertEquals("OPPO", snapshot.recentChanges().get(1).get("brand"));
-        assertEquals(500, snapshot.recentChanges().get(2).get("budgetMax"));
+        assertEquals(500, snapshot.recentChanges().get(2).get("budget"));
     }
 
     @Test
@@ -122,7 +145,6 @@ class ShoppingStateServiceTest {
                 " session-1 ",
                 new ShoppingStateService.ShoppingPreferencePatch(
                         " 跑鞋 ",
-                        100,
                         300,
                         " Stride ",
                         null,
@@ -133,8 +155,7 @@ class ShoppingStateServiceTest {
         );
 
         assertEquals("跑鞋", state.getCategory());
-        assertEquals(100, state.getBudgetMin());
-        assertEquals(300, state.getBudgetMax());
+        assertEquals(300, state.getBudget());
         assertEquals("Stride", state.getBrand());
         assertEquals("通勤", state.getStyle());
         assertNull(state.getColor());
@@ -142,8 +163,7 @@ class ShoppingStateServiceTest {
         verify(fixture.hashOperations).putAll(eq(STATE_KEY), hashCaptor.capture());
         Map<String, String> hashFields = hashCaptor.getValue();
         assertEquals("跑鞋", hashFields.get("category"));
-        assertEquals("100", hashFields.get("budgetMin"));
-        assertEquals("300", hashFields.get("budgetMax"));
+        assertEquals("300", hashFields.get("budget"));
         assertEquals("Stride", hashFields.get("brand"));
         assertEquals("通勤", hashFields.get("style"));
         assertEquals(ShoppingPreferenceSource.USER_EXPLICIT.name(), hashFields.get("source"));
@@ -151,8 +171,7 @@ class ShoppingStateServiceTest {
         verify(fixture.listOperations).rightPush(eq(CHANGES_KEY), deltaCaptor.capture());
         Map<String, Object> delta = fixture.objectMapper.readValue(deltaCaptor.getValue(), MAP_TYPE);
         assertEquals("跑鞋", delta.get("category"));
-        assertEquals(100, delta.get("budgetMin"));
-        assertEquals(300, delta.get("budgetMax"));
+        assertEquals(300, delta.get("budget"));
         assertEquals("Stride", delta.get("brand"));
         assertEquals("通勤", delta.get("style"));
 
@@ -166,7 +185,7 @@ class ShoppingStateServiceTest {
         TestFixture fixture = fixture(Duration.ofDays(7));
         when(fixture.hashOperations.entries(STATE_KEY)).thenReturn(Map.of(
                 "category", "跑鞋",
-                "budgetMax", "500",
+                "budget", "500",
                 "brand", "Nike",
                 "size", "42",
                 "color", "黑色",
@@ -180,7 +199,6 @@ class ShoppingStateServiceTest {
                 "session-1",
                 new ShoppingStateService.ShoppingPreferencePatch(
                         "儿童积木",
-                        null,
                         300,
                         null,
                         null,
@@ -195,7 +213,7 @@ class ShoppingStateServiceTest {
         );
 
         assertEquals("儿童积木", state.getCategory());
-        assertEquals(300, state.getBudgetMax());
+        assertEquals(300, state.getBudget());
         assertNull(state.getBrand());
         assertNull(state.getSize());
         assertNull(state.getColor());
@@ -206,28 +224,12 @@ class ShoppingStateServiceTest {
         verify(fixture.listOperations).rightPush(eq(CHANGES_KEY), deltaCaptor.capture());
         Map<String, Object> delta = fixture.objectMapper.readValue(deltaCaptor.getValue(), MAP_TYPE);
         assertEquals("儿童积木", delta.get("category"));
-        assertEquals(300, delta.get("budgetMax"));
+        assertEquals(300, delta.get("budget"));
         assertNull(delta.get("brand"));
         assertNull(delta.get("size"));
         assertNull(delta.get("color"));
         assertNull(delta.get("style"));
         assertEquals("5岁生日礼物", delta.get("usageScenario"));
-    }
-
-    @Test
-    void mergePreferenceShouldRejectInvalidBudgetRangeWithoutWritingRedis() {
-        TestFixture fixture = fixture(Duration.ofDays(7));
-        when(fixture.hashOperations.entries(STATE_KEY)).thenReturn(Map.of());
-
-        assertThrows(IllegalArgumentException.class, () -> fixture.service.mergePreference(
-                "alice",
-                "session-1",
-                new ShoppingStateService.ShoppingPreferencePatch(null, 500, 100, null, null, null, null, null)
-        ));
-
-        verify(fixture.hashOperations, never()).putAll(anyString(), any());
-        verify(fixture.listOperations, never()).rightPush(anyString(), anyString());
-        verify(fixture.redisTemplate, never()).expire(anyString(), any(Duration.class));
     }
 
     @Test
@@ -241,7 +243,7 @@ class ShoppingStateServiceTest {
         assertThrows(IllegalStateException.class, () -> fixture.service.mergePreference(
                 "alice",
                 "session-1",
-                new ShoppingStateService.ShoppingPreferencePatch("跑鞋", null, null, null, null, null, null, null)
+                new ShoppingStateService.ShoppingPreferencePatch("跑鞋", null, null, null, null, null, null)
         ));
 
         verify(fixture.hashOperations, never()).putAll(anyString(), any());
@@ -255,7 +257,7 @@ class ShoppingStateServiceTest {
         TestFixture fixture = fixture(Duration.ofDays(7));
         when(fixture.hashOperations.entries(STATE_KEY)).thenReturn(Map.of(
                 "category", "跑鞋",
-                "budgetMax", "500",
+                "budget", "500",
                 "brand", "Nike"
         ));
 
@@ -264,7 +266,6 @@ class ShoppingStateServiceTest {
                 "session-1",
                 new ShoppingStateService.ShoppingPreferencePatch(
                         "跑鞋",
-                        null,
                         500,
                         "Nike",
                         null,
@@ -275,7 +276,7 @@ class ShoppingStateServiceTest {
         );
 
         assertEquals("跑鞋", state.getCategory());
-        assertEquals(500, state.getBudgetMax());
+        assertEquals(500, state.getBudget());
         assertEquals("Nike", state.getBrand());
         verify(fixture.hashOperations, never()).putAll(anyString(), any());
         verify(fixture.hashOperations, never()).delete(eq(STATE_KEY), any());
@@ -289,7 +290,7 @@ class ShoppingStateServiceTest {
         TestFixture fixture = fixture(Duration.ofDays(7));
         when(fixture.hashOperations.entries(STATE_KEY)).thenReturn(Map.of(
                 "category", "跑鞋",
-                "budgetMax", "500",
+                "budget", "500",
                 "brand", "Nike",
                 "size", "42"
         ));
@@ -299,7 +300,6 @@ class ShoppingStateServiceTest {
                 "alice",
                 "session-1",
                 new ShoppingStateService.ShoppingPreferencePatch(
-                        null,
                         null,
                         null,
                         null,
@@ -340,19 +340,19 @@ class ShoppingStateServiceTest {
     @Test
     void shoppingPreferencePatchShouldClampNonFiniteConfidence() {
         ShoppingStateService.ShoppingPreferencePatch nanPatch = new ShoppingStateService.ShoppingPreferencePatch(
-                null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null,
                 Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), Double.NaN, null
         );
         ShoppingStateService.ShoppingPreferencePatch infinityPatch = new ShoppingStateService.ShoppingPreferencePatch(
-                null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null,
                 Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), Double.POSITIVE_INFINITY, null
         );
         ShoppingStateService.ShoppingPreferencePatch negativePatch = new ShoppingStateService.ShoppingPreferencePatch(
-                null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null,
                 Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), -1.0, null
         );
         ShoppingStateService.ShoppingPreferencePatch tooLargePatch = new ShoppingStateService.ShoppingPreferencePatch(
-                null, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null,
                 Set.of(), ShoppingPreferenceSource.USER_EXPLICIT.name(), 2.0, null
         );
 

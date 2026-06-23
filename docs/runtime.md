@@ -50,6 +50,8 @@ $env:DASHSCOPE_API_KEY="<your-key>"
 
 RAG 召回参数：`RAG_DENSE_CHILD_TOP_K=24`、`RAG_BM25_CHILD_TOP_K=8`、`RAG_MAX_PARENT_RESULTS=6`。完整配置以 `src/main/resources/application.yml` 为准。
 
+当前版本额外包含会话级“工具调用上下文窗口”。这个能力没有单独环境变量：后端进程运行期间会自动按 `userId` + `sessionId` 维护最近工具调用记录，供简单任务快车道和主 ReAct 提示词复用。窗口最近 3 次保留完整输入输出，更早记录折叠显示；敏感字段会脱敏，超长结果会截断。
+
 ## 本地启动
 
 后端启动前需确认 MySQL 可用：默认 `localhost:3307/rag_agent`，账号 `root/root`；非默认环境可设置 `MYSQL_URL`、`MYSQL_USERNAME`、`MYSQL_PASSWORD`。
@@ -104,6 +106,8 @@ docker compose up -d prometheus grafana
 - **Milvus collection 不存在**：首次启动会按 `MILVUS_INITIALIZE_SCHEMA=true` 自动建集合，确认 `MILVUS_HOST/PORT` 可达且账号有建库权限。
 - **MySQL 连接失败**：默认端口 `3307`（非 3306），如本机 MySQL 装在 3306，需用 `MYSQL_URL` 覆盖。
 - **`mall_*` 工具不可用**：检查 `MALL_MCP_BASE_URL` 指向的 `mall-mcp` 服务和 `MCP_CONTEXT_SECRET` 是否与 `mall-mcp` 侧一致；`mall-mcp` 未启动时商城 B 类快车道会直接降级。
+- **明明刚查过工具，下一轮却没继承到商品事实**：先确认是否仍在同一个 `sessionId` 下继续对话。工具调用上下文窗口按 `userId` + `sessionId` 隔离，切换会话后不会继承上一会话的工具结果。
+- **工具上下文里看不到很早之前的完整工具返回**：这是当前设计预期。窗口只完整保留最近 3 次工具调用，更早记录会折叠成“已调用过该工具”的提示，避免主 prompt 被旧工具结果撑爆。
 - **`mall_create_order` 被拒绝**：这是 Java 侧硬门禁，需要路由意图为 `CART_CONFIRMATION`、路由标记 `need_confirm=true`、本轮文本有明确下单语义，且参数包含有效 `confirmationId` 与 `userConfirmed=true`，详见 [architecture.md#mcp-边界](architecture.md#mcp-边界)。
 - **前端启动提示 `EADDRINUSE: 4173`**：已有旧前端或 Vite 进程占用端口，按上方端口释放命令停止后重新执行 `npm run dev`。
 - **流式请求中途断开**：调大 `SPRING_MVC_ASYNC_REQUEST_TIMEOUT`。

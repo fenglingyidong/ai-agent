@@ -1,5 +1,6 @@
 package com.example.ragagent.service;
 
+import com.example.ragagent.memory.ConversationMemoryService;
 import com.example.ragagent.memory.ConversationToolCallMemoryService;
 import com.example.ragagent.observability.RagTracing;
 import com.example.ragagent.prompt.PromptTemplateStore;
@@ -47,6 +48,7 @@ public class SimpleTaskAgent {
     private final ChatClient.Builder builder;
     private final BuiltInTools builtInTools;
     private final List<ToolCallbackProvider> toolCallbackProviders;
+    private final ConversationMemoryService conversationMemoryService;
     private final RagTracing tracing;
     private final ConversationToolCallMemoryService toolCallMemoryService;
     private final String knowledgeSystemPrompt;
@@ -66,24 +68,42 @@ public class SimpleTaskAgent {
     public SimpleTaskAgent(ChatClient.Builder builder,
                            BuiltInTools builtInTools,
                            List<ToolCallbackProvider> toolCallbackProviders,
+                           ConversationMemoryService conversationMemoryService,
                            RagTracing tracing) {
-        this(builder, builtInTools, toolCallbackProviders, tracing, null);
+        this(builder, builtInTools, toolCallbackProviders, conversationMemoryService, tracing, null);
+    }
+
+    public SimpleTaskAgent(ChatClient.Builder builder,
+                           BuiltInTools builtInTools,
+                           List<ToolCallbackProvider> toolCallbackProviders,
+                           RagTracing tracing,
+                           ConversationToolCallMemoryService toolCallMemoryService) {
+        this(builder, builtInTools, toolCallbackProviders, null, tracing, toolCallMemoryService);
     }
 
     @Autowired
     public SimpleTaskAgent(ChatClient.Builder builder,
                            BuiltInTools builtInTools,
                            List<ToolCallbackProvider> toolCallbackProviders,
+                           ConversationMemoryService conversationMemoryService,
                            RagTracing tracing,
                            ConversationToolCallMemoryService toolCallMemoryService) {
         this.builder = builder;
         this.builtInTools = builtInTools;
         this.toolCallbackProviders = toolCallbackProviders == null ? List.of() : List.copyOf(toolCallbackProviders);
+        this.conversationMemoryService = conversationMemoryService;
         this.tracing = tracing == null ? new RagTracing() : tracing;
         this.toolCallMemoryService = toolCallMemoryService;
         PromptTemplateStore store = new PromptTemplateStore();
         this.knowledgeSystemPrompt = store.text("simple-task.knowledge.system");
         this.mallSystemPrompt = store.text("simple-task.mall.system");
+    }
+
+    SimpleTaskAgent(ChatClient.Builder builder,
+                    BuiltInTools builtInTools,
+                    List<ToolCallbackProvider> toolCallbackProviders,
+                    RagTracing tracing) {
+        this(builder, builtInTools, toolCallbackProviders, null, tracing, null);
     }
 
     /**
@@ -133,7 +153,7 @@ public class SimpleTaskAgent {
     }
 
     /**
-     * 尝试用简单任务模型处理路由结果，并把应用用户身份与商城认证上下文传给工具窗口。
+     * 尝试用简单任务模型处理路由结果，并读取当前用户会话上下文，同时把应用用户身份传给工具窗口。
      */
     FastLaneResult tryRun(ShoppingIntentRoute route,
                           String userMessage,
@@ -172,7 +192,7 @@ public class SimpleTaskAgent {
                 route,
                 userMessage,
                 preferenceContext,
-                recentToolCallContext(userId, sessionId),
+                recentAgentContext(userId, sessionId),
                 knowledgeSystemPrompt,
                 new KnowledgeFastLaneTools(builtInTools, toolCallMemoryService, userId, sessionId)
         );
@@ -203,7 +223,7 @@ public class SimpleTaskAgent {
                 route,
                 userMessage,
                 preferenceContext,
-                recentToolCallContext(userId, sessionId),
+                recentAgentContext(userId, sessionId),
                 mallSystemPrompt,
                 callbacks,
                 mallToolContext(userId, sessionId, mallToken, mallUsername, mallPassword)
@@ -261,10 +281,10 @@ public class SimpleTaskAgent {
     private FastLaneResult callSimpleModelWithToolObject(ShoppingIntentRoute route,
                                                          String userMessage,
                                                          String preferenceContext,
-                                                         String toolCallContext,
+                                                         String agentContext,
                                                          String systemPrompt,
                                                          Object toolObject) {
-        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext, toolCallContext);
+        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext, agentContext);
         return callSimpleModel(route, systemPrompt, userPrompt, () -> simpleTaskChatClient.prompt()
                 .options(OpenAiChatOptions.builder()
                         .model(modelName())
@@ -281,11 +301,11 @@ public class SimpleTaskAgent {
     private FastLaneResult callSimpleModelWithToolCallbacks(ShoppingIntentRoute route,
                                                             String userMessage,
                                                             String preferenceContext,
-                                                            String toolCallContext,
+                                                            String agentContext,
                                                             String systemPrompt,
                                                             List<ToolCallback> toolCallbacks,
                                                             Map<String, Object> toolContext) {
-        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext, toolCallContext);
+        String userPrompt = buildUserPrompt(route, userMessage, preferenceContext, agentContext);
         return callSimpleModel(route, systemPrompt, userPrompt, () -> simpleTaskChatClient.prompt()
                 .options(OpenAiChatOptions.builder()
                         .model(modelName())
@@ -349,7 +369,7 @@ public class SimpleTaskAgent {
     private String buildUserPrompt(ShoppingIntentRoute route,
                                    String userMessage,
                                    String preferenceContext,
-                                   String toolCallContext) {
+                                   String agentContext) {
         String routePrompt = """
                 用户本轮输入：
                 %s
@@ -371,9 +391,33 @@ public class SimpleTaskAgent {
         ).trim();
         StringBuilder builder = new StringBuilder();
         appendPromptSection(builder, preferenceContext);
-        appendPromptSection(builder, toolCallContext);
+        appendPromptSection(builder, agentContext);
         appendPromptSection(builder, routePrompt);
         return builder.toString();
+    }
+
+    private String recentAgentContext(String userId, String sessionId) {
+        String conversationContext = recentConversationContext(userId, sessionId);
+        String toolContext = recentToolCallContext(userId, sessionId);
+        if (!StringUtils.hasText(conversationContext)) {
+            return toolContext;
+        }
+        if (!StringUtils.hasText(toolContext) || conversationContext.contains(toolContext)) {
+            return conversationContext;
+        }
+        return conversationContext + System.lineSeparator() + System.lineSeparator() + toolContext;
+    }
+
+    private String recentConversationContext(String userId, String sessionId) {
+        if (conversationMemoryService == null) {
+            return "";
+        }
+        try {
+            return conversationMemoryService.recentConversationContext(userId, sessionId);
+        }
+        catch (RuntimeException ignored) {
+            return "";
+        }
     }
 
     private void appendPromptSection(StringBuilder builder, String section) {

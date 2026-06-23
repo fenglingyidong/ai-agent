@@ -15,6 +15,7 @@ from scripts.mall_sku_rag_eval_lib import (
     export_questions_file,
     extract_questions,
     query_clickhouse_json_rows,
+    build_trace_summary_sql,
     post_react,
     query_trace_summaries,
     QuestionSpec,
@@ -24,6 +25,10 @@ from scripts.mall_sku_rag_eval_lib import (
     write_trace_summary_jsonl,
 )
 from scripts.run_mall_sku_rag_eval import main
+from scripts.run_mall_sku_rag_multiturn_eval import (
+    load_multiturn_suite,
+    main as multiturn_main,
+)
 
 
 class MallSkuRagEvalTest(unittest.TestCase):
@@ -192,6 +197,7 @@ class MallSkuRagEvalTest(unittest.TestCase):
             {
                 "session_id": "api-20260617-092529-why-summary-Q08",
                 "trace_id": "0d5983d9b875516ecfb5f246adcc2d42",
+                "timestamp": "2026-06-22 11:20:24.613",
                 "input": "办公室用鼠标，希望点击声音小一点，买哪款？",
                 "output": "Mall Labs 无线鼠标 静音版",
                 "observation_names": ["llm.intent_router", "rag.hybrid.retrieve", "tool.mall_search_products"],
@@ -207,9 +213,16 @@ class MallSkuRagEvalTest(unittest.TestCase):
 
         self.assertEqual("api-20260617-092529-why-summary-Q08", summaries[0].session_id)
         self.assertEqual("0d5983d9b875516ecfb5f246adcc2d42", summaries[0].trace_id)
+        self.assertEqual("2026-06-22 11:20:24.613", summaries[0].timestamp)
         self.assertEqual(14, summaries[0].rag_count)
         self.assertEqual(1, summaries[0].tool_count)
         self.assertIn("tool.mall_search_products", summaries[0].observation_names)
+
+    def test_build_trace_summary_sql_orders_by_session_and_timestamp(self):
+        sql = build_trace_summary_sql(["unit-M01"])
+
+        self.assertIn("t.timestamp AS timestamp", sql)
+        self.assertIn("ORDER BY t.session_id, t.timestamp", sql)
 
     def test_write_trace_summary_jsonl_writes_one_json_per_line(self):
         summaries = collect_trace_summaries(
@@ -217,6 +230,7 @@ class MallSkuRagEvalTest(unittest.TestCase):
                 {
                     "session_id": "unit-Q08",
                     "trace_id": "trace-1",
+                    "timestamp": "2026-06-22 11:20:24.613",
                     "input": "问题",
                     "output": "答案",
                     "observation_names": ["llm.intent_router"],
@@ -236,6 +250,7 @@ class MallSkuRagEvalTest(unittest.TestCase):
             lines = output.read_text(encoding="utf-8").splitlines()
             self.assertEqual(1, len(lines))
             self.assertEqual("unit-Q08", json.loads(lines[0])["session_id"])
+            self.assertEqual("2026-06-22 11:20:24.613", json.loads(lines[0])["timestamp"])
 
     def test_query_trace_summaries_uses_requested_sessions(self):
         captured = {}
@@ -246,6 +261,7 @@ class MallSkuRagEvalTest(unittest.TestCase):
                 {
                     "session_id": "unit-Q08",
                     "trace_id": "trace-1",
+                    "timestamp": "2026-06-22 11:20:24.613",
                     "input": "问题",
                     "output": "答案",
                     "observation_names": '["rag.hybrid.retrieve"]',
@@ -440,6 +456,92 @@ class MallSkuRagEvalTest(unittest.TestCase):
             self.assertEqual(["Q08", "Q07"], [item["id"] for item in results["results"]])
             self.assertTrue((output_dir / "unit-langfuse-trace-summary.jsonl").exists())
             self.assertTrue((output_dir / "unit-mall-sku-rag-eval-scored.json").exists())
+
+    def test_load_multiturn_suite_reads_json_conversations(self):
+        suite = load_multiturn_suite(Path("docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.json"))
+
+        self.assertEqual("docs/evaluation/2026-06-22-mall-sku-rag-multiturn-eval.md", suite.source)
+        self.assertEqual(["M01", "M02", "M03", "M04", "M05"], [item.id for item in suite.conversations])
+        self.assertEqual(3, len(suite.conversations[0].turns))
+        self.assertEqual(
+            "我想把办公桌面升级一下，预算 400 左右，配一套实用的。",
+            suite.conversations[0].turns[0].question,
+        )
+
+    def test_multiturn_main_run_keeps_session_per_conversation(self):
+        suite_payload = {
+            "source": "unit",
+            "conversations": [
+                {
+                    "id": "M01",
+                    "title": "办公桌面升级",
+                    "turns": [
+                        {"id": "M01-T1", "turn": 1, "question": "第一轮"},
+                        {"id": "M01-T2", "turn": 2, "question": "第二轮"},
+                    ],
+                },
+                {
+                    "id": "M02",
+                    "title": "双猫大包装采购",
+                    "turns": [
+                        {"id": "M02-T1", "turn": 1, "question": "猫粮猫砂"},
+                        {"id": "M02-T2", "turn": 2, "type": "ui_action", "question": "点击确认"},
+                    ],
+                },
+            ],
+        }
+        captured = {}
+
+        def fake_post(**kwargs):
+            captured.setdefault("calls", []).append(kwargs)
+            return EvalResult(
+                question_id=kwargs["question_id"],
+                question=kwargs["message"],
+                session_id=kwargs["session_id"],
+                status=200,
+                duration_seconds=0.1,
+                answer=f"answer {kwargs['question_id']}",
+            )
+
+        def fake_trace(session_ids):
+            captured["session_ids"] = session_ids
+            return [TraceSummary(session_id=session_id) for session_id in session_ids]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            questions = Path(temp_dir) / "multiturn.json"
+            output_dir = Path(temp_dir) / "out"
+            questions.write_text(json.dumps(suite_payload, ensure_ascii=False), encoding="utf-8")
+
+            with redirect_stdout(StringIO()):
+                code = multiturn_main(
+                    [
+                        "run",
+                        "--ids",
+                        "M02,M01",
+                        "--run-id",
+                        "unit",
+                        "--questions",
+                        str(questions),
+                        "--output-dir",
+                        str(output_dir),
+                        "--trace-wait-seconds",
+                        "0",
+                    ],
+                    post_func=fake_post,
+                    trace_func=fake_trace,
+                )
+
+            self.assertEqual(0, code)
+            self.assertEqual(["M02-T1", "M01-T1", "M01-T2"], [call["question_id"] for call in captured["calls"]])
+            self.assertEqual(["unit-M02", "unit-M01", "unit-M01"], [call["session_id"] for call in captured["calls"]])
+            self.assertEqual(["unit-M02", "unit-M01"], captured["session_ids"])
+            results = json.loads(
+                (output_dir / "unit-mall-sku-rag-multiturn-results.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(["M02", "M01"], [item["id"] for item in results["conversations"]])
+            self.assertEqual("SKIPPED", results["conversations"][0]["turns"][1]["status"])
+            self.assertEqual("ui_action", results["conversations"][0]["turns"][1]["type"])
+            self.assertTrue((output_dir / "unit-langfuse-trace-summary.jsonl").exists())
 
 
 if __name__ == "__main__":

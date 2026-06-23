@@ -61,6 +61,7 @@ class EvalResult:
 class TraceSummary:
     session_id: str
     trace_id: str = ""
+    timestamp: str = ""
     input: str = ""
     output: str = ""
     observation_names: list[str] | None = None
@@ -75,6 +76,7 @@ class TraceSummary:
         return {
             "session_id": self.session_id,
             "trace_id": self.trace_id,
+            "timestamp": self.timestamp,
             "input": self.input,
             "output": self.output,
             "observation_names": self.observation_names or [],
@@ -227,6 +229,7 @@ def collect_trace_summaries(rows: list[dict]) -> list[TraceSummary]:
             TraceSummary(
                 session_id=str(row.get("session_id", "")),
                 trace_id=str(row.get("trace_id", "")),
+                timestamp=str(row.get("timestamp", "")),
                 input=str(row.get("input", "")),
                 output=str(row.get("output", "")),
                 observation_names=_as_string_list(row.get("observation_names", [])),
@@ -388,6 +391,7 @@ WITH target_traces AS (
     SELECT
         id,
         session_id,
+        timestamp,
         input,
         output
     FROM default.traces
@@ -410,6 +414,7 @@ obs AS (
 SELECT
     t.session_id AS session_id,
     t.id AS trace_id,
+    t.timestamp AS timestamp,
     ifNull(t.input, '') AS input,
     ifNull(t.output, '') AS output,
     ifNull(o.observation_names, []) AS observation_names,
@@ -420,7 +425,7 @@ SELECT
     ifNull(o.router_output, '') AS router_output
 FROM target_traces t
 LEFT JOIN obs o ON o.trace_id = t.id
-ORDER BY t.session_id
+ORDER BY t.session_id, t.timestamp
 FORMAT JSONEachRow
 """.strip()
 
